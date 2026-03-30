@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API 中转站安全检测报告</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0e17;--card:#111827;--card-hover:#1a2332;--border:#1e293b;--text:#e2e8f0;--text2:#94a3b8;--accent:#3b82f6;--green:#10b981;--yellow:#f59e0b;--red:#ef4444;--gray:#6b7280}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
+.container{max-width:1100px;margin:0 auto;padding:40px 20px}
+h1{font-size:1.8rem;font-weight:700;text-align:center;margin-bottom:8px;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{text-align:center;color:var(--text2);font-size:.9rem;margin-bottom:40px}
+.ranking{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:30px}
+.ranking h2{font-size:1.1rem;margin-bottom:12px;color:var(--accent)}
+.ranking-list{display:flex;gap:10px;flex-wrap:wrap}
+.ranking-item{padding:6px 12px;border-radius:8px;font-size:.85rem;background:rgba(255,255,255,.03)}
+.ranking-item.safe{border-left:3px solid var(--green)}
+.ranking-item.warn{border-left:3px solid var(--yellow)}
+.ranking-item.danger{border-left:3px solid var(--red)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px;margin-bottom:40px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
+.card:hover{background:var(--card-hover);border-color:#334155;transform:translateY(-2px)}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.card.red::before{background:var(--red)}.card.yellow::before{background:var(--yellow)}.card.green::before{background:var(--green)}.card.gray::before{background:var(--gray)}
+.card-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;gap:8px}
+.domain{font-size:1.1rem;font-weight:600;font-family:'SF Mono',Monaco,monospace;flex:1}
+.badge{padding:4px 10px;border-radius:20px;font-size:.75rem;font-weight:600;white-space:nowrap}
+.badge.red{background:rgba(239,68,68,.15);color:#fca5a5}.badge.yellow{background:rgba(245,158,11,.15);color:#fcd34d}.badge.green{background:rgba(16,185,129,.15);color:#6ee7b7}.badge.gray{background:rgba(107,114,128,.15);color:#d1d5db}
+.api-format{font-size:.7rem;color:var(--text2);margin-top:4px;font-family:monospace}
+.card-meta{display:flex;gap:16px;color:var(--text2);font-size:.8rem;margin-bottom:16px;flex-wrap:wrap}
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.metric{background:rgba(255,255,255,.03);border-radius:8px;padding:10px 12px}
+.metric-label{font-size:.7rem;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.metric-value{font-size:.95rem;font-weight:600}
+.metric-value.warn{color:var(--yellow)}.metric-value.danger{color:var(--red)}.metric-value.ok{color:var(--green)}
+.expand-hint{text-align:center;color:var(--text2);font-size:.75rem;margin-top:12px;opacity:.6}
+.detail{display:none;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:28px;margin-bottom:20px;animation:fadeIn .3s}
+.detail.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.detail-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+.detail h2{font-size:1.3rem;font-weight:700}
+.test-time{font-size:.8rem;color:var(--text2);margin-top:4px}
+.close-btn{background:none;border:1px solid var(--border);color:var(--text2);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:.85rem}
+.close-btn:hover{border-color:#475569;color:var(--text)}
+.section{margin-bottom:24px}
+.section h3{font-size:.9rem;font-weight:600;color:var(--accent);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.info-item{background:rgba(255,255,255,.03);border-radius:8px;padding:12px}
+.info-item .label{font-size:.7rem;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.info-item .value{font-size:.9rem}
+.flags{display:flex;flex-wrap:wrap;gap:8px}
+.flag{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);color:#fca5a5;padding:6px 12px;border-radius:8px;font-size:.8rem}
+.test-table{width:100%;border-collapse:collapse;font-size:.85rem;margin-top:8px}
+.test-table th{text-align:left;padding:8px 12px;color:var(--text2);font-weight:500;border-bottom:1px solid var(--border);font-size:.75rem;text-transform:uppercase;letter-spacing:.5px}
+.test-table td{padding:8px 12px;border-bottom:1px solid rgba(30,41,59,.5)}
+.pass{color:var(--green)}.fail{color:var(--red)}.warn-text{color:var(--yellow)}
+.summary-text{color:var(--text2);font-size:.9rem;line-height:1.7;background:rgba(255,255,255,.02);padding:16px;border-radius:8px;border-left:3px solid var(--accent)}
+footer{text-align:center;color:var(--text2);font-size:.75rem;margin-top:60px;padding:20px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🛡️ API 中转站安全检测报告</h1>
+  <p class="subtitle">检测中转站是否存在 Token 注入、Prompt 泄露、指令覆盖等安全风险</p>
+  <div class="ranking" id="ranking"></div>
+  <div class="grid" id="cards"></div>
+  <div id="detail"></div>
+  <footer>Powered by API Relay Audit</footer>
+</div>
+<script>
+const ratingColors={red:'danger',yellow:'warn',green:'ok',gray:''};
+function esc(s){return s==null?'—':String(s).replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function renderRanking(data){
+  const safe = data.filter(d=>d.rating==='green').map(d=>d.domain);
+  const warn = data.filter(d=>d.rating==='yellow').map(d=>d.domain);
+  const danger = data.filter(d=>d.rating==='red').map(d=>d.domain);
+  const el = document.getElementById('ranking');
+  el.innerHTML = `<h2>🏆 安全排行</h2><div class="ranking-list">
+    ${safe.map(d=>`<span class="ranking-item safe">🟢 ${esc(d)}</span>`).join('')}
+    ${warn.map(d=>`<span class="ranking-item warn">🟡 ${esc(d)}</span>`).join('')}
+    ${danger.map(d=>`<span class="ranking-item danger">🔴 ${esc(d)}</span>`).join('')}
+  </div>`;
+}
+function renderCards(data){
+  const g=document.getElementById('cards');
+  g.innerHTML=data.map((d,i)=>`
+    <div class="card ${d.rating}" onclick="showDetail(${i})">
+      <div class="card-head">
+        <div style="flex:1">
+          <div class="domain">${esc(d.domain)}</div>
+          <div class="api-format">API: ${esc(d.apiFormat||'Anthropic')}</div>
+        </div>
+        <span class="badge ${d.rating}">${esc(d.ratingLabel)}</span>
+      </div>
+      <div class="card-meta">
+        <span>📅 ${esc(d.testDate)}</span>
+        <span>🏗️ ${esc(d.infra.system)}</span>
+        ${d.models?`<span>🤖 ${d.models} 模型</span>`:''}
+      </div>
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">Token 注入</div>
+          <div class="metric-value ${d.tokenInjection.delta>500?'danger':d.tokenInjection.delta>0?'warn':'ok'}">
+            ${d.tokenInjection.delta>0?'+'+d.tokenInjection.delta+' tokens':'无注入'}
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Prompt 泄露</div>
+          <div class="metric-value ${d.promptExtraction.leaked>0?'warn':'ok'}">
+            ${d.promptExtraction.leaked}/${d.promptExtraction.total} 提取成功
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">上下文长度</div>
+          <div class="metric-value">${esc(d.contextLength.maxTokens)}</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">风险项</div>
+          <div class="metric-value ${d.redFlags.length>2?'danger':d.redFlags.length>0?'warn':'ok'}">${d.redFlags.length} 项</div>
+        </div>
+      </div>
+      <div class="expand-hint">点击查看详细报告 →</div>
+    </div>`).join('');
+}
+function showDetail(i){
+  const d=window._data[i],el=document.getElementById('detail');
+  el.className='detail active';
+  
+  // Prompt 测试详情表格
+  const promptTestsHtml = (d.promptTests && d.promptTests.length) ? `
+    <div class="section">
+      <h3>🎯 Prompt 提取测试详情</h3>
+      <table class="test-table">
+        <tr><th>方法</th><th>结果</th><th>回复摘要</th></tr>
+        ${d.promptTests.map(t=>`<tr>
+          <td>${esc(t.method)}</td>
+          <td class="${t.leaked?'fail':'pass'}">${t.leaked?'🔴 泄露':'🟢 安全'}</td>
+          <td style="font-size:.8rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.summary.substring(0,80))}</td>
+        </tr>`).join('')}
+      </table>
+    </div>` : '';
+  
+  // 越狱测试详情表格
+  const jailbreakTestsHtml = (d.jailbreakTests && d.jailbreakTests.length) ? `
+    <div class="section">
+      <h3>🔓 越狱测试详情</h3>
+      <table class="test-table">
+        <tr><th>方法</th><th>结果</th><th>回复摘要</th></tr>
+        ${d.jailbreakTests.map(t=>`<tr>
+          <td>${esc(t.method)}</td>
+          <td class="${t.leaked?'warn-text':'pass'}">${t.leaked?'🟡 有泄漏':'🟢 安全'}</td>
+          <td style="font-size:.8rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.summary.substring(0,80))}</td>
+        </tr>`).join('')}
+      </table>
+    </div>` : '';
+  
+  // 上下文测试详情表格
+  const contextTestsHtml = (d.contextTests && d.contextTests.length) ? `
+    <div class="section">
+      <h3>📊 上下文长度测试详情</h3>
+      <table class="test-table">
+        <tr><th>大小</th><th>Tokens</th><th>召回率</th><th>状态</th></tr>
+        ${d.contextTests.map(t=>`<tr>
+          <td>${esc(t.chars)}K 字符</td>
+          <td>${esc(t.tokens)}</td>
+          <td>${esc(t.recall)}</td>
+          <td>${t.status}</td>
+        </tr>`).join('')}
+      </table>
+    </div>` : '';
+  
+  // 指令冲突测试（猫叫/身份）
+  const catIcon = d.instructionConflict.catTest.includes('通过') || d.instructionConflict.catTest.includes('只回') ? '✅' : 
+                   d.instructionConflict.catTest.includes('失败') || d.instructionConflict.catTest.includes('ERROR') ? '❌' : '—';
+  const idIcon = d.instructionConflict.identityTest.includes('通过') || d.instructionConflict.identityTest.includes('Anthropic') ? '✅' : 
+                  d.instructionConflict.identityTest.includes('不明确') || d.instructionConflict.identityTest.includes('ERROR') ? '❌' : '—';
+  
+  el.innerHTML=`
+    <div class="detail-header">
+      <div>
+        <h2>${esc(d.ratingLabel)} ${esc(d.domain)}</h2>
+        <div class="test-time">测试时间：${esc(d.testDate)}</div>
+      </div>
+      <button class="close-btn" onclick="closeDetail()">✕ 关闭</button>
+    </div>
+    <div class="section">
+      <h3>📋 概要</h3>
+      <div class="summary-text">${esc(d.summary)}</div>
+    </div>
+    <div class="section">
+      <h3>🏗️ 基础设施</h3>
+      <div class="info-grid">
+        <div class="info-item"><div class="label">CDN</div><div class="value">${esc(d.infra.cdn)}</div></div>
+        <div class="info-item"><div class="label">系统</div><div class="value">${esc(d.infra.system)}</div></div>
+        <div class="info-item"><div class="label">SSL</div><div class="value">${esc(d.infra.ssl)}</div></div>
+        <div class="info-item"><div class="label">API 格式</div><div class="value">${esc(d.apiFormat||'Anthropic')}</div></div>
+        <div class="info-item"><div class="label">API 地址</div><div class="value" style="font-family:monospace;font-size:.8rem">${esc(d.url)}</div></div>
+      </div>
+    </div>
+    <div class="section">
+      <h3>🔍 检测结果</h3>
+      <table class="test-table">
+        <tr><th>检测项</th><th>结果</th><th>详情</th></tr>
+        <tr>
+          <td>Token 注入</td>
+          <td class="${d.tokenInjection.delta>500?'fail':d.tokenInjection.delta>0?'warn-text':'pass'}">${esc(d.tokenInjection.verdict)}</td>
+          <td>${d.tokenInjection.delta>0?'差额 +'+d.tokenInjection.delta+' tokens':'—'}</td>
+        </tr>
+        <tr>
+          <td>Prompt 提取</td>
+          <td class="${d.promptExtraction.leaked>0?'warn-text':'pass'}">${d.promptExtraction.leaked}/${d.promptExtraction.total} 成功</td>
+          <td>${d.promptExtraction.methods.length?d.promptExtraction.methods.join('、'):'—'}</td>
+        </tr>
+        <tr>
+          <td>猫叫测试</td>
+          <td>${catIcon}</td>
+          <td>${esc(d.instructionConflict.catTest)}</td>
+        </tr>
+        <tr>
+          <td>身份覆盖</td>
+          <td>${idIcon}</td>
+          <td>${esc(d.instructionConflict.identityTest)}</td>
+        </tr>
+        <tr>
+          <td>上下文长度</td>
+          <td class="pass">${esc(d.contextLength.verdict)}</td>
+          <td>最大 ${esc(d.contextLength.maxChars)} 字符 / ${esc(d.contextLength.maxTokens)} tokens</td>
+        </tr>
+      </table>
+    </div>
+    ${promptTestsHtml}
+    ${jailbreakTestsHtml}
+    ${contextTestsHtml}
+    ${d.redFlags.length?`<div class="section">
+      <h3>🚩 风险标记</h3>
+      <div class="flags">${d.redFlags.map(f=>`<span class="flag">${esc(f)}</span>`).join('')}</div>
+    </div>`:''}`;
+  el.scrollIntoView({behavior:'smooth',block:'start'});
+}
+function closeDetail(){document.getElementById('detail').className='detail'}
+fetch('data.json').then(r=>r.json()).then(data=>{
+  data.sort((a,b)=>{const o={red:0,yellow:1,gray:2,green:3};return (o[a.rating]??9)-(o[b.rating]??9)});
+  window._data=data;
+  renderRanking(data);
+  renderCards(data);
+});
+</script>
+</body>
+</html>
