@@ -14,7 +14,7 @@ A self-contained 7-step security audit for third-party AI API relay/proxy servic
 One command to download and run:
 
 ```bash
-curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/main/audit.py && python audit.py --key <KEY> --url <URL>
+curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py && python audit.py --key <KEY> --url <URL>
 ```
 
 Replace `<KEY>` with the relay API key and `<URL>` with the relay base URL (e.g. `https://relay.example.com/v1`).
@@ -70,7 +70,7 @@ Optional flags to ask about:
 Check if `audit.py` already exists in the working directory. If not, download it:
 
 ```bash
-curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/main/audit.py
+curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py
 ```
 
 Verify the download succeeded:
@@ -268,5 +268,5 @@ The relay's injected prompt conflicts with the user's system prompt. This is its
 If `curl` is unavailable, try:
 
 ```bash
-python3 -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/toby-bridges/api-relay-audit/main/audit.py', 'audit.py')"
+python3 -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py', 'audit.py')"
 ```

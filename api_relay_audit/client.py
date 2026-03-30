@@ -29,7 +29,7 @@ class APIClient:
     """
 
     def __init__(self, base_url: str, api_key: str, model: str,
-                 timeout: int = 120, verbose: bool = True):
+                 timeout: int = 120, verbose: bool = True, insecure: bool = False):
         """Initialise the client.
 
         Args:
@@ -39,14 +39,19 @@ class APIClient:
             model: Model identifier to include in every request body.
             timeout: HTTP / curl timeout in seconds. Defaults to 120.
             verbose: Whether to print diagnostic log lines. Defaults to True.
+            insecure: If True, skip SSL certificate verification (curl -k).
+                Defaults to False for security.
         """
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self.verbose = verbose
+        self.insecure = insecure
         self._format = None   # "anthropic" | "openai" | None (auto)
         self._use_curl = False
+        self._max_retries = 2
+        self._retry_base_delay = 2
 
     @property
     def detected_format(self):
@@ -65,23 +70,49 @@ class APIClient:
     # -- Low-level transport --------------------------------------------------
 
     def _curl_post(self, url: str, headers: dict, body: dict) -> dict:
-        cmd = ["curl", "-sk", "-X", "POST", url, "--max-time", str(self.timeout)]
+        cmd = ["curl", "-s"]
+        if self.insecure:
+            cmd.append("-k")
+        cmd.extend(["-X", "POST", url, "--max-time", str(self.timeout)])
         for k, v in headers.items():
             cmd.extend(["-H", f"{k}: {v}"])
         cmd.extend(["-d", json.dumps(body)])
-        r = subprocess.run(cmd, capture_output=True, text=True,
-                           timeout=self.timeout + 10)
-        if r.returncode != 0:
-            raise RuntimeError(f"curl failed: {r.stderr[:200]}")
-        return json.loads(r.stdout)
+
+        last_err = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True,
+                                   timeout=self.timeout + 10)
+                if r.returncode != 0:
+                    raise RuntimeError(f"curl failed: {r.stderr[:200]}")
+                return json.loads(r.stdout)
+            except Exception as e:
+                last_err = e
+                if attempt < self._max_retries:
+                    delay = self._retry_base_delay * (2 ** attempt)
+                    self._log(f"  [retry] attempt {attempt + 1} failed, retrying in {delay}s...")
+                    time.sleep(delay)
+        raise last_err
 
     def _post(self, url: str, headers: dict, body: dict) -> dict:
         if self._use_curl:
             return self._curl_post(url, headers, body)
-        r = httpx.post(url, headers=headers, json=body, timeout=self.timeout)
-        if r.status_code != 200:
-            return {"_http_error": f"HTTP {r.status_code}: {r.text[:200]}"}
-        return r.json()
+
+        last_err = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                r = httpx.post(url, headers=headers, json=body,
+                               timeout=self.timeout, verify=not self.insecure)
+                if r.status_code != 200:
+                    return {"_http_error": f"HTTP {r.status_code}: {r.text[:200]}"}
+                return r.json()
+            except Exception as e:
+                last_err = e
+                if attempt < self._max_retries:
+                    delay = self._retry_base_delay * (2 ** attempt)
+                    self._log(f"  [retry] attempt {attempt + 1} failed, retrying in {delay}s...")
+                    time.sleep(delay)
+        return {"_http_error": str(last_err)}
 
     # -- Anthropic native format ----------------------------------------------
 
@@ -274,7 +305,10 @@ class APIClient:
         for headers in auth_variants:
             try:
                 if self._use_curl:
-                    cmd = ["curl", "-sk", url, "--max-time", "15"]
+                    cmd = ["curl", "-s"]
+                    if self.insecure:
+                        cmd.append("-k")
+                    cmd.extend([url, "--max-time", "15"])
                     for k, v in headers.items():
                         cmd.extend(["-H", f"{k}: {v}"])
                     r = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
@@ -283,7 +317,7 @@ class APIClient:
                         if data:
                             return data
                 else:
-                    r = httpx.get(url, headers=headers, timeout=15)
+                    r = httpx.get(url, headers=headers, timeout=15, verify=not self.insecure)
                     if r.status_code == 200:
                         data = r.json().get("data", [])
                         if data:

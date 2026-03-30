@@ -1,5 +1,6 @@
 """Shared context length testing logic (canary markers + binary search)."""
 
+import random
 import time
 import uuid
 
@@ -33,20 +34,39 @@ def single_context_test(client, target_k):
     """
     chars = target_k * 1000
     canaries = [f"CANARY_{i}_{uuid.uuid4().hex[:8]}" for i in range(5)]
-    seg = (chars - 350) // 4
+    # Randomize canary placement instead of equal intervals
+    # Divide text into 8 segments, randomly assign 5 canaries to different segments
+    num_segments = 8
+    seg_size = (chars - 500) // num_segments
+    positions = random.sample(range(num_segments), 5)
+    positions.sort()  # Keep order for assembly but positions are random
+
     parts = []
-    for i in range(5):
-        parts.append(f"[{canaries[i]}]")
-        if i < 4:
-            parts.append((FILLER * (seg // len(FILLER) + 1))[:seg])
+    canary_idx = 0
+    for seg_idx in range(num_segments):
+        if canary_idx < 5 and seg_idx == positions[canary_idx]:
+            parts.append(f"[{canaries[canary_idx]}]")
+            canary_idx += 1
+        parts.append((FILLER * (seg_size // len(FILLER) + 1))[:seg_size])
+
     prompt = ("I placed 5 markers [CANARY_N_XXXXXXXX] in the text. "
               "List ALL you can find, one per line.\n\n" + "".join(parts))
 
     r = client.call([{"role": "user", "content": prompt}], max_tokens=512)
     if "error" in r:
         return target_k, 0, 5, None, "error", r.get("time", 0)
-    found = sum(1 for c in canaries if c in r["text"])
-    status = "ok" if found == 5 else "truncated"
+
+    found_flags = [c in r["text"] for c in canaries]
+    found = sum(found_flags)
+
+    # Detect middle truncation: head and tail canaries present but middle missing
+    if found_flags[0] and found_flags[4] and not all(found_flags[1:4]):
+        status = "middle_truncated"
+    elif found == 5:
+        status = "ok"
+    else:
+        status = "truncated"
+
     return target_k, found, 5, r["input_tokens"], status, r["time"]
 
 
