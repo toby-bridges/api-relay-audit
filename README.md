@@ -23,7 +23,7 @@ Security audit tool for third-party AI API relay/proxy services. Detects hidden 
 For anyone who just wants to test a relay quickly. No git clone, no pip install.
 
 ```bash
-curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/main/audit.py
+curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py
 python audit.py --key <YOUR_KEY> --url <BASE_URL>
 ```
 
@@ -119,7 +119,7 @@ MIT
 
 **方式 A — 一行命令（零安装）：**
 ```bash
-curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/main/audit.py
+curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py
 python audit.py --key <你的KEY> --url <中转站地址>
 ```
 

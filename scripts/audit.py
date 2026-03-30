@@ -38,6 +38,9 @@ def parse_args():
     p.add_argument("--skip-context", action="store_true", help="Skip context length test")
     p.add_argument("--timeout", type=int, default=120, help="Request timeout in seconds")
     p.add_argument("--output", default=None, help="Report output path (markdown)")
+    p.add_argument("--insecure", action="store_true", help="Skip SSL certificate verification")
+    p.add_argument("--format", choices=["markdown", "json"], default="markdown",
+                   help="Output format (default: markdown)")
     return p.parse_args()
 
 
@@ -165,12 +168,19 @@ def test_prompt_extraction(client, report):
             report.code(r["text"][:2000])
 
             text_lower = r["text"].lower()
-            leak_keywords = ["you are", "system prompt", "assistant", "kiro",
-                             "coding", "developer", "hidden_prompt"]
-            if any(kw in text_lower for kw in leak_keywords):
+            response_text = r["text"]
+            instruction_patterns = [
+                r"you must\b", r"you should\b", r"never\s+(?:reveal|share|disclose|mention)",
+                r"do not\b.*\b(?:discuss|reveal|share)", r"always\s+(?:respond|reply|act)",
+                r"your\s+(?:role|purpose|goal)\s+is", r"hidden_prompt",
+                r"system\s*prompt", r"^\s*\d+[\.\)]\s+", r"^\s*-\s+(?:you|never|always|do not)",
+            ]
+            instruction_hits = sum(1 for p in instruction_patterns
+                                   if re.search(p, text_lower, re.MULTILINE))
+            if instruction_hits >= 2 and len(response_text) > 200:
                 if "can't discuss" not in text_lower and "cannot" not in text_lower:
                     leaked = True
-                    report.flag("red", f"Test {name}: Hidden prompt content extracted!")
+                    report.flag("red", f"Test {name}: Hidden prompt content extracted! ({instruction_hits} instruction patterns detected)")
         time.sleep(1)
 
     if not leaked:
@@ -238,13 +248,20 @@ def test_instruction_conflict(client, report):
         report.p(f"**input_tokens**: {r['input_tokens']} | **Response**:")
         report.code(r["text"][:500])
         text_lower = r["text"].lower()
-        if "anthropic" in text_lower and "claude" in text_lower:
+        has_claude = "claude" in text_lower
+        has_anthropic = "anthropic" in text_lower
+        if has_claude and has_anthropic:
             report.flag("green", "Identity test passed: model correctly identifies as user-defined identity")
-        elif any(kw in text_lower for kw in ["amazon", "kiro", "aws"]):
+        elif not has_claude and not has_anthropic:
             overridden = True
-            report.flag("red", "Identity test failed: model claims to be made by Amazon/AWS")
+            alt_match = re.search(r"(?:i am|i'm|my name is)\s+(\w[\w\s]*?)(?:\.|,|!|\band\b|\bmade\b)", text_lower)
+            if alt_match:
+                claimed = alt_match.group(1).strip()
+                report.flag("red", f"Identity test failed: model claims to be '{claimed}' instead of Claude/Anthropic")
+            else:
+                report.flag("red", "Identity test failed: user-defined identity (Claude/Anthropic) completely overridden")
         else:
-            report.flag("yellow", "Identity test inconclusive")
+            report.flag("yellow", f"Identity test partial: {'Claude' if has_claude else 'Anthropic'} mentioned but not both")
 
     print(f"  Done: instruction conflict (overridden: {'yes' if overridden else 'no'})")
     return overridden
@@ -336,9 +353,12 @@ def test_context_length(client, report):
 # ============================================================
 
 def main():
+    import json as _json
     args = parse_args()
-    client = APIClient(args.url, args.key, args.model, timeout=args.timeout)
+    client = APIClient(args.url, args.key, args.model, timeout=args.timeout,
+                       insecure=getattr(args, 'insecure', False))
     report = Reporter()
+    test_results = {}
 
     print(f"\n{'=' * 60}")
     print(f"  API Relay Security Audit")
@@ -364,14 +384,17 @@ def main():
     # 3. Token injection
     print("[3/7] Token injection detection...")
     injection = test_token_injection(client, report)
+    test_results["injection"] = {"delta_tokens": injection, "severity": "clean" if injection <= 20 else "minor" if injection <= 100 else "injected" if injection <= 500 else "severe"}
 
     # 4. Prompt extraction
     print("[4/7] Prompt extraction tests...")
     leaked = test_prompt_extraction(client, report)
+    test_results["extraction"] = {"leaked": leaked}
 
     # 5. Instruction conflict
     print("[5/7] Instruction conflict tests...")
     overridden = test_instruction_conflict(client, report)
+    test_results["instruction_override"] = {"overridden": overridden}
 
     # 6. Jailbreak
     print("[6/7] Jailbreak tests...")
@@ -402,15 +425,26 @@ def main():
         report.p("No significant injection or instruction override detected.")
 
     # Output
-    md = report.render(target_url=client.base_url, model=args.model)
-
-    if args.output:
-        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.output).write_text(md, encoding="utf-8")
-        print(f"\n  Report saved: {args.output}")
+    output_format = getattr(args, 'format', 'markdown')
+    if output_format == "json":
+        json_report = report.to_json(target_url=client.base_url, model=args.model,
+                                     test_results=test_results)
+        json_str = _json.dumps(json_report, indent=2, ensure_ascii=False)
+        if args.output:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.output).write_text(json_str, encoding="utf-8")
+            print(f"\n  JSON report saved: {args.output}")
+        else:
+            print(json_str)
     else:
-        print(f"\n{'=' * 60}")
-        print(md)
+        md = report.render(target_url=client.base_url, model=args.model)
+        if args.output:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.output).write_text(md, encoding="utf-8")
+            print(f"\n  Report saved: {args.output}")
+        else:
+            print(f"\n{'=' * 60}")
+            print(md)
 
     print(f"\n{'=' * 60}")
     print("  Audit complete")

@@ -1,5 +1,6 @@
 """Markdown report generator for audit results."""
 
+import json
 from datetime import datetime
 
 
@@ -113,3 +114,40 @@ class Reporter:
             header += f"- {icon} {msg}\n"
         header += "\n---\n"
         return header + "\n".join(self.sections)
+
+    def to_json(self, target_url="", model="", test_results=None):
+        """Render the report as a structured JSON dict.
+
+        Args:
+            target_url: The relay URL under test.
+            model: The model identifier used.
+            test_results: Dict of test result data collected during the audit.
+
+        Returns:
+            A dict suitable for ``json.dumps()``.
+        """
+        red_flags = [msg for level, msg in self.summary if level == "red"]
+        yellow_flags = [msg for level, msg in self.summary if level == "yellow"]
+        green_flags = [msg for level, msg in self.summary if level == "green"]
+
+        # Determine overall risk level
+        if red_flags:
+            risk_level = "HIGH"
+        elif yellow_flags:
+            risk_level = "MEDIUM"
+        else:
+            risk_level = "LOW"
+
+        result = {
+            "target": target_url,
+            "model": model,
+            "timestamp": datetime.now().isoformat(),
+            "risk_level": risk_level,
+            "tests": test_results or {},
+            "flags": {
+                "red": red_flags,
+                "yellow": yellow_flags,
+                "green": green_flags,
+            },
+        }
+        return result
