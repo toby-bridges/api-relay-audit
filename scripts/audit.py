@@ -197,6 +197,10 @@ def test_instruction_conflict(client, report):
     overridden = False
     if "error" in r:
         report.p(f"Error: {r['error']}")
+        # 422 typically means relay rejects custom system prompts — user has no control
+        if "422" in str(r.get("error", "")):
+            overridden = True
+            report.flag("red", "Cat test blocked: relay rejects custom system prompts (HTTP 422)")
     else:
         report.p(f"**input_tokens**: {r['input_tokens']} | **Response**: `{r['text']}`")
         text = r["text"].strip().lower()
@@ -227,6 +231,9 @@ def test_instruction_conflict(client, report):
 
     if "error" in r:
         report.p(f"Error: {r['error']}")
+        if "422" in str(r.get("error", "")):
+            overridden = True
+            report.flag("red", "Identity test blocked: relay rejects custom system prompts (HTTP 422)")
     else:
         report.p(f"**input_tokens**: {r['input_tokens']} | **Response**:")
         report.code(r["text"][:500])
@@ -308,11 +315,15 @@ def test_context_length(client, report):
     fail_list = [r[0] for r in results if r[4] != "ok"]
     if ok_list and fail_list:
         boundary = f"{max(ok_list)}K ~ {min(fail_list)}K chars"
-        max_tokens = max(r[3] for r in results if r[4] == "ok" and r[3])
-        report.flag(
-            "yellow" if max_tokens < 150000 else "green",
-            f"Context boundary: {boundary} (max passed: ~{max_tokens:,} tokens)",
-        )
+        ok_tokens = [r[3] for r in results if r[4] == "ok" and r[3]]
+        max_tokens = max(ok_tokens) if ok_tokens else 0
+        if max_tokens:
+            report.flag(
+                "yellow" if max_tokens < 150000 else "green",
+                f"Context boundary: {boundary} (max passed: ~{max_tokens:,} tokens)",
+            )
+        else:
+            report.flag("yellow", f"Context boundary: {boundary} (token counts unavailable)")
     elif not fail_list and ok_list:
         max_tokens = max((r[3] for r in results if r[3]), default=0)
         report.flag("green", f"All passed, max tested {max(ok_list)}K chars (~{max_tokens:,} tokens)")

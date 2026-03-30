@@ -12,10 +12,34 @@ import httpx
 
 
 class APIClient:
-    """Unified API client that auto-detects format and falls back to curl on SSL errors."""
+    """Unified API client that auto-detects Anthropic vs OpenAI format.
+
+    On the first ``call()``, the client tries the Anthropic native message
+    format and, if that fails, falls back to the OpenAI-compatible
+    ``/chat/completions`` endpoint.  If a Python-level SSL error is
+    encountered, the transport silently switches to a ``curl -sk``
+    subprocess so the audit can continue against self-signed relays.
+
+    Attributes:
+        base_url: Root URL of the relay (trailing slash stripped).
+        api_key: Bearer / x-api-key token.
+        model: Model identifier forwarded to the relay.
+        timeout: Per-request timeout in seconds.
+        verbose: If ``True``, diagnostic messages are printed to stdout.
+    """
 
     def __init__(self, base_url: str, api_key: str, model: str,
                  timeout: int = 120, verbose: bool = True):
+        """Initialise the client.
+
+        Args:
+            base_url: Root URL of the API relay (e.g. ``"https://relay.example.com"``).
+            api_key: Authentication token sent as ``x-api-key`` (Anthropic)
+                or ``Authorization: Bearer`` (OpenAI).
+            model: Model identifier to include in every request body.
+            timeout: HTTP / curl timeout in seconds. Defaults to 120.
+            verbose: Whether to print diagnostic log lines. Defaults to True.
+        """
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -26,6 +50,12 @@ class APIClient:
 
     @property
     def detected_format(self):
+        """Return the detected API format.
+
+        Returns:
+            The string ``"anthropic"``, ``"openai"``, or ``None`` if
+            auto-detection has not yet been performed.
+        """
         return self._format
 
     def _log(self, msg: str):
@@ -116,10 +146,35 @@ class APIClient:
     # -- Public API -----------------------------------------------------------
 
     def call(self, messages, system=None, max_tokens=512):
-        """Send a request, auto-detecting format on first call.
+        """Send a chat completion request, auto-detecting format on first call.
 
-        Returns dict with keys: text, input_tokens, output_tokens, raw
-        Or dict with key: error
+        The method records wall-clock elapsed time and attaches it as the
+        ``"time"`` key in the returned dict.
+
+        Args:
+            messages: List of message dicts, e.g.
+                ``[{"role": "user", "content": "Hi"}]``.
+            system: Optional system prompt string. Sent as a top-level
+                ``"system"`` field (Anthropic) or as a system-role message
+                (OpenAI).
+            max_tokens: Maximum tokens to generate. Defaults to 512.
+
+        Returns:
+            A dict with the following keys on success:
+
+            - ``text`` (str): The model's reply text.
+            - ``input_tokens`` (int): Prompt token count.
+            - ``output_tokens`` (int): Completion token count.
+            - ``raw`` (dict): Full JSON response from the relay.
+            - ``time`` (float): Wall-clock seconds elapsed.
+
+            On failure the dict contains ``"error"`` (str) and ``"time"``.
+
+        Examples:
+            >>> client = APIClient("https://relay.example.com", "sk-...", "claude-3")
+            >>> result = client.call([{"role": "user", "content": "Say hello"}])
+            >>> if "error" not in result:
+            ...     print(result["text"])
         """
         start = time.time()
         try:
@@ -145,7 +200,16 @@ class APIClient:
                 self._log("  [format] -> Anthropic native")
                 return anthropic_result
         except Exception as e:
-            self._handle_ssl_error(e)
+            if self._handle_ssl_error(e):
+                # Retry Anthropic with curl before falling through to OpenAI
+                try:
+                    anthropic_result = self._call_anthropic(messages, system, max_tokens)
+                    if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
+                        self._format = "anthropic"
+                        self._log("  [format] -> Anthropic native (curl)")
+                        return anthropic_result
+                except Exception:
+                    pass  # Fall through to OpenAI probe
 
         # Fallback to OpenAI
         self._log("  [format] Anthropic failed/empty, trying OpenAI...")
@@ -179,24 +243,51 @@ class APIClient:
         return False
 
     def get_models(self):
-        """Fetch model list from /v1/models."""
+        """Fetch the model list from the ``/v1/models`` endpoint.
+
+        Uses the same transport (httpx or curl) that has been selected for
+        regular requests.
+
+        Returns:
+            A list of model dicts as returned by the relay's ``data`` field,
+            or an empty list if the request fails.
+
+        Examples:
+            >>> models = client.get_models()
+            >>> for m in models:
+            ...     print(m.get("id"))
+        """
         url = self.base_url
         if not url.endswith("/v1"):
             url += "/v1"
         url += "/models"
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        try:
-            if self._use_curl:
-                cmd = ["curl", "-sk", url, "--max-time", "15"]
-                for k, v in headers.items():
-                    cmd.extend(["-H", f"{k}: {v}"])
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
-                if r.returncode == 0:
-                    return json.loads(r.stdout).get("data", [])
-            else:
-                r = httpx.get(url, headers=headers, timeout=15)
-                if r.status_code == 200:
-                    return r.json().get("data", [])
-        except Exception:
-            pass
+
+        # Try both auth styles: OpenAI Bearer first, then Anthropic x-api-key
+        auth_variants = [
+            {"Authorization": f"Bearer {self.api_key}"},
+            {"x-api-key": self.api_key, "anthropic-version": "2023-06-01"},
+        ]
+        # If format already detected, try the matching auth first
+        if self._format == "anthropic":
+            auth_variants.reverse()
+
+        for headers in auth_variants:
+            try:
+                if self._use_curl:
+                    cmd = ["curl", "-sk", url, "--max-time", "15"]
+                    for k, v in headers.items():
+                        cmd.extend(["-H", f"{k}: {v}"])
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+                    if r.returncode == 0:
+                        data = json.loads(r.stdout).get("data", [])
+                        if data:
+                            return data
+                else:
+                    r = httpx.get(url, headers=headers, timeout=15)
+                    if r.status_code == 200:
+                        data = r.json().get("data", [])
+                        if data:
+                            return data
+            except Exception:
+                continue
         return []
