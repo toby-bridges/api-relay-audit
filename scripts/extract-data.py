@@ -139,6 +139,47 @@ def parse_report(file_path):
                     "verdict": verdict,
                 })
 
+    # Error response leakage (Step 9, AC-2 adjacent)
+    error_leakage = {"severity": "none", "triggers": []}
+    leak_section_match = re.search(
+        r"## 9\. Error Response Leakage.*?(?=\n## |\Z)",
+        content, re.DOTALL,
+    )
+    if leak_section_match:
+        section = leak_section_match.group(0)
+        # Overall severity from the flag line / table
+        if "CRITICAL" in section:
+            error_leakage["severity"] = "critical"
+        elif "🔴 HIGH" in section or "partial credentials" in section.lower():
+            error_leakage["severity"] = "high"
+        elif "🟡 MEDIUM" in section or "filesystem paths" in section.lower():
+            error_leakage["severity"] = "medium"
+        elif "INCONCLUSIVE" in section:
+            error_leakage["severity"] = "inconclusive"
+        # Parse the per-trigger table rows
+        for line in section.split("\n"):
+            if not line.startswith("| "):
+                continue
+            if "Trigger" in line or "---" in line:
+                continue
+            parts = [p.strip() for p in line.split("|")[1:-1]]
+            if len(parts) >= 4:
+                sev_cell = parts[2]
+                if "CRITICAL" in sev_cell:
+                    sev = "critical"
+                elif "HIGH" in sev_cell:
+                    sev = "high"
+                elif "MEDIUM" in sev_cell:
+                    sev = "medium"
+                else:
+                    sev = "none"
+                error_leakage["triggers"].append({
+                    "trigger": parts[0],
+                    "status": parts[1],
+                    "severity": sev,
+                    "leaks": parts[3],
+                })
+
     return {
         "domain": domain,
         "promptTests": prompt_tests,
@@ -146,6 +187,7 @@ def parse_report(file_path):
         "contextTests": context_tests,
         "apiFormat": api_format,
         "toolSubstitution": tool_substitution,
+        "errorLeakage": error_leakage,
     }
 
 
@@ -179,6 +221,7 @@ def main():
         entry["contextTests"] = details["contextTests"]
         entry["apiFormat"] = details["apiFormat"]
         entry["toolSubstitution"] = details["toolSubstitution"]
+        entry["errorLeakage"] = details["errorLeakage"]
 
     data_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n  data.json updated: {data_path}")

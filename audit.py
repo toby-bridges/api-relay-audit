@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-API Relay Security Audit Tool v2.1 --- Standalone Edition
+API Relay Security Audit Tool v2.2 --- Standalone Edition
 
 A COMPLETE, SELF-CONTAINED audit script with ZERO external dependencies.
 Uses only Python stdlib + curl subprocess calls for all HTTP communication.
 
-Full 8-step audit: infrastructure, models, token injection, prompt extraction,
-instruction conflict, jailbreak, context length, and tool-call package
-substitution (AC-1.a). Threat taxonomy follows Liu et al., *Your Agent Is
+Full 9-step audit (expanding to 11 in v3): infrastructure, models, token
+injection, prompt extraction, instruction conflict, jailbreak, context
+length, tool-call package substitution (AC-1.a), and error response header
+leakage (AC-2 adjacent). Threat taxonomy follows Liu et al., *Your Agent Is
 Mine*, arXiv:2604.08407.
 
 Usage:
@@ -18,7 +19,8 @@ Combined from:
   - api_relay_audit/reporter.py          (Reporter class)
   - api_relay_audit/context.py           (context scan logic)
   - api_relay_audit/tool_substitution.py (AC-1.a tool-call substitution test)
-  - scripts/audit.py                     (8-step audit orchestration)
+  - api_relay_audit/error_leakage.py     (AC-2 error response header leakage test)
+  - scripts/audit.py                     (9-step audit orchestration)
 """
 
 import argparse
@@ -37,6 +39,60 @@ from urllib.parse import urlparse
 # ============================================================
 # Section 1: API Client (curl-only transport)
 # ============================================================
+
+def _parse_curl_i_output(output: str) -> dict:
+    """Parse ``curl -i`` (or ``curl -sk -i``) stdout into a response dict.
+
+    Handles HTTP/1.x and HTTP/2 status lines and normalises ``\\r\\n`` line
+    endings. A leading ``HTTP/X 100 Continue`` preface is skipped so the
+    final status is surfaced.
+
+    Returns ``{"status": int, "headers": dict, "body": str, "error": str|None}``
+    where ``status == 0`` indicates a parse failure (``error`` set to a
+    short diagnostic string).
+    """
+    if not output:
+        return {"status": 0, "headers": {}, "body": "", "error": "empty curl output"}
+
+    text = output.replace("\r\n", "\n")
+
+    sep_idx = text.find("\n\n")
+    if sep_idx == -1:
+        return {"status": 0, "headers": {}, "body": text, "error": "no header/body separator"}
+    headers_block = text[:sep_idx]
+    body_block = text[sep_idx + 2:]
+
+    while headers_block.split("\n", 1)[0].find(" 100 ") != -1:
+        next_sep = body_block.find("\n\n")
+        if next_sep == -1:
+            return {"status": 0, "headers": {}, "body": body_block,
+                    "error": "unterminated 100 Continue preface"}
+        headers_block = body_block[:next_sep]
+        body_block = body_block[next_sep + 2:]
+
+    lines = headers_block.split("\n")
+    status_line = lines[0] if lines else ""
+    parts = status_line.split(" ", 2)
+    status = 0
+    if len(parts) >= 2:
+        try:
+            status = int(parts[1])
+        except ValueError:
+            status = 0
+
+    headers = {}
+    for line in lines[1:]:
+        if ":" in line:
+            k, _, v = line.partition(":")
+            headers[k.strip()] = v.strip()
+
+    return {
+        "status": status,
+        "headers": headers,
+        "body": body_block,
+        "error": None,
+    }
+
 
 class APIClient:
     """Unified API client that auto-detects Anthropic vs OpenAI format.
@@ -237,6 +293,43 @@ class APIClient:
             except Exception:
                 continue
         return []
+
+    # -- Raw request (Step 9 error-leakage probes) ----------------------------
+
+    def raw_request(self, method: str, path: str, headers: dict,
+                    body: bytes, content_type: str = "application/json",
+                    timeout: int = 30) -> dict:
+        """Low-level request that preserves the full response body and headers.
+
+        Uses ``curl -sk -i -X <method>`` so both headers and body land on
+        stdout and self-signed certificates are tolerated. Never raises;
+        on transport failure, returns a dict with ``status == 0`` and an
+        ``error`` string.
+
+        Matches the signature of the modular ``APIClient.raw_request`` so
+        the Step 9 orchestrator is identical across both distributions.
+        """
+        base = self.base_url
+        if base.endswith("/v1") and path.startswith("/v1"):
+            base = base[:-3]
+        url = base + path
+
+        all_headers = {**headers, "content-type": content_type}
+        cmd = ["curl", "-sk", "-i", "-X", method, url,
+               "--max-time", str(timeout), "--data-binary", "@-"]
+        for k, v in all_headers.items():
+            cmd.extend(["-H", f"{k}: {v}"])
+        try:
+            r = subprocess.run(cmd, capture_output=True, input=body,
+                               timeout=timeout + 10)
+            if r.returncode != 0:
+                err = r.stderr.decode("utf-8", errors="replace")[:200]
+                return {"status": 0, "headers": {}, "body": "",
+                        "error": f"curl failed: {err}"}
+            output = r.stdout.decode("utf-8", errors="replace")
+            return _parse_curl_i_output(output)
+        except Exception as e:
+            return {"status": 0, "headers": {}, "body": "", "error": str(e)}
 
 
 # ============================================================
@@ -456,6 +549,390 @@ def run_tool_substitution_test(client, sleep=1.0):
 
 
 # ============================================================
+# Section 3c: Error Response Header Leakage (Step 9, AC-2 adjacent)
+# ============================================================
+
+# Upstream provider hostnames. If any of these appear in a relay's error
+# response, the relay is exposing its internal plumbing.
+LEAK_UPSTREAM_HOSTS = (
+    "api.anthropic.com",
+    "api.openai.com",
+    "generativelanguage.googleapis.com",
+    "openrouter.ai",
+    "api.mistral.ai",
+    "api.deepseek.com",
+    "api.together.xyz",
+    "api.groq.com",
+)
+
+# Environment variable names whose presence in an error body means the
+# relay's error handler is dumping its own process environment.
+LEAK_ENV_VAR_MARKERS = (
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "MISTRAL_API_KEY",
+    "API_KEY=",
+    "SECRET_KEY=",
+)
+
+# Filesystem path prefixes that signal a server-side path leak.
+LEAK_PATH_PREFIXES = (
+    "/home/",
+    "/root/",
+    "/var/www/",
+    "/var/lib/",
+    "/app/",
+    "/opt/",
+    "/usr/local/",
+    "C:\\Users\\",
+    "C:\\ProgramData\\",
+)
+
+# Stack trace markers from common server-side languages.
+LEAK_STACK_TRACE_MARKERS = (
+    "Traceback (most recent call last)",
+    'File "',
+    "at <anonymous>",
+    "at Object.",
+    "at async ",
+    "goroutine 1 [",
+    "panic: ",
+)
+
+# LiteLLM internal field names (v1.5.1). Sources: LiteLLM issues
+# #5762 / #13705 / #20419. Presence in error body signals proxy/router
+# internals bled through.
+LEAK_LITELLM_INTERNAL_MARKERS = (
+    "user_api_key_user_email",
+    "requester_ip_address",
+    "UserAPIKeyAuth",
+    "previous_models",
+    "litellm_params",
+    '"user_api_key"',
+    '"model_list"',
+)
+
+# PII echo markers from provider-side guardrails (v1.5.1). Source: LiteLLM
+# issue #12152 (Bedrock SensitiveInformationPolicyConfig).
+LEAK_PII_ECHO_MARKERS = (
+    '"piiEntities"',
+    "sensitiveInformationPolicy",
+)
+
+# Secret shape patterns adapted from LiteLLM _logging.py (Apache-2.0,
+# BerriAI/litellm, _build_secret_patterns()). All patterns map to HIGH
+# severity. Length floors minimise false positives on doc snippets.
+# google_key_url_param added in v1.5.1 from LiteLLM issues #8075 / #15799.
+LEAK_SECRET_REGEX_PATTERNS = [
+    (re.compile(r"sk-[A-Za-z0-9\-_]{20,}"),                      "sk_prefix_secret"),
+    (re.compile(r"Bearer\s+[A-Za-z0-9\-._~+/]{20,}=*"),         "bearer_token"),
+    (re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}"),                   "aws_access_key"),
+    (re.compile(r"AIza[0-9A-Za-z\-_]{35}"),                      "google_api_key"),
+    (re.compile(r"[?&]key=[A-Za-z0-9_\-]{25,}"),                "google_key_url_param"),
+    (re.compile(r"ya29\.[A-Za-z0-9_.~+/\-]{20,}"),              "gcp_oauth_token"),
+    (re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*"), "jwt_token"),
+    (re.compile(
+        r"-----BEGIN[A-Z \-]*PRIVATE KEY-----[\s\S]*?-----END[A-Z \-]*PRIVATE KEY-----"
+    ),                                                           "pem_private_key"),
+    (re.compile(r"(?<=://)[^\s'\"]*:[^\s'\"@]+(?=@)"),          "db_connstring_password"),
+]
+
+
+def _leak_build_triggers(aggressive):
+    """Build the list of error-probe request specs.
+
+    Each entry is
+    ``(name, method, path, body_bytes, content_type, header_override)``.
+    ``header_override`` (when not None) merges on top of the default auth
+    headers for that trigger; used by ``auth_probe`` to inject a fake
+    bearer value.
+    """
+    valid_body = json.dumps({
+        "model": "claude-opus-4-6",
+        "max_tokens": 10,
+        "messages": [{"role": "user", "content": "hi"}],
+    }).encode("utf-8")
+
+    triggers = [
+        (
+            "malformed_json",
+            "POST", "/v1/messages",
+            b"{not json",
+            "application/json",
+            None,
+        ),
+        (
+            "invalid_model",
+            "POST", "/v1/messages",
+            json.dumps({
+                "model": "nonexistent-xyz-999",
+                "max_tokens": 10,
+                "messages": [{"role": "user", "content": "hi"}],
+            }).encode("utf-8"),
+            "application/json",
+            None,
+        ),
+        (
+            "wrong_content_type",
+            "POST", "/v1/messages",
+            valid_body,
+            "text/plain",
+            None,
+        ),
+        (
+            "missing_messages",
+            "POST", "/v1/messages",
+            b'{"model":"claude-opus-4-6","max_tokens":10}',
+            "application/json",
+            None,
+        ),
+        (
+            "unknown_endpoint",
+            "POST", "/v1/nonexistent-route",
+            b"{}",
+            "application/json",
+            None,
+        ),
+        # NEW in v1.5: force upstream round-trip. Catches one-api-style
+        # silent passthrough where an invalid request is forwarded to
+        # upstream, which rejects it and the relay echoes the upstream
+        # error body (possibly leaking the provider URL).
+        (
+            "force_upstream_error",
+            "POST", "/v1/messages",
+            json.dumps({
+                "model": "claude-opus-4-6",
+                "max_tokens": 99999999,
+                "messages": [{"role": "user", "content": "hi"}],
+            }).encode("utf-8"),
+            "application/json",
+            None,
+        ),
+        # NEW in v1.5: auth header echo probe. Fake bearer with 20+ chars
+        # so the bearer_token regex in LEAK_SECRET_REGEX_PATTERNS will
+        # flag it deterministically if the relay echoes it back.
+        (
+            "auth_probe",
+            "POST", "/v1/messages",
+            valid_body,
+            "application/json",
+            {"Authorization": "Bearer nothing-fake-token-xyz-999-auth-probe"},
+        ),
+    ]
+    if aggressive:
+        # 256 KB filler. NOT 10 MB -- billing risk on metered relays.
+        filler = "A" * (256 * 1024)
+        big_body = json.dumps({
+            "model": "claude-opus-4-6",
+            "max_tokens": 10,
+            "messages": [{"role": "user", "content": filler}],
+        }).encode("utf-8")
+        triggers.append((
+            "oversized_context",
+            "POST", "/v1/messages",
+            big_body,
+            "application/json",
+            None,
+        ))
+    return triggers
+
+
+def _leak_redact_api_key(text, api_key):
+    """Replace api_key occurrences with <REDACTED_API_KEY>."""
+    if not api_key or not text:
+        return text
+    text = text.replace(api_key, "<REDACTED_API_KEY>")
+    if len(api_key) >= 8:
+        text = text.replace(api_key[:8], "<REDACTED_PREFIX>")
+    return text
+
+
+def _leak_mk_hit(severity, kind, snippet, where, api_key):
+    return {
+        "severity": severity,
+        "kind": kind,
+        "snippet": _leak_redact_api_key(snippet, api_key),
+        "where": where,
+    }
+
+
+def scan_for_leaks(body, response_headers, api_key, base_url):
+    """Scan the response body and response headers for credential leaks.
+
+    Severity tiers:
+        critical : full API key value appears verbatim
+        high     : first-8 key prefix OR upstream provider host
+                   OR environment variable name OR any LiteLLM-style
+                   secret regex pattern
+        medium   : filesystem path OR stack trace marker
+
+    Secret regex patterns adapted from LiteLLM _logging.py (Apache-2.0,
+    BerriAI/litellm). Regex matches that overlap an already-claimed
+    literal api_key span are skipped to prevent double-counting.
+    """
+    del base_url  # reserved for future use
+    hits = []
+    targets = [("body", body or "")]
+    if response_headers:
+        for k, v in response_headers.items():
+            targets.append((f"header: {k}", str(v)))
+
+    first8 = api_key[:8] if api_key and len(api_key) >= 8 else ""
+
+    for where, text in targets:
+        if not text:
+            continue
+        text_lower = text.lower()
+
+        # Track literal api_key / first8 spans so regex patterns below
+        # do not double-count the same credential.
+        claimed_spans = []
+
+        if api_key and api_key in text:
+            idx = text.index(api_key)
+            claimed_spans.append((idx, idx + len(api_key)))
+            raw = text[max(0, idx - 40):idx + len(api_key) + 40]
+            hits.append(_leak_mk_hit("critical", "full_api_key_echo", raw, where, api_key))
+        elif first8 and first8 in text:
+            idx = text.index(first8)
+            claimed_spans.append((idx, idx + len(first8)))
+            raw = text[max(0, idx - 40):idx + len(first8) + 40]
+            hits.append(_leak_mk_hit("high", "api_key_prefix", raw, where, api_key))
+
+        # HIGH: secret shape regex patterns (LiteLLM port, Apache-2.0)
+        for pattern, kind in LEAK_SECRET_REGEX_PATTERNS:
+            m = pattern.search(text)
+            if not m:
+                continue
+            start, end = m.start(), m.end()
+            if any(start < ce and end > cs for cs, ce in claimed_spans):
+                continue
+            raw = text[max(0, start - 20):min(len(text), end + 20)]
+            hits.append(_leak_mk_hit("high", kind, raw, where, api_key))
+
+        for host in LEAK_UPSTREAM_HOSTS:
+            if host in text_lower:
+                idx = text_lower.index(host)
+                raw = text[max(0, idx - 30):idx + len(host) + 30]
+                hits.append(_leak_mk_hit("high", "upstream_host", raw, where, api_key))
+                break
+
+        for env in LEAK_ENV_VAR_MARKERS:
+            if env in text:
+                idx = text.index(env)
+                raw = text[max(0, idx - 20):idx + len(env) + 40]
+                hits.append(_leak_mk_hit("high", "env_var", raw, where, api_key))
+                break
+
+        for prefix in LEAK_PATH_PREFIXES:
+            if prefix in text:
+                idx = text.index(prefix)
+                raw = text[max(0, idx):idx + 80]
+                hits.append(_leak_mk_hit("medium", "fs_path", raw, where, api_key))
+                break
+
+        for marker in LEAK_STACK_TRACE_MARKERS:
+            if marker in text:
+                idx = text.index(marker)
+                raw = text[max(0, idx):idx + 120]
+                hits.append(_leak_mk_hit("medium", "stack_trace", raw, where, api_key))
+                break
+
+        # v1.5.1: LiteLLM internal field leak
+        for marker in LEAK_LITELLM_INTERNAL_MARKERS:
+            if marker in text:
+                idx = text.index(marker)
+                raw = text[max(0, idx - 20):idx + len(marker) + 60]
+                hits.append(_leak_mk_hit("medium", "litellm_internal_leak", raw, where, api_key))
+                break
+
+        # v1.5.1: provider-side guardrail PII echo
+        for marker in LEAK_PII_ECHO_MARKERS:
+            if marker in text:
+                idx = text.index(marker)
+                raw = text[max(0, idx):idx + 120]
+                hits.append(_leak_mk_hit("medium", "pii_echo", raw, where, api_key))
+                break
+
+    return hits
+
+
+def _leak_highest_severity(hits):
+    if not hits:
+        return "none"
+    for level in ("critical", "high", "medium"):
+        if any(h["severity"] == level for h in hits):
+            return level
+    return "none"
+
+
+def run_error_leakage_test(client, api_key, base_url, aggressive=False):
+    """Run all error-leakage probes against the client.
+
+    Returns (results, severity, inconclusive) -- same shape as the modular
+    ``api_relay_audit.error_leakage.run_error_leakage_test`` so the Step 9
+    orchestrator is identical across both distributions.
+    """
+    triggers = _leak_build_triggers(aggressive)
+
+    default_auth_headers = {
+        "x-api-key": api_key,
+        "Authorization": f"Bearer {api_key}",
+        "anthropic-version": "2023-06-01",
+    }
+
+    results = []
+    for name, method, path, body, content_type, header_override in triggers:
+        # v1.5: apply per-trigger header override (used by auth_probe).
+        if header_override:
+            auth_headers = {**default_auth_headers, **header_override}
+        else:
+            auth_headers = default_auth_headers
+        r = client.raw_request(
+            method=method,
+            path=path,
+            headers=auth_headers,
+            body=body,
+            content_type=content_type,
+            timeout=30,
+        )
+        status = r.get("status", 0)
+        body_text = r.get("body", "") or ""
+        resp_headers = r.get("headers", {}) or {}
+        error = r.get("error")
+
+        hits = []
+        if error is None and status != 0:
+            hits = scan_for_leaks(body_text, resp_headers, api_key, base_url)
+
+        severity = _leak_highest_severity(hits)
+        preview = _leak_redact_api_key(body_text[:400], api_key)
+
+        results.append({
+            "trigger": name,
+            "status": status,
+            "error": error,
+            "hits": hits,
+            "severity": severity,
+            "body_preview": preview,
+        })
+
+    all_hits = [h for r in results for h in r["hits"]]
+    overall_severity = _leak_highest_severity(all_hits)
+
+    all_200 = all(r["status"] == 200 for r in results)
+    all_errors = all(
+        r["error"] is not None or r["status"] == 0 for r in results
+    )
+    inconclusive = all_200 or all_errors
+
+    return results, overall_severity, inconclusive
+
+
+# ============================================================
 # Section 4: CLI
 # ============================================================
 
@@ -468,6 +945,11 @@ def parse_args():
     p.add_argument("--skip-context", action="store_true", help="Skip context length test")
     p.add_argument("--skip-tool-substitution", action="store_true",
                    help="Skip tool-call package substitution test (AC-1.a)")
+    p.add_argument("--skip-error-leakage", action="store_true",
+                   help="Skip error response header leakage test (Step 9, AC-2 adjacent)")
+    p.add_argument("--aggressive-error-probes", action="store_true",
+                   help="Enable the 256 KB oversized-context error probe in Step 9. "
+                        "Warning: may incur metered billing on pay-as-you-go relays.")
     p.add_argument("--warmup", type=int, default=0, metavar="N",
                    help="Send N benign requests before the audit to mitigate "
                         "request-count-gated backdoors (AC-1.b). Default: 0")
@@ -814,6 +1296,107 @@ def test_tool_substitution(client, report):
     return detected, inconclusive
 
 
+def test_error_leakage(client, args, report):
+    """Step 9: Error Response Header Leakage (AC-2 adjacent).
+
+    Fire deterministic broken requests at the relay, capture the full
+    response body and response headers via ``APIClient.raw_request``, and
+    scan for echoed credentials, upstream URLs, environment variable names,
+    filesystem paths, and stack-trace markers.
+
+    Returns ``(severity, inconclusive)`` where ``severity`` is one of
+    ``"none"``, ``"medium"``, ``"high"``, ``"critical"``.
+    """
+    report.h2("9. Error Response Leakage (AC-2 adjacent)")
+    report.p(
+        "Fire deterministic broken requests (malformed JSON, invalid model, "
+        "wrong content-type, missing fields, unknown endpoint) at the relay "
+        "and scan the error response body and headers for echoed credentials, "
+        "upstream URLs, environment variable names, filesystem paths, and "
+        "stack-trace markers. "
+        "Reference: Liu et al., *Your Agent Is Mine*, arXiv:2604.08407 "
+        "figure 3 (AC-2 credential abuse at 4.25% of free routers, 2x more "
+        "common than AC-1 code injection).\n"
+    )
+    if args.aggressive_error_probes:
+        report.p("_Aggressive probes enabled: includes 256 KB oversized-context request._\n")
+
+    results, severity, inconclusive = run_error_leakage_test(
+        client, args.key, client.base_url,
+        aggressive=args.aggressive_error_probes,
+    )
+
+    report.p("| Trigger | HTTP Status | Severity | Leaks |")
+    report.p("|---------|-------------|----------|-------|")
+    for r in results:
+        name = r["trigger"]
+        status_cell = str(r["status"]) if r["status"] else "—"
+        if r["error"]:
+            status_cell = f"ERR: {r['error'][:40]}"
+        sev = r["severity"]
+        if sev == "critical":
+            sev_cell = "\U0001f534 CRITICAL"
+        elif sev == "high":
+            sev_cell = "\U0001f534 HIGH"
+        elif sev == "medium":
+            sev_cell = "\U0001f7e1 MEDIUM"
+        else:
+            sev_cell = "\U0001f7e2 none"
+        leak_kinds = sorted({h["kind"] for h in r["hits"]})
+        leaks_cell = ", ".join(leak_kinds) if leak_kinds else "—"
+        report.p(f"| {name} | {status_cell} | {sev_cell} | {leaks_cell} |")
+
+    any_hits = [r for r in results if r["hits"]]
+    if any_hits:
+        report.p("")
+        for r in any_hits:
+            report.h3(f"Trigger detail: `{r['trigger']}` ({r['severity']})")
+            report.p(f"HTTP status: **{r['status']}**")
+            report.p("Body preview (redacted):")
+            report.code(r["body_preview"] or "(empty)")
+            report.p("Hits:")
+            for h in r["hits"]:
+                report.p(
+                    f"- `{h['kind']}` at {h['where']} [{h['severity']}]: "
+                    f"`{h['snippet'][:200].replace('`', '')}`"
+                )
+
+    if severity == "critical":
+        report.flag(
+            "red",
+            "Error response leaks the full API key (AC-2 direct credential "
+            "echo). Do not use this relay.",
+        )
+    elif severity == "high":
+        report.flag(
+            "red",
+            "Error response leaks partial credentials, upstream provider URL, "
+            "or environment variable names. The relay is exposing internal "
+            "plumbing that maps onto the attacker's credential collection surface.",
+        )
+    elif severity == "medium":
+        report.flag(
+            "yellow",
+            "Error response leaks filesystem paths or stack traces. "
+            "Information disclosure is present but not directly "
+            "credential-exposing.",
+        )
+    elif inconclusive:
+        report.flag(
+            "yellow",
+            "Error leakage test INCONCLUSIVE: every probe returned HTTP 200 "
+            "or failed with a transport error, so no error surface could be "
+            "inspected. A relay that silently swallows malformed JSON into a "
+            "success response is itself suspicious.",
+        )
+    else:
+        report.flag("green", "No credential echo or upstream leakage detected in error responses")
+
+    state = severity if severity != "none" else ("inconclusive" if inconclusive else "clean")
+    print(f"  Done: error response leakage ({state})")
+    return severity, inconclusive
+
+
 def test_context_length(client, report):
     report.h2("7. Context Length Test")
     report.p("Place 5 canary markers at equal intervals in long text, check if model can recall all.\n")
@@ -886,66 +1469,100 @@ def main():
 
     # 1. Infrastructure
     if not args.skip_infra:
-        print("[1/8] Infrastructure recon...")
+        print("[1/11] Infrastructure recon...")
         test_infrastructure(client.base_url, report)
     else:
-        print("[1/8] Infrastructure recon (skipped)")
+        print("[1/11] Infrastructure recon (skipped)")
 
     # 2. Models
-    print("[2/8] Model list...")
+    print("[2/11] Model list...")
     test_models(client, report)
 
     # 3. Token injection
-    print("[3/8] Token injection detection...")
+    print("[3/11] Token injection detection...")
     injection = test_token_injection(client, report)
 
     # 4. Prompt extraction
-    print("[4/8] Prompt extraction tests...")
+    print("[4/11] Prompt extraction tests...")
     leaked = test_prompt_extraction(client, report)
 
     # 5. Instruction conflict
-    print("[5/8] Instruction conflict tests...")
+    print("[5/11] Instruction conflict tests...")
     overridden = test_instruction_conflict(client, report)
 
     # 6. Jailbreak
-    print("[6/8] Jailbreak tests...")
+    print("[6/11] Jailbreak tests...")
     test_jailbreak(client, report)
 
     # 7. Context length
     if not args.skip_context:
-        print("[7/8] Context length test...")
+        print("[7/11] Context length test...")
         test_context_length(client, report)
     else:
-        print("[7/8] Context length test (skipped)")
+        print("[7/11] Context length test (skipped)")
 
     # 8. Tool-call package substitution (AC-1.a)
     substitution_detected = False
     substitution_inconclusive = False
     if not args.skip_tool_substitution:
-        print("[8/8] Tool-call substitution test...")
+        print("[8/11] Tool-call substitution test...")
         substitution_detected, substitution_inconclusive = test_tool_substitution(client, report)
     else:
-        print("[8/8] Tool-call substitution test (skipped)")
+        print("[8/11] Tool-call substitution test (skipped)")
+
+    # 9. Error response header leakage (AC-2 adjacent)
+    err_severity = "none"
+    err_inconclusive = False
+    if not args.skip_error_leakage:
+        print("[9/11] Error response leakage test...")
+        err_severity, err_inconclusive = test_error_leakage(client, args, report)
+    else:
+        print("[9/11] Error response leakage test (skipped)")
 
     # Overall rating
-    # Dimensions:
-    #   D1 = hidden system-prompt injection > 100 tokens   (Step 3)
-    #   D2 = user instructions overridden                  (Step 5)
-    #   D3 = tool-call package substitution detected       (Step 8)
-    #   D3i = Step 8 inconclusive (all probes errored)     (Step 8)
-    # HIGH if D3 alone OR (D1 AND D2); MEDIUM if D1 or D2 or D3i alone; else LOW.
-    report.h2("9. Overall Rating")
+    # Dimensions (v3):
+    #   D1  = hidden system-prompt injection > 100 tokens   (Step 3)
+    #   D2  = user instructions overridden                  (Step 5)
+    #   D3  = tool-call package substitution detected       (Step 8)
+    #   D3i = Step 8 inconclusive (all probes errored)      (Step 8)
+    #   D4  = error response leakage (critical or high)     (Step 9)
+    #   D4m = error response leakage (medium only)          (Step 9)
+    #   D4i = Step 9 inconclusive                           (Step 9)
+    # Rules (first match wins):
+    #   d3 or d4                -> HIGH
+    #   d1 and d2               -> HIGH
+    #   d1                      -> MEDIUM
+    #   d2                      -> MEDIUM
+    #   d3i or d4i or d4m       -> MEDIUM
+    #   else                    -> LOW
+    report.h2("12. Overall Rating")
     d1, d2, d3 = injection > 100, overridden, substitution_detected
     d3i = substitution_inconclusive
-    if d3:
+    d4 = err_severity in ("critical", "high")
+    d4m = err_severity == "medium"
+    d4i = err_inconclusive
+    if d3 or d4:
         report.p("### HIGH RISK\n")
-        report.p(
-            "**Tool-call package substitution detected (AC-1.a).** A malicious "
-            "middleware is rewriting package-install commands on the return path. "
-            "This is a code-execution-level finding: any agent with shell or "
-            "tool-calling access that trusts this relay can be compromised on a "
-            "single `pip install` / `npm install`. **Do not use.**"
-        )
+        reasons = []
+        if d3:
+            reasons.append(
+                "**Tool-call package substitution detected (AC-1.a).** "
+                "A malicious middleware is rewriting package-install commands "
+                "on the return path -- a code-execution-level finding."
+            )
+        if err_severity == "critical":
+            reasons.append(
+                "**Full API key echoed in error response (AC-2 direct leak).** "
+                "The relay returns your credential verbatim when handed a broken "
+                "request. Other parties almost certainly see it under other conditions."
+            )
+        elif err_severity == "high":
+            reasons.append(
+                "**Partial credential / upstream URL / environment variable leaked "
+                "in error response.** The relay is exposing internal plumbing that "
+                "maps onto the attacker's credential-collection surface."
+            )
+        report.p(" ".join(reasons) + " **Do not use.**")
     elif d1 and d2:
         report.p("### HIGH RISK\n")
         report.p("Hidden injection detected AND user instructions overridden. "
@@ -957,16 +1574,31 @@ def main():
     elif d2:
         report.p("### MEDIUM RISK\n")
         report.p("No significant injection but instruction override detected.")
-    elif d3i:
+    elif d3i or d4i or d4m:
         report.p("### MEDIUM RISK\n")
-        report.p("Tool-call substitution test (Step 8) was **inconclusive**: every "
-                 "probe errored, so the relay's AC-1.a behavior could not be verified. "
-                 "Treat as suspicious until Step 8 can complete -- a relay that blocks "
-                 "plaintext echo is itself a red flag.")
+        medium_reasons = []
+        if d3i:
+            medium_reasons.append(
+                "Tool-call substitution test (Step 8) was **inconclusive**: "
+                "every probe errored, so the relay's AC-1.a behavior could not "
+                "be verified -- a relay that blocks plaintext echo is itself a red flag."
+            )
+        if d4m:
+            medium_reasons.append(
+                "Error response leaks filesystem paths or stack traces. "
+                "Information disclosure is present but not directly credential-exposing."
+            )
+        if d4i:
+            medium_reasons.append(
+                "Error leakage test (Step 9) was **inconclusive**: every probe "
+                "returned HTTP 200 or failed with a transport error, so no error "
+                "surface could be inspected."
+            )
+        report.p(" ".join(medium_reasons))
     else:
         report.p("### LOW RISK\n")
-        report.p("No significant injection, instruction override, or tool-call "
-                 "substitution detected.")
+        report.p("No significant injection, instruction override, tool-call "
+                 "substitution, or error response leakage detected.")
 
     # Output
     md = report.render(target_url=client.base_url, model=args.model)

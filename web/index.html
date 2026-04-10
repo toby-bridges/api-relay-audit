@@ -62,7 +62,7 @@ footer{text-align:center;color:var(--text2);font-size:.75rem;margin-top:60px;pad
 <body>
 <div class="container">
   <h1>🛡️ API 中转站安全检测报告</h1>
-  <p class="subtitle">检测中转站是否存在 Token 注入、Prompt 泄露、指令覆盖、工具调用改写 (AC-1.a) 等安全风险 · <a href="https://arxiv.org/abs/2604.08407" style="color:var(--text2)">threat model: arXiv:2604.08407</a></p>
+  <p class="subtitle">检测中转站是否存在 Token 注入、Prompt 泄露、指令覆盖、工具调用改写 (AC-1.a)、错误响应凭证回显 (AC-2) 等安全风险 · <a href="https://arxiv.org/abs/2604.08407" style="color:var(--text2)">threat model: arXiv:2604.08407</a></p>
   <div class="ranking" id="ranking"></div>
   <div class="grid" id="cards"></div>
   <div id="detail"></div>
@@ -232,6 +232,11 @@ function showDetail(i){
           <td class="${d.toolSubstitution.detected?'fail':'pass'}">${d.toolSubstitution.detected?'🔴 改写':'🟢 完整'}</td>
           <td>${d.toolSubstitution.probes && d.toolSubstitution.probes.length ? d.toolSubstitution.probes.length+' 个包管理器探测' : '—'}</td>
         </tr>` : ''}
+        ${d.errorLeakage ? `<tr>
+          <td>错误响应泄漏 (AC-2)</td>
+          <td class="${d.errorLeakage.severity==='critical'||d.errorLeakage.severity==='high'?'fail':d.errorLeakage.severity==='medium'?'warn-text':'pass'}">${d.errorLeakage.severity==='critical'?'🔴 凭证回显':d.errorLeakage.severity==='high'?'🔴 部分泄漏':d.errorLeakage.severity==='medium'?'🟡 信息泄漏':d.errorLeakage.severity==='inconclusive'?'🟡 无法判定':'🟢 清洁'}</td>
+          <td>${d.errorLeakage.triggers && d.errorLeakage.triggers.length ? d.errorLeakage.triggers.length+' 个触发器' : '—'}</td>
+        </tr>` : ''}
       </table>
     </div>
     ${d.toolSubstitution && d.toolSubstitution.probes && d.toolSubstitution.probes.length ? `
@@ -244,6 +249,19 @@ function showDetail(i){
           <td style="font-family:monospace;font-size:.8rem">${esc(p.expected)}</td>
           <td style="font-family:monospace;font-size:.8rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.received)}</td>
           <td class="${p.verdict==='substituted'?'fail':p.verdict==='whitespace'?'warn-text':'pass'}">${p.verdict==='substituted'?'🔴 改写':p.verdict==='whitespace'?'🟡 噪声':p.verdict==='error'?'⚪ 跳过':'🟢 完整'}</td>
+        </tr>`).join('')}
+      </table>
+    </div>` : ''}
+    ${d.errorLeakage && d.errorLeakage.triggers && d.errorLeakage.triggers.length ? `
+    <div class="section">
+      <h3>🔓 错误响应泄漏探测 (AC-2 adjacent, Step 9)</h3>
+      <table class="test-table">
+        <tr><th>触发器</th><th>HTTP 状态</th><th>严重度</th><th>泄漏内容</th></tr>
+        ${d.errorLeakage.triggers.map(t=>`<tr>
+          <td>${esc(t.trigger)}</td>
+          <td>${esc(t.status)}</td>
+          <td class="${t.severity==='critical'||t.severity==='high'?'fail':t.severity==='medium'?'warn-text':'pass'}">${t.severity==='critical'?'🔴 CRITICAL':t.severity==='high'?'🔴 HIGH':t.severity==='medium'?'🟡 MEDIUM':'🟢 none'}</td>
+          <td style="font-size:.8rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.leaks)}</td>
         </tr>`).join('')}
       </table>
     </div>` : ''}

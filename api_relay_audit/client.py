@@ -11,6 +11,64 @@ import time
 import httpx
 
 
+def _parse_curl_i_output(output: str) -> dict:
+    """Parse ``curl -i`` (or ``curl -sk -i``) stdout into a response dict.
+
+    Handles HTTP/1.x and HTTP/2 status lines and normalises ``\\r\\n`` line
+    endings. A leading ``HTTP/X 100 Continue`` preface is skipped so the
+    final status is surfaced.
+
+    Returns ``{"status": int, "headers": dict, "body": str, "error": str|None}``
+    where ``status == 0`` indicates a parse failure (``error`` set to a
+    short diagnostic string).
+    """
+    if not output:
+        return {"status": 0, "headers": {}, "body": "", "error": "empty curl output"}
+
+    # Normalise line endings so the \n\n separator is reliable.
+    text = output.replace("\r\n", "\n")
+
+    # Split into header block / body on the first blank line.
+    sep_idx = text.find("\n\n")
+    if sep_idx == -1:
+        return {"status": 0, "headers": {}, "body": text, "error": "no header/body separator"}
+    headers_block = text[:sep_idx]
+    body_block = text[sep_idx + 2:]
+
+    # Skip any ``HTTP/X 100 Continue`` preface followed by its own blank line.
+    while headers_block.split("\n", 1)[0].find(" 100 ") != -1:
+        next_sep = body_block.find("\n\n")
+        if next_sep == -1:
+            return {"status": 0, "headers": {}, "body": body_block,
+                    "error": "unterminated 100 Continue preface"}
+        headers_block = body_block[:next_sep]
+        body_block = body_block[next_sep + 2:]
+
+    lines = headers_block.split("\n")
+    status_line = lines[0] if lines else ""
+    # "HTTP/1.1 404 Not Found" or "HTTP/2 404"
+    parts = status_line.split(" ", 2)
+    status = 0
+    if len(parts) >= 2:
+        try:
+            status = int(parts[1])
+        except ValueError:
+            status = 0
+
+    headers = {}
+    for line in lines[1:]:
+        if ":" in line:
+            k, _, v = line.partition(":")
+            headers[k.strip()] = v.strip()
+
+    return {
+        "status": status,
+        "headers": headers,
+        "body": body_block,
+        "error": None,
+    }
+
+
 class APIClient:
     """Unified API client that auto-detects Anthropic vs OpenAI format.
 
@@ -290,3 +348,85 @@ class APIClient:
             except Exception:
                 continue
         return []
+
+    # -- Raw request (Step 9 error-leakage probes) ----------------------------
+
+    def raw_request(self, method: str, path: str, headers: dict,
+                    body: bytes, content_type: str = "application/json",
+                    timeout: int = 30) -> dict:
+        """Low-level request that preserves the full response body and headers.
+
+        Bypasses the normal ``_post`` HTTP-status-code error handling so the
+        Step 9 error-leakage probes can inspect error responses verbatim.
+        Never raises; on transport failure, returns a dict with
+        ``status == 0`` and an ``error`` string.
+
+        Args:
+            method: HTTP method (e.g. ``"POST"``).
+            path: URL path starting with ``/``. If ``self.base_url`` already
+                ends in ``/v1`` and ``path`` starts with ``/v1``, the duplicate
+                segment is stripped.
+            headers: Request headers (content-type is overridden by
+                ``content_type``).
+            body: Raw request body bytes.
+            content_type: Content-Type header value. Defaults to
+                ``"application/json"``.
+            timeout: Per-request timeout in seconds. Defaults to 30.
+
+        Returns:
+            ``{"status": int, "headers": dict, "body": str, "error": str|None}``.
+            ``status == 0`` indicates a transport failure; ``error`` is then
+            a short diagnostic string.
+        """
+        base = self.base_url
+        if base.endswith("/v1") and path.startswith("/v1"):
+            base = base[:-3]
+        url = base + path
+
+        if self._use_curl:
+            return self._curl_raw_request(method, url, headers, body, content_type, timeout)
+        try:
+            r = httpx.request(
+                method=method,
+                url=url,
+                headers={**headers, "content-type": content_type},
+                content=body,
+                timeout=timeout,
+            )
+            return {
+                "status": r.status_code,
+                "headers": dict(r.headers),
+                "body": r.text,
+                "error": None,
+            }
+        except Exception as e:
+            # On an SSL / connect error, transparently fall back to curl so
+            # the audit can still inspect the relay's error surface even
+            # under a self-signed certificate.
+            if self._handle_ssl_error(e):
+                return self._curl_raw_request(method, url, headers, body, content_type, timeout)
+            return {"status": 0, "headers": {}, "body": "", "error": str(e)}
+
+    def _curl_raw_request(self, method: str, url: str, headers: dict,
+                          body: bytes, content_type: str, timeout: int) -> dict:
+        """Curl-based fallback for ``raw_request``.
+
+        Uses ``curl -sk -i -X <method>`` to capture both headers and body
+        on stdout. Ignores self-signed certificate errors (``-k``).
+        """
+        all_headers = {**headers, "content-type": content_type}
+        cmd = ["curl", "-sk", "-i", "-X", method, url,
+               "--max-time", str(timeout), "--data-binary", "@-"]
+        for k, v in all_headers.items():
+            cmd.extend(["-H", f"{k}: {v}"])
+        try:
+            r = subprocess.run(cmd, capture_output=True, input=body,
+                               timeout=timeout + 10)
+            if r.returncode != 0:
+                err = r.stderr.decode("utf-8", errors="replace")[:200]
+                return {"status": 0, "headers": {}, "body": "",
+                        "error": f"curl failed: {err}"}
+            output = r.stdout.decode("utf-8", errors="replace")
+            return _parse_curl_i_output(output)
+        except Exception as e:
+            return {"status": 0, "headers": {}, "body": "", "error": str(e)}

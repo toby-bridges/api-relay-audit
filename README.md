@@ -2,15 +2,19 @@
 
 by [@li9292](https://x.com/li9292)
 
-Security audit tool for third-party AI API relay/proxy services. Detects hidden prompt injection, prompt leakage, instruction override, context truncation, and tool-call package substitution (AC-1.a).
+Security audit tool for third-party AI API relay/proxy services. Detects hidden prompt injection, prompt leakage, instruction override, context truncation, tool-call package substitution (AC-1.a), and error response header leakage (AC-2 adjacent).
 
 Threat model follows the AC-1 / AC-1.a / AC-1.b / AC-2 taxonomy from Liu et al., [*Your Agent Is Mine: Measuring Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407](https://arxiv.org/abs/2604.08407).
 
+## What's New in v2.2 (v3 Feature Release, PR 1)
+
+v2.2 adds **Step 9: Error Response Header Leakage (AC-2 adjacent)**. Paper Figure 3 reports credential abuse at 4.25% of 400 free routers — twice as common as AC-1 code injection (2%). This step fires 5-6 deterministic broken requests (malformed JSON, invalid model, wrong content-type, missing fields, unknown endpoint, optional 256 KB oversized body) and scans the error body **and response headers** for echoed `Authorization` values, the first-8 API key prefix, upstream provider URLs (`api.anthropic.com` / `api.openai.com`), env var names (`OPENAI_API_KEY=`), filesystem paths, and stack-trace markers. The risk matrix expands to 4 dimensions — a `critical` or `high` leakage on its own escalates straight to HIGH, matching Step 8's severity. Two new flags ship alongside: `--skip-error-leakage` to opt out, and `--aggressive-error-probes` to enable the 256 KB oversized-context probe (warning: may incur metered billing on pay-as-you-go relays).
+
 ## What's New in v2
 
-v2 adds **Step 8: AC-1.a tool-call substitution detection**, which catches malicious relays that rewrite package-install commands on the return path (e.g. `pip install requests` → `reqeusts` typosquat) by asking the model to echo four pinned install commands verbatim and diffing the result token-by-token. The risk matrix is extended to three dimensions — a single tool-call substitution on its own now escalates straight to HIGH, independent of injection/instruction-override signals. Two new flags ship alongside: `--skip-tool-substitution` to opt out, and `--warmup N` to fire N benign requests before the audit as a partial mitigation for AC-1.b request-count-gated backdoors.
+v2 added **Step 8: AC-1.a tool-call substitution detection**, which catches malicious relays that rewrite package-install commands on the return path (e.g. `pip install requests` → `reqeusts` typosquat) by asking the model to echo four pinned install commands verbatim and diffing the result token-by-token. The risk matrix was extended to three dimensions — a single tool-call substitution on its own escalates straight to HIGH, independent of injection/instruction-override signals. Two flags ship alongside: `--skip-tool-substitution` to opt out, and `--warmup N` to fire N benign requests before the audit as a partial mitigation for AC-1.b request-count-gated backdoors.
 
-## 8-Step Audit
+## 9-Step Audit
 
 | Step | Test | What it detects |
 |------|------|-----------------|
@@ -22,6 +26,7 @@ v2 adds **Step 8: AC-1.a tool-call substitution detection**, which catches malic
 | 6 | Jailbreak | Weak anti-extraction defenses (3 methods) |
 | 7 | Context Length | Truncation below advertised limit (canary markers + binary search) |
 | 8 | Tool-Call Substitution (AC-1.a) | Package-name rewriting on the return path (`requests` → `reqeusts` typosquat) |
+| 9 | Error Response Leakage (AC-2 adjacent) | Echoed `Authorization` / API key prefix / upstream URL / env var name / FS path / stack trace in error responses |
 
 ---
 
@@ -105,6 +110,8 @@ All three options share the same CLI interface:
 | `--skip-infra` | No | Skip infrastructure recon | `False` |
 | `--skip-context` | No | Skip context length test | `False` |
 | `--skip-tool-substitution` | No | Skip AC-1.a tool-call substitution test | `False` |
+| `--skip-error-leakage` | No | Skip Step 9 AC-2 adjacent error response leakage test | `False` |
+| `--aggressive-error-probes` | No | Enable 256 KB oversized-context probe in Step 9 (may incur billing) | `False` |
 | `--warmup` | No | Send N benign requests before the audit (partial AC-1.b mitigation) | `0` |
 | `--timeout` | No | Request timeout (seconds) | `120` |
 
@@ -112,9 +119,9 @@ All three options share the same CLI interface:
 
 | Level | Criteria | Recommendation |
 |-------|----------|----------------|
-| LOW | No injection + instructions work + full context + no tool-call substitution | Safe to use |
-| MEDIUM | Minor injection (<100 tokens) or prompt extractable, no substitution | OK for simple tasks |
-| HIGH | Injection >500 tokens AND instructions overridden, OR any tool-call substitution | Not recommended |
+| LOW | No injection + instructions work + full context + no tool-call substitution + no error leakage | Safe to use |
+| MEDIUM | Minor injection (<100 tokens) OR prompt extractable OR Step 8/9 inconclusive OR Step 9 medium-only leakage | OK for simple tasks |
+| HIGH | Injection >100 tokens AND instructions overridden, OR any tool-call substitution (Step 8), OR Step 9 critical/high leakage (credential echo, upstream URL, env var) | Not recommended |
 
 ## Author
 

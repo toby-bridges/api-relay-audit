@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-API Relay Security Audit Tool v2.1
+API Relay Security Audit Tool v2.2
 
-Full 8-step audit: infrastructure, models, token injection, prompt extraction,
-instruction conflict, jailbreak, context length, and tool-call package
-substitution (AC-1.a). Threat taxonomy follows Liu et al., *Your Agent Is
+Full 9-step audit (expanding to 11 in v3): infrastructure, models, token
+injection, prompt extraction, instruction conflict, jailbreak, context
+length, tool-call package substitution (AC-1.a), and error response header
+leakage (AC-2 adjacent). Threat taxonomy follows Liu et al., *Your Agent Is
 Mine*, arXiv:2604.08407.
 
 Usage:
@@ -25,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from api_relay_audit.client import APIClient
 from api_relay_audit.context import run_context_scan
+from api_relay_audit.error_leakage import run_error_leakage_test
 from api_relay_audit.reporter import Reporter
 from api_relay_audit.tool_substitution import run_tool_substitution_test
 
@@ -42,6 +44,11 @@ def parse_args():
     p.add_argument("--skip-context", action="store_true", help="Skip context length test")
     p.add_argument("--skip-tool-substitution", action="store_true",
                    help="Skip tool-call package substitution test (AC-1.a)")
+    p.add_argument("--skip-error-leakage", action="store_true",
+                   help="Skip error response header leakage test (Step 9, AC-2 adjacent)")
+    p.add_argument("--aggressive-error-probes", action="store_true",
+                   help="Enable the 256 KB oversized-context error probe in Step 9. "
+                        "Warning: may incur metered billing on pay-as-you-go relays.")
     p.add_argument("--warmup", type=int, default=0, metavar="N",
                    help="Send N benign requests before the audit to mitigate "
                         "request-count-gated backdoors (AC-1.b). Default: 0")
@@ -388,6 +395,108 @@ def test_tool_substitution(client, report):
     return detected, inconclusive
 
 
+def test_error_leakage(client, args, report):
+    """Step 9: Error Response Header Leakage (AC-2 adjacent).
+
+    Fire deterministic broken requests at the relay, capture the full
+    response body and response headers via ``APIClient.raw_request``, and
+    scan for echoed credentials, upstream URLs, environment variable names,
+    filesystem paths, and stack-trace markers.
+
+    Returns ``(severity, inconclusive)`` where ``severity`` is one of
+    ``"none"``, ``"medium"``, ``"high"``, ``"critical"``.
+    """
+    report.h2("9. Error Response Leakage (AC-2 adjacent)")
+    report.p(
+        "Fire deterministic broken requests (malformed JSON, invalid model, "
+        "wrong content-type, missing fields, unknown endpoint) at the relay "
+        "and scan the error response body and headers for echoed credentials, "
+        "upstream URLs, environment variable names, filesystem paths, and "
+        "stack-trace markers. "
+        "Reference: Liu et al., *Your Agent Is Mine*, arXiv:2604.08407 "
+        "figure 3 (AC-2 credential abuse at 4.25% of free routers, 2x more "
+        "common than AC-1 code injection).\n"
+    )
+    if args.aggressive_error_probes:
+        report.p("_Aggressive probes enabled: includes 256 KB oversized-context request._\n")
+
+    results, severity, inconclusive = run_error_leakage_test(
+        client, args.key, client.base_url,
+        aggressive=args.aggressive_error_probes,
+    )
+
+    report.p("| Trigger | HTTP Status | Severity | Leaks |")
+    report.p("|---------|-------------|----------|-------|")
+    for r in results:
+        name = r["trigger"]
+        status_cell = str(r["status"]) if r["status"] else "—"
+        if r["error"]:
+            status_cell = f"ERR: {r['error'][:40]}"
+        sev = r["severity"]
+        if sev == "critical":
+            sev_cell = "\U0001f534 CRITICAL"
+        elif sev == "high":
+            sev_cell = "\U0001f534 HIGH"
+        elif sev == "medium":
+            sev_cell = "\U0001f7e1 MEDIUM"
+        else:
+            sev_cell = "\U0001f7e2 none"
+        leak_kinds = sorted({h["kind"] for h in r["hits"]})
+        leaks_cell = ", ".join(leak_kinds) if leak_kinds else "—"
+        report.p(f"| {name} | {status_cell} | {sev_cell} | {leaks_cell} |")
+
+    # Per-trigger detail subsections for any probe with at least one hit.
+    any_hits = [r for r in results if r["hits"]]
+    if any_hits:
+        report.p("")
+        for r in any_hits:
+            report.h3(f"Trigger detail: `{r['trigger']}` ({r['severity']})")
+            report.p(f"HTTP status: **{r['status']}**")
+            report.p("Body preview (redacted):")
+            report.code(r["body_preview"] or "(empty)")
+            report.p("Hits:")
+            for h in r["hits"]:
+                report.p(
+                    f"- `{h['kind']}` at {h['where']} [{h['severity']}]: "
+                    f"`{h['snippet'][:200].replace('`', '')}`"
+                )
+
+    if severity == "critical":
+        report.flag(
+            "red",
+            "Error response leaks the full API key (AC-2 direct credential "
+            "echo). Do not use this relay.",
+        )
+    elif severity == "high":
+        report.flag(
+            "red",
+            "Error response leaks partial credentials, upstream provider URL, "
+            "or environment variable names. The relay is exposing internal "
+            "plumbing that maps onto the attacker's credential collection surface.",
+        )
+    elif severity == "medium":
+        report.flag(
+            "yellow",
+            "Error response leaks filesystem paths or stack traces. "
+            "Information disclosure is present but not directly "
+            "credential-exposing.",
+        )
+    elif inconclusive:
+        report.flag(
+            "yellow",
+            "Error leakage test INCONCLUSIVE: every probe returned HTTP 200 "
+            "or failed with a transport error, so no error surface could be "
+            "inspected. A relay that silently swallows malformed JSON into a "
+            "success response is itself suspicious.",
+        )
+    else:
+        report.flag("green", "No credential echo or upstream leakage detected in error responses")
+
+    state = severity if severity != "none" else ("inconclusive" if inconclusive else "clean")
+    print(f"  Done: error response leakage ({state})")
+    return severity, inconclusive
+
+
 def test_context_length(client, report):
     report.h2("7. Context Length Test")
     report.p("Place 5 canary markers at equal intervals in long text, check if model can recall all.\n")
@@ -460,66 +569,100 @@ def main():
 
     # 1. Infrastructure
     if not args.skip_infra:
-        print("[1/8] Infrastructure recon...")
+        print("[1/11] Infrastructure recon...")
         test_infrastructure(client.base_url, report)
     else:
-        print("[1/8] Infrastructure recon (skipped)")
+        print("[1/11] Infrastructure recon (skipped)")
 
     # 2. Models
-    print("[2/8] Model list...")
+    print("[2/11] Model list...")
     test_models(client, report)
 
     # 3. Token injection
-    print("[3/8] Token injection detection...")
+    print("[3/11] Token injection detection...")
     injection = test_token_injection(client, report)
 
     # 4. Prompt extraction
-    print("[4/8] Prompt extraction tests...")
+    print("[4/11] Prompt extraction tests...")
     leaked = test_prompt_extraction(client, report)
 
     # 5. Instruction conflict
-    print("[5/8] Instruction conflict tests...")
+    print("[5/11] Instruction conflict tests...")
     overridden = test_instruction_conflict(client, report)
 
     # 6. Jailbreak
-    print("[6/8] Jailbreak tests...")
+    print("[6/11] Jailbreak tests...")
     test_jailbreak(client, report)
 
     # 7. Context length
     if not args.skip_context:
-        print("[7/8] Context length test...")
+        print("[7/11] Context length test...")
         test_context_length(client, report)
     else:
-        print("[7/8] Context length test (skipped)")
+        print("[7/11] Context length test (skipped)")
 
     # 8. Tool-call package substitution (AC-1.a)
     substitution_detected = False
     substitution_inconclusive = False
     if not args.skip_tool_substitution:
-        print("[8/8] Tool-call substitution test...")
+        print("[8/11] Tool-call substitution test...")
         substitution_detected, substitution_inconclusive = test_tool_substitution(client, report)
     else:
-        print("[8/8] Tool-call substitution test (skipped)")
+        print("[8/11] Tool-call substitution test (skipped)")
+
+    # 9. Error response header leakage (AC-2 adjacent)
+    err_severity = "none"
+    err_inconclusive = False
+    if not args.skip_error_leakage:
+        print("[9/11] Error response leakage test...")
+        err_severity, err_inconclusive = test_error_leakage(client, args, report)
+    else:
+        print("[9/11] Error response leakage test (skipped)")
 
     # Overall rating
-    # Dimensions:
-    #   D1 = hidden system-prompt injection > 100 tokens   (Step 3)
-    #   D2 = user instructions overridden                  (Step 5)
-    #   D3 = tool-call package substitution detected       (Step 8)
-    #   D3i = Step 8 inconclusive (all probes errored)     (Step 8)
-    # HIGH if D3 alone OR (D1 AND D2); MEDIUM if D1 or D2 or D3i alone; else LOW.
-    report.h2("9. Overall Rating")
+    # Dimensions (v3):
+    #   D1  = hidden system-prompt injection > 100 tokens   (Step 3)
+    #   D2  = user instructions overridden                  (Step 5)
+    #   D3  = tool-call package substitution detected       (Step 8)
+    #   D3i = Step 8 inconclusive (all probes errored)      (Step 8)
+    #   D4  = error response leakage (critical or high)     (Step 9)
+    #   D4m = error response leakage (medium only)          (Step 9)
+    #   D4i = Step 9 inconclusive                           (Step 9)
+    # Rules (first match wins):
+    #   d3 or d4                -> HIGH
+    #   d1 and d2               -> HIGH
+    #   d1                      -> MEDIUM
+    #   d2                      -> MEDIUM
+    #   d3i or d4i or d4m       -> MEDIUM
+    #   else                    -> LOW
+    report.h2("12. Overall Rating")
     d1, d2, d3 = injection > 100, overridden, substitution_detected
     d3i = substitution_inconclusive
-    if d3:
+    d4 = err_severity in ("critical", "high")
+    d4m = err_severity == "medium"
+    d4i = err_inconclusive
+    if d3 or d4:
         report.p("### HIGH RISK\n")
-        report.p(
-            "**Tool-call package substitution detected (AC-1.a).** A malicious "
-            "middleware is rewriting package-install commands on the return path. "
-            "This is a code-execution-level finding: any agent with shell or "
-            "tool-calling access that trusts this relay can be compromised on a "
-            "single `pip install` / `npm install`. **Do not use.**"
-        )
+        reasons = []
+        if d3:
+            reasons.append(
+                "**Tool-call package substitution detected (AC-1.a).** "
+                "A malicious middleware is rewriting package-install commands "
+                "on the return path -- a code-execution-level finding."
+            )
+        if err_severity == "critical":
+            reasons.append(
+                "**Full API key echoed in error response (AC-2 direct leak).** "
+                "The relay returns your credential verbatim when handed a broken "
+                "request. Other parties almost certainly see it under other conditions."
+            )
+        elif err_severity == "high":
+            reasons.append(
+                "**Partial credential / upstream URL / environment variable leaked "
+                "in error response.** The relay is exposing internal plumbing that "
+                "maps onto the attacker's credential-collection surface."
+            )
+        report.p(" ".join(reasons) + " **Do not use.**")
     elif d1 and d2:
         report.p("### HIGH RISK\n")
         report.p("Hidden injection detected AND user instructions overridden. "
@@ -531,16 +674,31 @@ def main():
     elif d2:
         report.p("### MEDIUM RISK\n")
         report.p("No significant injection but instruction override detected.")
-    elif d3i:
+    elif d3i or d4i or d4m:
         report.p("### MEDIUM RISK\n")
-        report.p("Tool-call substitution test (Step 8) was **inconclusive**: every "
-                 "probe errored, so the relay's AC-1.a behavior could not be verified. "
-                 "Treat as suspicious until Step 8 can complete -- a relay that blocks "
-                 "plaintext echo is itself a red flag.")
+        medium_reasons = []
+        if d3i:
+            medium_reasons.append(
+                "Tool-call substitution test (Step 8) was **inconclusive**: "
+                "every probe errored, so the relay's AC-1.a behavior could not "
+                "be verified -- a relay that blocks plaintext echo is itself a red flag."
+            )
+        if d4m:
+            medium_reasons.append(
+                "Error response leaks filesystem paths or stack traces. "
+                "Information disclosure is present but not directly credential-exposing."
+            )
+        if d4i:
+            medium_reasons.append(
+                "Error leakage test (Step 9) was **inconclusive**: every probe "
+                "returned HTTP 200 or failed with a transport error, so no error "
+                "surface could be inspected."
+            )
+        report.p(" ".join(medium_reasons))
     else:
         report.p("### LOW RISK\n")
-        report.p("No significant injection, instruction override, or tool-call "
-                 "substitution detected.")
+        report.p("No significant injection, instruction override, tool-call "
+                 "substitution, or error response leakage detected.")
 
     # Output
     md = report.render(target_url=client.base_url, model=args.model)

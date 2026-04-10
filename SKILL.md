@@ -1,13 +1,13 @@
 ---
 name: api-relay-audit
-description: Audit third-party AI API relay/proxy services for security risks. Detects hidden prompt injection, prompt leakage, instruction override, identity hijacking, jailbreak vulnerabilities, context truncation, and tool-call package substitution (AC-1.a). Use when: "test relay", "audit API", "audit relay", "detect injection", "relay security", "API relay audit", "is this relay safe", "does it inject prompts", "test proxy API", "check API key", "中转站安全", "测试中转站", "中转站审计".
-version: 2.1.0
+description: Audit third-party AI API relay/proxy services for security risks. Detects hidden prompt injection, prompt leakage, instruction override, identity hijacking, jailbreak vulnerabilities, context truncation, tool-call package substitution (AC-1.a), and error response header leakage (AC-2 adjacent). Use when: "test relay", "audit API", "audit relay", "detect injection", "relay security", "API relay audit", "is this relay safe", "does it inject prompts", "test proxy API", "check API key", "中转站安全", "测试中转站", "中转站审计".
+version: 2.2.0
 metadata: {"openclaw":{"requires":{"anyBins":["curl","python3","python"],"env":[]},"emoji":"🛡️","homepage":"https://github.com/toby-bridges/api-relay-audit"}}
 ---
 
 # API Relay Security Audit (API 中转站安全审计)
 
-A self-contained 8-step security audit for third-party AI API relay/proxy services (中转站). One script, zero config, full report. Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407.
+A self-contained 9-step security audit for third-party AI API relay/proxy services (中转站). One script, zero config, full report. Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407.
 
 ## Quick Start (快速开始)
 
@@ -23,7 +23,7 @@ The script has zero dependencies beyond Python 3 + `curl`. All HTTP calls go thr
 
 ## What This Skill Does (功能概述)
 
-Runs an 8-step automated audit against any OpenAI-compatible or Anthropic-compatible API relay:
+Runs a 9-step automated audit against any OpenAI-compatible or Anthropic-compatible API relay:
 
 | Step | Test | What It Detects |
 |------|------|-----------------|
@@ -35,6 +35,7 @@ Runs an 8-step automated audit against any OpenAI-compatible or Anthropic-compat
 | 6 | Jailbreak tests (越狱测试) | 3 jailbreak methods to test anti-extraction defenses |
 | 7 | Context length (上下文长度测试) | Canary markers at intervals, coarse scan then binary search for truncation boundary |
 | 8 | Tool-call substitution (工具调用改写, AC-1.a) | Pinned `pip install` / `npm install` / `cargo add` / `go get` probes; character-level diff against expected to detect package-name rewriting on the return path (`requests` -> `reqeusts` typosquat) |
+| 9 | Error response leakage (错误响应泄漏, AC-2 adjacent) | 5-6 deterministic broken requests (malformed JSON, invalid model, wrong content-type, missing fields, unknown endpoint, optional 256 KB oversized body); scans the error body and response headers for echoed credentials, upstream URLs, env var names, filesystem paths, and stack traces |
 
 Output: a structured Markdown report with risk ratings per section and an overall verdict.
 
@@ -66,6 +67,8 @@ Optional flags to ask about:
 - `--skip-infra` -- skip DNS/WHOIS/SSL checks (saves time if user only wants injection tests)
 - `--skip-context` -- skip context length test (saves 5-10 minutes)
 - `--skip-tool-substitution` -- skip AC-1.a package substitution probes (only use if the relay blocks plain text echo)
+- `--skip-error-leakage` -- skip Step 9 AC-2 adjacent error response scan (only use if you cannot tolerate intentionally-broken test requests)
+- `--aggressive-error-probes` -- enable the 256 KB oversized-context error probe in Step 9. Warning: may incur metered billing on pay-as-you-go relays
 - `--warmup N` -- send N benign requests before the audit to mitigate AC-1.b request-count-gated backdoors. Recommended `N=5-20` when auditing a suspicious free relay.
 
 ### Step 2: Download the Standalone Script (下载脚本)
@@ -237,6 +240,8 @@ python audit.py [OPTIONS]
 | `--skip-infra` | No | false | Skip DNS/WHOIS/SSL/HTTP header checks (跳过基础设施检查) |
 | `--skip-context` | No | false | Skip context length test, saves 5-10 min (跳过上下文测试) |
 | `--skip-tool-substitution` | No | false | Skip AC-1.a tool-call substitution test (跳过工具调用改写检测) |
+| `--skip-error-leakage` | No | false | Skip Step 9 AC-2 adjacent error response leakage test (跳过错误响应泄漏检测) |
+| `--aggressive-error-probes` | No | false | Enable 256 KB oversized-context error probe in Step 9 (启用激进错误探测，可能产生计费) |
 | `--warmup` | No | 0 | Send N benign requests before the audit to mitigate AC-1.b request-count gates (审计前预热次数) |
 | `--timeout` | No | 120 | Request timeout in seconds (请求超时秒数) |
 | `--output` | No | stdout | Path for the Markdown report (报告输出路径) |
