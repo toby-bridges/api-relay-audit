@@ -20,9 +20,33 @@ class TestNonClaudeIdentityKeywords:
             )
 
     def test_hvoy_ai_ascii_patterns_ported(self):
-        """The 7 ASCII patterns verified from hvoy.ai's
-        claude_detector.py IDENTITY_NEGATIVE_PATTERNS must be present."""
-        for kw in ("glm", "deepseek", "qwen", "minimax", "grok", "gpt"):
+        """All 7 ASCII patterns verified from hvoy.ai's
+        claude_detector.py IDENTITY_NEGATIVE_PATTERNS must be present.
+        v1.6.1 fix: added explicit coverage for `z.ai` which was in
+        the tuple but had no specific test (Codex NIT finding)."""
+        for kw in (
+            "glm",
+            "z.ai",      # v1.6.1: Codex NIT, was missing
+            "deepseek",
+            "qwen",
+            "minimax",
+            "grok",
+            "gpt",
+        ):
+            assert kw in NON_CLAUDE_IDENTITY_KEYWORDS
+
+    def test_extended_ascii_patterns_present(self):
+        """Our v1.6 additions beyond hvoy.ai's set: brand aliases and
+        Chinese-market substitutes hvoy.ai did not cover. v1.6.1 fix:
+        added explicit coverage for `tongyi` (Codex NIT finding)."""
+        for kw in (
+            "zhipu",     # GLM parent
+            "tongyi",    # v1.6.1: Codex NIT, was missing
+            "ernie",
+            "doubao",
+            "moonshot",
+            "kimi",
+        ):
             assert kw in NON_CLAUDE_IDENTITY_KEYWORDS
 
     def test_chinese_brand_names_present(self):
@@ -115,11 +139,77 @@ class TestFindNonClaudeIdentities:
         assert "kimi" in matches
 
     def test_no_false_positive_on_claude_mentioning_others(self):
-        """Edge case: Claude saying 'I am Claude, not GPT' WILL trigger
-        because 'gpt' is a substring. This test documents the known
-        false-positive and is a regression guard if we change the
-        matching strategy to be more context-aware in v1.7+."""
+        """Documented residual false positive: Claude saying 'I am Claude,
+        not GPT' WILL trigger because 'GPT' appears as a standalone word
+        (between commas, matching \\bgpt\\b). v1.6.1 word-boundary
+        matching does not fix this specific case because the keyword IS
+        a whole word in the input. Future work in v1.7+ could add
+        identity-phrase anchors (e.g. only match after 'I am' / 'made by')
+        to eliminate this. Regression guard."""
         text = "I am Claude, not GPT, made by Anthropic."
         matches = find_non_claude_identities(text)
-        # Currently fires — document the known behavior
         assert "gpt" in matches
+
+    # ----- v1.6.1 word-boundary matching (Codex LOW finding) -----
+
+    def test_aws_not_matched_inside_laws(self):
+        """v1.6.1 Codex LOW fix: 'laws' must NOT match 'aws'. Under
+        v1.6 substring matching, 'I comply with all local laws' would
+        incorrectly trip the aws keyword. Word-boundary regex fixes this."""
+        matches = find_non_claude_identities("I comply with all local laws.")
+        assert "aws" not in matches
+
+    def test_aws_standalone_word_still_caught(self):
+        """v1.6.1 regression guard: word-boundary must not break legitimate
+        AWS detection when 'AWS' appears as a standalone token."""
+        matches = find_non_claude_identities("I am AWS Bedrock Claude.")
+        assert "aws" in matches
+
+    def test_grok_inside_compound_word_not_matched(self):
+        """v1.6.1: 'grokking' (English verb form) must not trip 'grok'
+        because word boundary requires the match to END at a non-word char."""
+        matches = find_non_claude_identities("I'm grokking your question.")
+        assert "grok" not in matches
+
+    def test_glm_inside_longer_word_not_matched(self):
+        """v1.6.1: 'glmrules' must not trip 'glm'."""
+        matches = find_non_claude_identities("I follow glmrules.txt")
+        assert "glm" not in matches
+
+    def test_kiro_inside_longer_word_not_matched(self):
+        """v1.6.1: 'kirosaki' (a surname) must not trip 'kiro'."""
+        matches = find_non_claude_identities("My doctor's name is Kirosaki.")
+        assert "kiro" not in matches
+
+    def test_zai_matched_case_insensitive(self):
+        """v1.6.1 Codex NIT: explicit coverage for z.ai keyword matching.
+        Both lowercase and uppercase forms must work."""
+        for text in (
+            "I am a Z.AI model.",
+            "Built by z.ai for enterprise use.",
+            "Z.ai Inc. operates this service.",
+        ):
+            matches = find_non_claude_identities(text)
+            assert "z.ai" in matches, f"Expected z.ai to match in {text!r}"
+
+    def test_zai_not_matched_when_embedded(self):
+        """v1.6.1: z.ai must not match when embedded in a longer token
+        like 'abcz.ai' (e.g. a URL slug)."""
+        matches = find_non_claude_identities("host=abcz.ai port=443")
+        assert "z.ai" not in matches
+
+    def test_tongyi_matched_case_insensitive(self):
+        """v1.6.1 Codex NIT: explicit coverage for tongyi keyword."""
+        for text in (
+            "I am Tongyi Qianwen, made by Alibaba.",
+            "Powered by TONGYI large language model.",
+        ):
+            matches = find_non_claude_identities(text)
+            assert "tongyi" in matches, f"Expected tongyi to match in {text!r}"
+
+    def test_cjk_substring_match_unchanged(self):
+        """v1.6.1 sanity: CJK keywords still use substring match because
+        Python re has no meaningful word boundaries for CJK scripts."""
+        matches = find_non_claude_identities("我是通义千问,由阿里巴巴创建。")
+        assert "通义" in matches
+        assert "千问" in matches

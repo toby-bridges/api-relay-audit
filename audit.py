@@ -549,43 +549,56 @@ def run_tool_substitution_test(client, sleep=1.0):
 
 
 # ============================================================
-# Section 3b2: Non-Claude Identity Detection (Step 5 helper, v1.6)
+# Section 3b2: Non-Claude Identity Detection (Step 5 helper, v1.6 / v1.6.1)
 # ============================================================
 #
 # Concept inspired by hvoy.ai zzsting88/relayAPI claude_detector.py
 # IDENTITY_NEGATIVE_PATTERNS (verified 2026-04-11). The repo has no
-# LICENSE file, so this is an independent reimplementation of the
-# concept: a plain tuple of substrings + our own matching function.
-# Extended with additional Chinese-market substitutes and Chinese
-# brand names not in the upstream set.
+# LICENSE file, so this is an independent clean-room reimplementation.
+#
+# v1.6.1: ASCII keywords match as word-bounded regex (\b<kw>\b) so
+# "laws" / "paws" / "draws" do not false-trip "aws". CJK keywords use
+# substring because \b has no useful CJK semantics. Codex finding.
 
 NON_CLAUDE_IDENTITY_KEYWORDS = (
     # Legacy (v2.1)
     "amazon", "kiro", "aws",
     # hvoy.ai verified ASCII substitutes
-    "glm", "zhipu", "z.ai",
-    "deepseek",
-    "qwen", "tongyi",
-    "minimax",
-    "grok",
-    "gpt",
+    "glm", "z.ai", "deepseek", "qwen", "minimax", "grok", "gpt",
     # Extended ASCII (our additions)
-    "ernie", "doubao",
-    "moonshot", "kimi",
+    "zhipu", "tongyi", "ernie", "doubao", "moonshot", "kimi",
     # Chinese brand names (catch Chinese-language responses)
     "通义", "千问", "智谱", "豆包", "文心", "月之暗面",
+)
+
+
+# Precompile ASCII word-boundary patterns; CJK keywords stay substring-based.
+_NON_CLAUDE_ASCII_PATTERNS = tuple(
+    (kw, re.compile(r"\b" + re.escape(kw) + r"\b", re.IGNORECASE))
+    for kw in NON_CLAUDE_IDENTITY_KEYWORDS
+    if kw.isascii()
+)
+_NON_CLAUDE_CJK_KEYWORDS = tuple(
+    kw for kw in NON_CLAUDE_IDENTITY_KEYWORDS if not kw.isascii()
 )
 
 
 def find_non_claude_identities(text):
     """Return sorted list of non-Claude identity keywords found in text.
 
-    Case-insensitive substring search. Returns empty list on no match.
+    ASCII keywords: word-bounded regex, case-insensitive.
+    CJK keywords: plain substring match.
+    Returns empty list on empty/None input.
     """
     if not text:
         return []
-    lower = text.lower()
-    matched = [kw for kw in NON_CLAUDE_IDENTITY_KEYWORDS if kw in lower]
+    matched = []
+    for kw, pattern in _NON_CLAUDE_ASCII_PATTERNS:
+        if pattern.search(text):
+            matched.append(kw)
+    for kw in _NON_CLAUDE_CJK_KEYWORDS:
+        if kw in text:
+            matched.append(kw)
     return sorted(matched)
 
 
