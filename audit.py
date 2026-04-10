@@ -549,6 +549,47 @@ def run_tool_substitution_test(client, sleep=1.0):
 
 
 # ============================================================
+# Section 3b2: Non-Claude Identity Detection (Step 5 helper, v1.6)
+# ============================================================
+#
+# Concept inspired by hvoy.ai zzsting88/relayAPI claude_detector.py
+# IDENTITY_NEGATIVE_PATTERNS (verified 2026-04-11). The repo has no
+# LICENSE file, so this is an independent reimplementation of the
+# concept: a plain tuple of substrings + our own matching function.
+# Extended with additional Chinese-market substitutes and Chinese
+# brand names not in the upstream set.
+
+NON_CLAUDE_IDENTITY_KEYWORDS = (
+    # Legacy (v2.1)
+    "amazon", "kiro", "aws",
+    # hvoy.ai verified ASCII substitutes
+    "glm", "zhipu", "z.ai",
+    "deepseek",
+    "qwen", "tongyi",
+    "minimax",
+    "grok",
+    "gpt",
+    # Extended ASCII (our additions)
+    "ernie", "doubao",
+    "moonshot", "kimi",
+    # Chinese brand names (catch Chinese-language responses)
+    "通义", "千问", "智谱", "豆包", "文心", "月之暗面",
+)
+
+
+def find_non_claude_identities(text):
+    """Return sorted list of non-Claude identity keywords found in text.
+
+    Case-insensitive substring search. Returns empty list on no match.
+    """
+    if not text:
+        return []
+    lower = text.lower()
+    matched = [kw for kw in NON_CLAUDE_IDENTITY_KEYWORDS if kw in lower]
+    return sorted(matched)
+
+
+# ============================================================
 # Section 3c: Error Response Header Leakage (Step 9, AC-2 adjacent)
 # ============================================================
 
@@ -1188,11 +1229,18 @@ def test_instruction_conflict(client, report):
         report.p(f"**input_tokens**: {r['input_tokens']} | **Response**:")
         report.code(r["text"][:500])
         text_lower = r["text"].lower()
-        if "anthropic" in text_lower and "claude" in text_lower:
-            report.flag("green", "Identity test passed: model correctly identifies as user-defined identity")
-        elif any(kw in text_lower for kw in ["amazon", "kiro", "aws"]):
+        # v1.6: broader non-Claude identity detection (Chinese-market
+        # substitutes + Chinese brand names), inspired by hvoy.ai.
+        non_claude_matches = find_non_claude_identities(r["text"])
+        if non_claude_matches:
             overridden = True
-            report.flag("red", "Identity test failed: model claims to be made by Amazon/AWS")
+            report.flag(
+                "red",
+                "Identity test failed: model claims non-Claude identity "
+                f"({', '.join(non_claude_matches)})",
+            )
+        elif "anthropic" in text_lower and "claude" in text_lower:
+            report.flag("green", "Identity test passed: model correctly identifies as user-defined identity")
         else:
             report.flag("yellow", "Identity test inconclusive")
 

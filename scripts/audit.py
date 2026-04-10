@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from api_relay_audit.client import APIClient
 from api_relay_audit.context import run_context_scan
 from api_relay_audit.error_leakage import run_error_leakage_test
+from api_relay_audit.identity_patterns import find_non_claude_identities
 from api_relay_audit.reporter import Reporter
 from api_relay_audit.tool_substitution import run_tool_substitution_test
 
@@ -272,11 +273,21 @@ def test_instruction_conflict(client, report):
         report.p(f"**input_tokens**: {r['input_tokens']} | **Response**:")
         report.code(r["text"][:500])
         text_lower = r["text"].lower()
-        if "anthropic" in text_lower and "claude" in text_lower:
-            report.flag("green", "Identity test passed: model correctly identifies as user-defined identity")
-        elif any(kw in text_lower for kw in ["amazon", "kiro", "aws"]):
+        # v1.6: Broader non-Claude identity detection using the
+        # identity_patterns module. Catches Chinese-market substitutes
+        # (GLM / DeepSeek / Qwen / MiniMax / Grok / GPT / ERNIE /
+        # Doubao / Moonshot / 通义 / 千问 / 智谱 / 豆包 / 文心) in
+        # addition to the legacy Amazon / Kiro / AWS set.
+        non_claude_matches = find_non_claude_identities(r["text"])
+        if non_claude_matches:
             overridden = True
-            report.flag("red", "Identity test failed: model claims to be made by Amazon/AWS")
+            report.flag(
+                "red",
+                "Identity test failed: model claims non-Claude identity "
+                f"({', '.join(non_claude_matches)})",
+            )
+        elif "anthropic" in text_lower and "claude" in text_lower:
+            report.flag("green", "Identity test passed: model correctly identifies as user-defined identity")
         else:
             report.flag("yellow", "Identity test inconclusive")
 
