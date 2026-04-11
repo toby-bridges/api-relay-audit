@@ -923,6 +923,57 @@ def test_context_length(client, report):
 
 
 # ============================================================
+# Fail-open step wrapper
+# ============================================================
+#
+# v1.7.5: each step runs inside ``_run_step`` so that a single
+# crashing step (unhandled httpx error, parsing bug, relay returning
+# a malformed body that trips a downstream assertion) cannot abort
+# the whole audit. Behavior on crash:
+#
+#   1. Full traceback is printed to stderr so the user still sees
+#      the bug — this is NOT exception-swallowing.
+#   2. A yellow flag is added to the report summary explaining
+#      which step crashed and with what exception.
+#   3. The wrapper returns ``default`` to the caller so subsequent
+#      steps continue. For steps whose return value feeds the 6D
+#      risk matrix, ``default`` is chosen so the dimension either
+#      stays clean or lands in its "inconclusive" variant (which
+#      the matrix rules already downgrade to MEDIUM). A crashed
+#      step never escalates to HIGH by accident.
+#
+# This is deliberately fail-OPEN (continue the audit with a loud
+# yellow warning) rather than fail-fast (crash the whole run). Early
+# review reports showed that a mid-run crash at Step 9 would lose
+# the first 8 steps of useful output, which outweighs the risk of
+# missing one dimension.
+
+def _run_step(name, reporter, step_fn, *args, default=None):
+    """Run ``step_fn(*args)`` with fail-open exception handling."""
+    try:
+        return step_fn(*args)
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        import traceback
+        exc_type = type(e).__name__
+        print(
+            f"\n[{name}] CRASHED: {exc_type}: {e}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        try:
+            reporter.flag(
+                "yellow",
+                f"{name} crashed mid-step: {exc_type}: {e} "
+                f"(continued with inconclusive default)",
+            )
+        except Exception:
+            pass  # Reporter itself is broken; stderr already has the trace
+        return default
+
+
+# ============================================================
 # Main
 # ============================================================
 
@@ -959,34 +1010,39 @@ def main():
     # 1. Infrastructure
     if not args.skip_infra:
         print("[1/11] Infrastructure recon...")
-        test_infrastructure(client.base_url, report)
+        _run_step("Step 1 infrastructure", report,
+                  test_infrastructure, client.base_url, report)
     else:
         print("[1/11] Infrastructure recon (skipped)")
 
     # 2. Models
     print("[2/11] Model list...")
-    test_models(client, report)
+    _run_step("Step 2 model list", report, test_models, client, report)
 
     # 3. Token injection
     print("[3/11] Token injection detection...")
-    injection = test_token_injection(client, report)
+    injection = _run_step("Step 3 token injection", report,
+                          test_token_injection, client, report, default=0)
 
     # 4. Prompt extraction
     print("[4/11] Prompt extraction tests...")
-    leaked = test_prompt_extraction(client, report)
+    leaked = _run_step("Step 4 prompt extraction", report,
+                       test_prompt_extraction, client, report, default=False)
 
     # 5. Instruction conflict
     print("[5/11] Instruction conflict tests...")
-    overridden = test_instruction_conflict(client, report)
+    overridden = _run_step("Step 5 instruction override", report,
+                           test_instruction_conflict, client, report, default=False)
 
     # 6. Jailbreak
     print("[6/11] Jailbreak tests...")
-    test_jailbreak(client, report)
+    _run_step("Step 6 jailbreak", report, test_jailbreak, client, report)
 
     # 7. Context length
     if not args.skip_context:
         print("[7/11] Context length test...")
-        test_context_length(client, report)
+        _run_step("Step 7 context length", report,
+                  test_context_length, client, report)
     else:
         print("[7/11] Context length test (skipped)")
 
@@ -995,7 +1051,11 @@ def main():
     substitution_inconclusive = False
     if not args.skip_tool_substitution:
         print("[8/11] Tool-call substitution test...")
-        substitution_detected, substitution_inconclusive = test_tool_substitution(client, report)
+        substitution_detected, substitution_inconclusive = _run_step(
+            "Step 8 tool substitution", report,
+            test_tool_substitution, client, report,
+            default=(False, True),  # inconclusive → D3i → MEDIUM
+        )
     else:
         print("[8/11] Tool-call substitution test (skipped)")
 
@@ -1004,7 +1064,11 @@ def main():
     err_inconclusive = False
     if not args.skip_error_leakage:
         print("[9/11] Error response leakage test...")
-        err_severity, err_inconclusive = test_error_leakage(client, args, report)
+        err_severity, err_inconclusive = _run_step(
+            "Step 9 error leakage", report,
+            test_error_leakage, client, args, report,
+            default=("none", True),  # inconclusive → D4i → MEDIUM
+        )
     else:
         print("[9/11] Error response leakage test (skipped)")
 
@@ -1013,7 +1077,11 @@ def main():
     stream_inconclusive = False
     if not args.skip_stream_integrity:
         print("[10/11] Stream integrity test...")
-        stream_verdict, stream_inconclusive = test_stream_integrity(client, report)
+        stream_verdict, stream_inconclusive = _run_step(
+            "Step 10 stream integrity", report,
+            test_stream_integrity, client, report,
+            default=("clean", True),  # inconclusive → D5i → MEDIUM
+        )
     else:
         print("[10/11] Stream integrity test (skipped)")
 
@@ -1022,7 +1090,11 @@ def main():
     web3_inj_inconclusive = False
     if args.profile in ("web3", "full") and not args.skip_web3_injection:
         print("[11/11] Web3 prompt injection test...")
-        web3_inj_verdict, web3_inj_inconclusive = test_web3_injection(client, report)
+        web3_inj_verdict, web3_inj_inconclusive = _run_step(
+            "Step 11 web3 injection", report,
+            test_web3_injection, client, report,
+            default=("clean", True),  # inconclusive → D6i → MEDIUM
+        )
     else:
         if args.profile == "general":
             print("[11/11] Web3 prompt injection test (profile=general, skipped)")
