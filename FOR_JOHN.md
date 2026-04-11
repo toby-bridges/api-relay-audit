@@ -576,3 +576,132 @@ FILLER = "abcdefghijklmnopqrstuvwxyz0123456789 ..."
 5. **借力学术工作**：拿 arXiv 2604.08407 的威胁模型当锚点，自己的工具瞬间从"一个 script"变成"论文威胁模型的客户端侧对策"——不是为了装，是为了让下游读者知道这个工具在认真的威胁模型里的位置
 
 好的工程不是写出最多的代码，而是用最少的代码解决最关键的问题。这个项目就是一个很好的例子。
+
+---
+
+## 2026-04-11 session diary: v2.2 → v2.3 的 9 个 commit
+
+这一节不是技术讲解，是**给未来的你**看的工程决策日记。不看代码就看不懂 why 的事情，都记在这里。
+
+### 这个 session 干了什么
+
+一口气做了 **9 个 commit，测试 114 → 281（+167 新测试，零回归）**，把工具从 8 step 推到 10 step：
+
+| Commit | 版本 | 内容 |
+|---|---|---|
+| `df7715a` | v2.2 | Step 9 v1 + v1.5 补洞 + v1.5.1 LiteLLM issue sourcing |
+| `ff991aa` | v1.5.2 | Codex hotfix #1：auth_probe x-api-key override + partial key redaction |
+| `019889a` | v1.6 | 非 Claude 身份替换检测（22 个关键词，port 自 hvoy.ai） |
+| `8f654c2` | v1.6.1 | Codex hotfix #2：word-boundary regex(修"laws → aws"误报) |
+| `0ceed5b` | v1.6.2 | Codex hotfix #3：trailing lookahead(修"Qwen2.5"漏检) |
+| `5fb0b27` | v2.3 Sub-PR 1 | streaming client support(httpx + curl 双分支) |
+| `f6e2b9f` | v2.3 Sub-PR 2 | analyze_stream verdict 逻辑 |
+| `983d51e` | v2.3 Sub-PR 3 | Step 10 orchestration + 5D 风险矩阵 |
+| `42d5de7` | v1.7.1 | Codex hotfix #4：SSE parser edge cases + curl 中途失败处理 |
+
+### 最重要的工程教训：Codex review 循环
+
+我这次在 session 里跑了 **5 轮 Codex 独立代码审查**,每一轮都发现了真 bug(除了最后一轮 clean)。具体模式:
+
+| Round | 审查对象 | 发现 | 严重度 |
+|---|---|---|---|
+| 1 | `df7715a` Step 9 核心 | 2 个 bug | MEDIUM × 2 |
+| 2 | `ff991aa` + `019889a` | 2 个 bug | LOW + NIT |
+| 3 | `8f654c2` word-boundary | 1 个 bug | MEDIUM(版本后缀漏检) |
+| 4 | `0ceed5b` | 0 bug | — |
+| 5 | Sub-PR 1/2/3 streaming | 2 个 bug | MEDIUM + LOW |
+
+**关键观察**:每一轮 Codex 找到的问题类别都不同——第 1 轮是业务逻辑(x-api-key 覆盖不全),第 2 轮是 substring 匹配误报,第 3 轮是 regex 太严,第 5 轮是 stream transport 层错误处理不对称。**你不可能一次性想到所有这些**,必须迭代。
+
+**这个循环有效的原因**:
+1. Codex 和我(Claude)是**不同的 AI 实例**,没有共享的认知盲点
+2. Codex **不知道我之前的 review 输出**,所以它的第二次审查不会被前一次的结论影响
+3. 它只能看源码和 commit history,这些都是**客观 artifact**
+4. 它被明确要求"be blunt"、"don't invent issues",所以它的 LOW/NIT/MEDIUM 标签是认真的
+
+**这个循环的代价**:每轮 ~2-5 分钟 + tokens。但发现的 bug 如果 ship 到生产会造成:**MEDIUM 级别的 false negative**——审计工具在真实有问题的 relay 上返回"clean",这是最糟糕的安全工具失效模式。
+
+**结论**:以后每个有一定复杂度的 feature PR 都应该跑至少 2 轮 Codex review:**第一轮找 bug → 修 → 第二轮闭环验证**。如果第二轮发现新问题,继续修+review 直到 clean。
+
+### 最重要的方法论教训:验证而非总结
+
+**情况**:hvoy.ai 的 `claude_detector.py` 是这个 session 里关键的情报来源。最初用 WebFetch 看了一次,summary 报告说"SSE 白名单有 5 个事件"。我本来要直接 port,幸好想起来 memory 里的 feedback:
+
+> "Prefer local files over WebFetch for source verification"
+
+于是 `git clone` 了原 repo,**逐行读** `claude_detector.py`,发现:
+- **白名单实际是 7 个事件**(WebFetch summary 漏了 `ping` 和 `content_block_stop`)
+- **Thinking 维度最大分数是 13 不是 15**(虽然代码里 cap 在 15)
+- **Penalty 系统有 4 层不只 -25**(还有 -10, -8, -8 三级)
+- **还有 CLI header 伪装和 "null" text block 两个 WebFetch 完全漏掉的 hidden discoveries**
+
+如果我直接信 WebFetch 去 port,**有 3 个事实错误会被刻进代码**。这不是 WebFetch 有 bug,这是"有总结层"的读文章方式本质上的问题——小模型的摘要会丢细节,而细节在安全工具里就是一切。
+
+**规则**:**任何要 port 的源码必须本地 clone + 逐行读**。summary 只用于"这个项目是干什么的"这种宏观判断。
+
+### 最大的认知矫正:我的竞品分析有方法论盲点
+
+Session 前期我写过一份 `project_competitive_landscape.md` memory,结论是"**0 direct competitors,api-relay-audit 是唯一实现**"。这个结论是通过用 10+ 个英文搜索词搜 GitHub 得出的。
+
+然后你让我去看 `https://hvoy.ai/`,我立刻发现:
+- 这是一个**直接竞品**,同威胁模型同时期(2026-04 上线)
+- **336 stars**,比我们关注度还高
+- 有开源后端(`zzsting88/relayAPI`)
+
+**为什么之前漏了**:因为我用的全是英文搜索词(`"llm relay" security`, `"llm proxy" audit` 等),而 hvoy.ai 服务的是**中国市场**,相关术语是"中转站"/"水站"/"API 中转"。**英文语义空间对中文市场不透明**。这是一个我没意识到的**方法论盲点**,不是知识盲点。
+
+**修正后的 memory**:`project_competitive_landscape.md` 里加了"Methodology lesson"章节,明确要求以后的竞品研究必须**双语搜索**——英文 + 中文(至少包括"中转站"和"API 中转"两个词)。
+
+### 为什么 scope 膨胀了(从"v1.5 补洞"到 9 个 commit)
+
+原计划只是"Step 9 v1.5 补洞 + Step 10 crypto substitution"。但实际做下来,这个 session 交付了 5 个 step-level 的功能(Step 9 v1 + v1.5 + v1.5.1 + v1.6 身份 + v2.3 streaming),加 4 个 Codex 修复。**为什么不严格按原计划**?
+
+**答案**:每一次偏离都有明确理由:
+
+1. **v1.5 → v1.5.1**(加 LiteLLM 8 个 issue sourcing):因为这个信息是在 session 中通过 agent 新查到的,**sourcing quality 比原计划高一个数量级**——每条 regex 都能追到一个真实 bug report,而不是设计推测。错过这次就得下 session 重做。
+
+2. **v1.5.2 / v1.6.1 / v1.6.2 三个 Codex hotfix**:发现 bug 当场修,不等下次 session。因为 bug 修的越晚代价越大——一旦上面叠了新 commit,修底层 bug 就要 rebase。
+
+3. **Step 10 streaming 替代 Step 10 crypto**:因为读了 hvoy.ai 源码后**确认 streaming 是我们真正的 detection gap**,而 crypto substitution 是 v3 原计划里"设计推测"的 step。实际看到的信号优先于设计推测。
+
+**元规则**:**大方向坚持,具体实现按实际信息走**。不要为了"按计划执行"而忽略 session 中新出现的信息。
+
+### 双分发不变量是如何保持的
+
+这个项目有两份代码:`api_relay_audit/*.py`(模块化,用 httpx)和 `audit.py`(单文件,只用 curl)。所有改动必须同步,否则用户用 standalone 版本会看到不同行为。
+
+**保险丝**:`tests/test_dual_distribution_parity.py` 里的一个测试——它抽取两个文件的"Overall Rating 风险矩阵"代码块,**逐字符比较**。如果不一致,测试红。这个测试是 v2.2 commit `df7715a` 时加的,每次 risk matrix 扩展(4D → 5D)都要严格保持两边同步。
+
+**具体影响**:这个 session 加 D5 维度时,modular 和 standalone 的那段代码块必须**一字不差**相同。我提交前跑了 `python -m pytest tests/test_dual_distribution_parity.py -v`,green 才算完成。
+
+**教训**:这种"逐字节一致性"测试听起来 brittle,但它是 dual-distribution 不变量的**唯一可靠保险丝**。不要因为它 brittle 就取消。
+
+### Memory 里最值得保留的三条
+
+按重要性排序:
+
+1. **`reference_hvoy_relayapi.md`** — 这是竞品的完整分析,包括验证过的源码结构、porting status 表、我们相对它的优势和劣势。下次做竞品对比或产品定位时直接引用。
+2. **`reference_litellm_secret_regex.md`** — 8 个 LiteLLM GitHub issue 的完整索引,每条都对应一个 Step 9 检测模式。这是 Step 9 精度的主要来源。
+3. **`feedback_local_files_over_webfetch.md`** — 方法论级别的教训。每次要读外部源码都应该先查这个。
+
+### 什么被延后了(backlog 更新)
+
+这一节更新了本 session 里确定"明确不做"的事:
+
+- **Step 11: Crypto Address Substitution**(原 PR 2)— 因为 hvoy.ai 读完后确认 streaming 是更大的 gap;crypto 是设计推测,等实际有 crypto relay 案例报告再做
+- **Claude Code CLI 请求头伪装** — 从 hvoy.ai `get_headers` 里看到,但 port 意义不大(只让我们伪装成他们那个工具)
+- **hvoy.ai 的 `"null"` text block request body 指纹** — 不清楚他们为什么这么写,port 会让我们的请求和他们的工具 indistinguishable,不 port
+- **Knowledge cutoff 探测**(hvoy.ai 4 个维度之一)— 作者自己说易被 system prompt hard-code 欺骗,不值得
+- **识别 "I am Claude, not GPT" 型残余 FP** — 需要 identity-phrase anchor regex(`"I am X"` / `"made by X"`),scope creep,留给 v1.7+
+- **hvoy.ai leaderboard 40+ 真实中转站**作为自动化验证语料库 — 需要 consent + rate limiting 工程,留到工具 v2 或 v3
+- **`--transparent-log <path>` flag**(arXiv §7.3)— 正交独立,下次 session 单独做
+
+### 给下次 session 的你
+
+1. **本 session 的结束状态**:本地 9 commits 已 push,origin/master 从 `b2e5447` → `42d5de7`,`.claude/` 仍 untracked(按预期)
+2. **281/281 tests pass**,parity test green,没有任何 known regression
+3. 下次 session 如果要继续:推荐 **`--transparent-log`** 或 **Step 11 Web3 injection probes**(SlowMist signature isolation),或者**本地 one-api Docker 实测**生成真实 before/after 命中率数据
+4. 如果要 refactor,考虑把 `_parse_sse_stream` 的 `_process_sse_line` 辅助函数做成更通用的 SSE 解析库(目前只在 stream_integrity 里用)
+5. memory 里的 `project_api_relay_audit_context.md` 是当前状态的 single source of truth,read it first
+
+本 session 最值钱的不是代码,是**"5 轮 Codex review 找到 7 个真实 bug"这个数据点**。下次做任何复杂 feature,都 bake review 循环进计划。
