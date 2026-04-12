@@ -2535,7 +2535,7 @@ def main():
     # 3. Token injection
     print("[3/11] Token injection detection...")
     injection = _run_step("Step 3 token injection", report,
-                          test_token_injection, client, report, default=0)
+                          test_token_injection, client, report, default=None)
 
     # 4. Prompt extraction
     print("[4/11] Prompt extraction tests...")
@@ -2545,7 +2545,7 @@ def main():
     # 5. Instruction conflict
     print("[5/11] Instruction conflict tests...")
     overridden = _run_step("Step 5 instruction override", report,
-                           test_instruction_conflict, client, report, default=False)
+                           test_instruction_conflict, client, report, default=None)
 
     # 6. Jailbreak
     print("[6/11] Jailbreak tests...")
@@ -2615,9 +2615,11 @@ def main():
             print("[11/11] Web3 prompt injection test (skipped)")
 
     # Overall rating
-    # Dimensions (v3, post-v1.7.2):
+    # Dimensions (v3, post-v1.7.5):
     #   D1  = hidden system-prompt injection > 100 tokens   (Step 3)
+    #   D1i = Step 3 crashed / inconclusive                 (Step 3)
     #   D2  = user instructions overridden                  (Step 5)
+    #   D2i = Step 5 crashed / inconclusive                 (Step 5)
     #   D3  = tool-call package substitution detected       (Step 8)
     #   D3i = Step 8 inconclusive (all probes errored)      (Step 8)
     #   D4  = error response leakage (critical or high)     (Step 9)
@@ -2628,14 +2630,18 @@ def main():
     #   D6  = Web3 prompt injection detected                (Step 11, profile=web3|full)
     #   D6i = Step 11 inconclusive                          (Step 11, profile=web3|full)
     # Rules (first match wins):
-    #   d3 or d4 or d5 or d6            -> HIGH
-    #   d1 and d2                       -> HIGH
-    #   d1                              -> MEDIUM
-    #   d2                              -> MEDIUM
-    #   d3i or d4i or d4m or d5i or d6i -> MEDIUM
-    #   else                            -> LOW
+    #   d3 or d4 or d5 or d6                        -> HIGH
+    #   d1 and d2                                   -> HIGH
+    #   d1                                          -> MEDIUM
+    #   d2                                          -> MEDIUM
+    #   d1i or d2i or d3i or d4i or d4m or d5i or d6i -> MEDIUM
+    #   else                                        -> LOW
     report.h2("12. Overall Rating")
-    d1, d2, d3 = injection > 100, overridden, substitution_detected
+    d1 = injection is not None and injection > 100
+    d1i = injection is None
+    d2 = overridden is not None and overridden
+    d2i = overridden is None
+    d3 = substitution_detected
     d3i = substitution_inconclusive
     d4 = err_severity in ("critical", "high")
     d4m = err_severity == "medium"
@@ -2693,9 +2699,19 @@ def main():
     elif d2:
         report.p("### MEDIUM RISK\n")
         report.p("No significant injection but instruction override detected.")
-    elif d3i or d4i or d4m or d5i or d6i:
+    elif d1i or d2i or d3i or d4i or d4m or d5i or d6i:
         report.p("### MEDIUM RISK\n")
         medium_reasons = []
+        if d1i:
+            medium_reasons.append(
+                "Token injection test (Step 3) **crashed or was inconclusive**: "
+                "the relay's injection behavior could not be verified."
+            )
+        if d2i:
+            medium_reasons.append(
+                "Instruction override test (Step 5) **crashed or was inconclusive**: "
+                "whether the relay respects user system prompts could not be verified."
+            )
         if d3i:
             medium_reasons.append(
                 "Tool-call substitution test (Step 8) was **inconclusive**: "

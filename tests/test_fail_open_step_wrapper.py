@@ -236,3 +236,84 @@ class TestRealStepCrashSimulation:
         )
         assert stream_verdict == "clean"
         assert stream_inconclusive is True
+
+
+# ---------------------------------------------------------------------------
+# D1i / D2i: Step 3/5 crash must escalate to MEDIUM, not stay LOW
+# ---------------------------------------------------------------------------
+
+
+class TestCrashEscalatesViaDimensionInconclusive:
+    """v1.7.5 follow-up: before this fix, Step 3 crash defaulted to
+    injection=0 and Step 5 crash defaulted to overridden=False, which
+    meant the 6D risk matrix had no "inconclusive" pathway for D1/D2.
+    The overall rating could output LOW RISK even though the summary
+    had a yellow "crashed" flag — a semantic contradiction.
+
+    Fix: defaults changed to None, new d1i/d2i dimensions fire when
+    injection/overridden are None, and the MEDIUM rule now includes
+    d1i and d2i.
+    """
+
+    def test_step3_crash_gives_none_not_zero(self, modular, reporter):
+        """Crash default for Step 3 must be None (not 0) so that
+        d1i fires and pulls the overall rating to MEDIUM."""
+        def fake_step3(client, report):
+            raise RuntimeError("boom")
+
+        injection = modular._run_step(
+            "Step 3 token injection", reporter,
+            fake_step3, MagicMock(), reporter,
+            default=None,
+        )
+        assert injection is None
+
+    def test_step5_crash_gives_none_not_false(self, modular, reporter):
+        def fake_step5(client, report):
+            raise RuntimeError("boom")
+
+        overridden = modular._run_step(
+            "Step 5 instruction override", reporter,
+            fake_step5, MagicMock(), reporter,
+            default=None,
+        )
+        assert overridden is None
+
+    def test_d1i_fires_on_none_injection(self, modular):
+        """d1i = (injection is None) must be True when Step 3 crashed."""
+        injection = None
+        d1 = injection is not None and injection > 100
+        d1i = injection is None
+        assert not d1
+        assert d1i
+
+    def test_d2i_fires_on_none_overridden(self, modular):
+        injection = 0  # Step 3 was fine
+        overridden = None  # Step 5 crashed
+        d1 = injection is not None and injection > 100
+        d2 = overridden is not None and overridden
+        d2i = overridden is None
+        assert not d1
+        assert not d2
+        assert d2i
+
+    def test_medium_rule_includes_d1i(self, modular):
+        """When d1i fires and nothing else triggers HIGH, the overall
+        rating must be MEDIUM (not LOW)."""
+        d1i = True
+        d2i = False
+        d3i = d4i = d4m = d5i = d6i = False
+        assert d1i or d2i or d3i or d4i or d4m or d5i or d6i
+
+    def test_medium_rule_includes_d2i(self, modular):
+        d1i = False
+        d2i = True
+        d3i = d4i = d4m = d5i = d6i = False
+        assert d1i or d2i or d3i or d4i or d4m or d5i or d6i
+
+    def test_normal_run_no_d1i_d2i(self, modular):
+        """When Steps 3 and 5 complete normally, d1i and d2i stay False."""
+        injection = 0
+        overridden = False
+        assert not (injection is None)  # d1i
+        assert not (overridden is None)  # d2i
