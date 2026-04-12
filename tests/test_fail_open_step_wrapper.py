@@ -317,3 +317,61 @@ class TestCrashEscalatesViaDimensionInconclusive:
         overridden = False
         assert not (injection is None)  # d1i
         assert not (overridden is None)  # d2i
+
+
+# ---------------------------------------------------------------------------
+# crashes list + any_step_crashed catch-all
+# ---------------------------------------------------------------------------
+
+
+class TestCrashesListCatchAll:
+    """Any step crash must escalate to MEDIUM via any_step_crashed,
+    even for steps that have no dedicated d<N>i dimension (4, 6, 7)."""
+
+    def test_crashes_list_populated_on_failure(self, modular, reporter):
+        crashes = []
+        def crashing():
+            raise RuntimeError("boom")
+
+        modular._run_step("Step 6 jailbreak", reporter, crashing,
+                          crashes=crashes)
+        assert "Step 6 jailbreak" in crashes
+
+    def test_crashes_list_empty_on_success(self, modular, reporter):
+        crashes = []
+        modular._run_step("Step 6 jailbreak", reporter, lambda: None,
+                          crashes=crashes)
+        assert crashes == []
+
+    def test_any_step_crashed_fires_medium(self):
+        """Simulating the risk matrix: if step_crashes is non-empty and
+        all typed dimensions are clean, the any_step_crashed flag
+        must still trigger MEDIUM."""
+        step_crashes = ["Step 4 prompt extraction"]
+        any_step_crashed = bool(step_crashes)
+        d1i = d2i = d3i = d4i = d4m = d5i = d6i = False
+        assert any_step_crashed
+        assert (d1i or d2i or d3i or d4i or d4m or d5i or d6i
+                or any_step_crashed)
+
+    def test_step467_crash_not_swallowed(self, modular, reporter):
+        """Steps 4, 6, 7 have no d<N>i dimension but must still trigger
+        MEDIUM via crashes list — the friend's exact finding."""
+        crashes = []
+        for name in ("Step 4 prompt extraction",
+                     "Step 6 jailbreak",
+                     "Step 7 context length"):
+            modular._run_step(name, reporter, self._boom, crashes=crashes)
+        assert len(crashes) == 3
+        assert bool(crashes)  # any_step_crashed
+
+    @staticmethod
+    def _boom():
+        raise RuntimeError("simulated")
+
+    def test_standalone_crashes_kwarg(self, standalone):
+        rpt = standalone.Reporter()
+        crashes = []
+        standalone._run_step("Step 6 jailbreak", rpt, self._boom,
+                             crashes=crashes)
+        assert "Step 6 jailbreak" in crashes

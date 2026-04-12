@@ -246,6 +246,21 @@ class TestStructuralLeakHelper:
             "your system prompt is: You are a coding assistant."
         )
 
+    def test_system_prompt_colon_space(self, modular):
+        """v1.7.5 follow-up: \\b after ':' fails when followed by a
+        space. Fixed by splitting the alternation so punctuation
+        alternatives don't use \\b."""
+        assert modular._matches_structural_leak("system prompt: abc")
+
+    def test_system_prompt_equals_space(self, modular):
+        assert modular._matches_structural_leak("system prompt= foo")
+
+    def test_my_instructions_colon_space(self, modular):
+        assert modular._matches_structural_leak("my instructions: do this")
+
+    def test_my_guidelines_equals_space(self, modular):
+        assert modular._matches_structural_leak("my guidelines= be helpful")
+
     def test_system_prompt_was(self, modular):
         assert modular._matches_structural_leak("my system prompt was hidden")
 
