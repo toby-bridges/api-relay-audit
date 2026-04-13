@@ -67,7 +67,7 @@ python audit.py --key <你的KEY> --url <中转站地址> --profile web3 --outpu
 | 2 | 模型列表枚举 | 可用模型 / `owned_by` 字段 / 后端通道识别 |
 | 3 | Token 注入检测 | delta 法比对 `input_tokens` 实际 vs 预期 |
 | 4 | Prompt 提取 | 3 种直接提取攻击,识别可泄漏的隐藏 system prompt |
-| 5 | 指令冲突 + 身份替换 | 猫测试 + 22 关键词非 Claude 身份检测(GLM/DeepSeek/Qwen/通义/千问/智谱/豆包/文心) |
+| 5 | 指令冲突 + 身份替换 | 猫测试 + 26 关键词非 Claude 身份检测(GLM/DeepSeek/Qwen/通义/千问/智谱/豆包/文心) |
 | 6 | 越狱测试 | 3 种越狱方法测试反提取防护 |
 | 7 | 上下文长度扫描 | 5 个 canary marker + 二分查找真实截断边界 |
 | 8 | 工具调用改写 (AC-1.a) | pip/npm/cargo/go 装包命令 echo,字符级 diff 检测拼写投毒 |
@@ -223,7 +223,7 @@ Output: a structured Markdown report with a risk summary (LOW / MEDIUM / HIGH) a
 
 This project uses an unusually rigorous quality pipeline for a CLI tool:
 
-- **493 pytest unit tests** across 13 test files (from 114 baseline in v2.1, +205 in v2.3, +107 in v1.7.5 review round)
+- **493 pytest unit tests** across 15 test files (from 114 baseline in v2.1, +205 in v2.3, +107 in v1.7.5 review round)
 - **6 independent Codex review rounds + 1 independent peer review round** during v2.2 → v2.3 → v1.7.5 development
 - **17 real bugs caught and fixed** by those reviews before ship — every one was a false-negative-class failure that would have misjudged a truly malicious relay as "clean"
 - **Byte-level dual-distribution parity** enforced by `test_risk_matrix_character_identical` — the modular and standalone versions cannot drift
@@ -248,7 +248,7 @@ See [`ROADMAP.md`](./ROADMAP.md) for the complete shipped feature list, deferred
 | 2 | Model List | Backend channels, model coverage |
 | 3 | Token Injection | Hidden system prompt injection (delta method) |
 | 4 | Prompt Extraction | Leakable hidden prompts (3 attack vectors) |
-| 5 | Instruction Conflict + Identity | User system prompt overridden; non-Claude identity substitution (GLM / DeepSeek / Qwen / Chinese-market substitutes) |
+| 5 | Instruction Conflict + Identity | User system prompt overridden; non-Claude identity substitution (GLM / DeepSeek / Qwen / Warp / Windsurf / Chinese-market substitutes) |
 | 6 | Jailbreak | Weak anti-extraction defenses (3 methods) |
 | 7 | Context Length | Truncation below advertised limit (canary markers + binary search) |
 | 8 | Tool-Call Substitution (AC-1.a) | Package-name rewriting on the return path (`requests` → `reqeusts` typosquat) |
@@ -409,13 +409,14 @@ api_relay_audit/                     # Modular package (requires httpx)
   reporter.py                        #   Markdown report builder with risk flags
   stream_integrity.py                #   Step 10 SSE analyzer + StreamSignals
   tool_substitution.py               #   Step 8 AC-1.a package substitution
+  transparent_log.py                 #   Forensic JSONL logger (arXiv §7.3)
   web3/                              #   Profile=web3 subpackage
     injection_probes.py              #     Step 11 SlowMist signature isolation
 scripts/
   audit.py                           #   11-step orchestrator (entry point)
   context-test.py                    #   Standalone context length probe
   extract-data.py                    #   Report → JSON extractor for dashboard
-tests/                               # 493 pytest tests across 14 files
+tests/                               # 493 pytest tests across 15 files
   test_dual_distribution_parity.py   #   byte-level parity guard
   test_client_stream.py              #   streaming SSE parser unit tests
   test_stream_integrity.py           #   Step 10 verdict analysis tests
