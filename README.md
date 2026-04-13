@@ -43,7 +43,7 @@ python audit.py --key <你的KEY> --url <中转站地址> --profile web3 --outpu
 
 这是一个**质量管线异常严格**的 CLI 工具:
 
-- **426 个 pytest 单元测试**(从 v2.1 的 114 增长到 v2.3 的 319,v1.7.5 review 轮再增 +107 个)
+- **493 个 pytest 单元测试**(从 v2.1 的 114 增长到 v2.3 的 319,v1.7.5 review 轮再增 +107 个)
 - **6 轮独立 Codex 代码审查 + 1 轮独立 peer review** 在 v2.2 → v2.3 → v1.7.5 开发期间发现并修复 **17 个真实 bug**(全部是 false-negative 级别的安全工具失效,如果 ship 进生产会造成对真实恶意中转站误判为 clean)
 - **零回归**:每次修复都带 regression test,bug 类别不会复发
 - **双分发字节级一致性**:`test_risk_matrix_character_identical` 测试强制 modular 和 standalone 两个版本的风险矩阵代码块完全相同
@@ -142,7 +142,7 @@ maps onto the attacker's credential-collection surface. **Do not use.**
 ```bash
 git clone https://github.com/toby-bridges/api-relay-audit.git
 cd api-relay-audit && pip install httpx pytest
-python -m pytest tests/ -v           # 跑全套 426 个测试
+python -m pytest tests/ -v           # 跑全套 493 个测试
 python scripts/audit.py --key <KEY> --url <URL> --output report.md
 ```
 
@@ -223,7 +223,7 @@ Output: a structured Markdown report with a risk summary (LOW / MEDIUM / HIGH) a
 
 This project uses an unusually rigorous quality pipeline for a CLI tool:
 
-- **426 pytest unit tests** across 13 test files (from 114 baseline in v2.1, +205 in v2.3, +107 in v1.7.5 review round)
+- **493 pytest unit tests** across 13 test files (from 114 baseline in v2.1, +205 in v2.3, +107 in v1.7.5 review round)
 - **6 independent Codex review rounds + 1 independent peer review round** during v2.2 → v2.3 → v1.7.5 development
 - **17 real bugs caught and fixed** by those reviews before ship — every one was a false-negative-class failure that would have misjudged a truly malicious relay as "clean"
 - **Byte-level dual-distribution parity** enforced by `test_risk_matrix_character_identical` — the modular and standalone versions cannot drift
@@ -390,7 +390,7 @@ For a deep-dive engineering narrative (in Chinese), see [`FOR_JOHN.md`](./FOR_JO
 ```bash
 git clone https://github.com/toby-bridges/api-relay-audit.git
 cd api-relay-audit && pip install httpx pytest
-python -m pytest tests/ -v           # run the full 426-test suite
+python -m pytest tests/ -v           # run the full 493-test suite
 python scripts/audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
 ```
 
@@ -415,7 +415,7 @@ scripts/
   audit.py                           #   11-step orchestrator (entry point)
   context-test.py                    #   Standalone context length probe
   extract-data.py                    #   Report → JSON extractor for dashboard
-tests/                               # 426 pytest tests across 13 files
+tests/                               # 493 pytest tests across 14 files
   test_dual_distribution_parity.py   #   byte-level parity guard
   test_client_stream.py              #   streaming SSE parser unit tests
   test_stream_integrity.py           #   Step 10 verdict analysis tests

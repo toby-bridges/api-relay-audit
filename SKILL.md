@@ -1,13 +1,13 @@
 ---
 name: api-relay-audit
-description: Audit third-party AI API relay/proxy services for security risks. Detects hidden prompt injection, prompt leakage, instruction override, identity hijacking (Chinese-market substitutes), jailbreak vulnerabilities, context truncation, tool-call package substitution (AC-1.a), error response header leakage (AC-2 adjacent), and SSE-level stream integrity anomalies (AC-1 streaming). Use when: "test relay", "audit API", "audit relay", "detect injection", "relay security", "API relay audit", "is this relay safe", "does it inject prompts", "test proxy API", "check API key", "中转站安全", "测试中转站", "中转站审计".
+description: "Audit third-party AI API relay/proxy services for security risks. Detects hidden prompt injection, prompt leakage, instruction override, identity hijacking (Chinese-market substitutes), jailbreak vulnerabilities, context truncation, tool-call package substitution (AC-1.a), error response header leakage (AC-2 adjacent), SSE-level stream integrity anomalies (AC-1 streaming), and Web3 prompt injection (SlowMist signature isolation). Use when: test relay, audit API, audit relay, detect injection, relay security, API relay audit, is this relay safe, does it inject prompts, test proxy API, check API key, 中转站安全, 测试中转站, 中转站审计."
 version: 2.3.0
 metadata: {"openclaw":{"requires":{"anyBins":["curl","python3","python"],"env":[]},"emoji":"🛡️","homepage":"https://github.com/toby-bridges/api-relay-audit"}}
 ---
 
 # API Relay Security Audit (API 中转站安全审计)
 
-A self-contained 10-step security audit for third-party AI API relay/proxy services (中转站). One script, zero config, full report. Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407.
+A self-contained 11-step security audit for third-party AI API relay/proxy services (中转站). One script, zero config, full report. Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407.
 
 ## Quick Start (快速开始)
 
@@ -23,7 +23,7 @@ The script has zero dependencies beyond Python 3 + `curl`. All HTTP calls go thr
 
 ## What This Skill Does (功能概述)
 
-Runs a 10-step automated audit against any OpenAI-compatible or Anthropic-compatible API relay:
+Runs an 11-step automated audit against any OpenAI-compatible or Anthropic-compatible API relay:
 
 | Step | Test | What It Detects |
 |------|------|-----------------|
@@ -37,6 +37,7 @@ Runs a 10-step automated audit against any OpenAI-compatible or Anthropic-compat
 | 8 | Tool-call substitution (工具调用改写, AC-1.a) | Pinned `pip install` / `npm install` / `cargo add` / `go get` probes; character-level diff against expected to detect package-name rewriting on the return path (`requests` -> `reqeusts` typosquat) |
 | 9 | Error response leakage (错误响应泄漏, AC-2 adjacent) | 7-8 deterministic broken requests (malformed JSON, invalid model, wrong content-type, missing fields, unknown endpoint, force_upstream_error, auth_probe, optional 256 KB oversized body); scans the error body and response headers for echoed credentials, upstream URLs, env var names, filesystem paths, stack traces, LiteLLM internal field leaks, and Bedrock guardrail PII echoes |
 | 10 | Stream integrity (流完整性, AC-1 SSE-level) | Opens an Anthropic streaming request with thinking enabled, captures every SSE event, and verifies 4 invariants: all event types are in the known set (ping/message_start/content_block_start/content_block_delta/content_block_stop/message_delta/message_stop); `output_tokens` is monotonically non-decreasing; `input_tokens` is consistent across message_start and message_delta; `signature_delta` events have non-empty signatures. Also checks `message_start.message.model` contains `claude`. Concept sourced from hvoy.ai `claude_detector.py`. |
+| 11 | Web3 prompt injection (Web3 注入, `--profile web3` only) | 3 SlowMist signature-isolation probes targeting wallet safety: ETH transfer guidance, sign-transaction refusal, private-key leak refusal. Safe-priority classifier with hard-injection override for contradictory responses. |
 
 Output: a structured Markdown report with risk ratings per section and an overall verdict.
 
@@ -245,6 +246,9 @@ python audit.py [OPTIONS]
 | `--skip-error-leakage` | No | false | Skip Step 9 AC-2 adjacent error response leakage test (跳过错误响应泄漏检测) |
 | `--aggressive-error-probes` | No | false | Enable 256 KB oversized-context error probe in Step 9 (启用激进错误探测，可能产生计费) |
 | `--skip-stream-integrity` | No | false | Skip Step 10 SSE-level stream integrity test (跳过流完整性检测) |
+| `--skip-web3-injection` | No | false | Skip Step 11 Web3 prompt injection probes (跳过 Web3 注入检测) |
+| `--profile` | No | `general` | Audience selector: `general` (Steps 1-10), `web3` (+ Step 11), `full` (all) |
+| `--transparent-log` | No | -- | Path to append-only JSONL forensic log (arXiv §7.3 取证日志) |
 | `--warmup` | No | 0 | Send N benign requests before the audit to mitigate AC-1.b request-count gates (审计前预热次数) |
 | `--timeout` | No | 120 | Request timeout in seconds (请求超时秒数) |
 | `--output` | No | stdout | Path for the Markdown report (报告输出路径) |
