@@ -32,6 +32,7 @@ from api_relay_audit.infra_fingerprint import (
     aggregate_framework,
     run_infra_fingerprint,
 )
+from api_relay_audit.latency_variance import run_latency_variance
 from api_relay_audit.reporter import Reporter
 from api_relay_audit.stream_integrity import analyze_stream
 from api_relay_audit.tool_substitution import run_tool_substitution_test
@@ -210,6 +211,14 @@ def parse_args():
                    help="Skip Step 12 infrastructure fingerprinting "
                         "(framework family detection via header + body "
                         "signatures).")
+    p.add_argument("--skip-latency-variance", action="store_true",
+                   help="Skip Step 13 latency variance fingerprinting "
+                        "(bimodality heuristic over N identical probes).")
+    p.add_argument("--latency-probe-count", type=int, default=10,
+                   metavar="N",
+                   help="Number of identical probes fired in Step 13. "
+                        "Minimum 4 to enable bimodality detection. "
+                        "Default: 10.")
     p.add_argument("--warmup", type=int, default=0, metavar="N",
                    help="Send N benign requests before the audit to mitigate "
                         "request-count-gated backdoors (AC-1.b). Default: 0")
@@ -1022,6 +1031,110 @@ def test_infra_fingerprint(client, report):
     return framework, confidence
 
 
+def test_latency_variance(client, report, probe_count=10):
+    """Step 13: Latency Variance Fingerprinting (v1.8).
+
+    Fires ``probe_count`` identical minimal requests (``max_tokens=8``)
+    and measures per-request end-to-end latency. Reports descriptive
+    statistics plus a simple bimodality heuristic.
+
+    Rationale: a relay that silently A/B tests (routing some requests
+    to the advertised model, others to a cheaper quantized model or
+    an unrelated provider) produces BIMODAL latency -- two distinct
+    clusters of response times. A queue-multiplexing relay shows
+    multi-modal patterns as well. Stable, low-variance latency is the
+    honest baseline.
+
+    v1.8 classification is **informational only** -- the result does
+    NOT feed into the 6D risk matrix. Network jitter and provider-side
+    warming can produce false positives on honest relays, so a
+    ``variable`` or ``bimodal`` verdict is a prompt for deeper
+    investigation, not a direct accusation.
+
+    Returns the dict produced by :func:`run_latency_variance`.
+    """
+    report.h2("13. Latency Variance")
+    report.p(
+        f"Fire {probe_count} identical minimal requests (``max_tokens=8``) "
+        "and measure per-request end-to-end latency. Compute "
+        "descriptive statistics and a gap-ratio bimodality heuristic. "
+        "Rationale: a relay that silently A/B tests between the "
+        "advertised model and a cheaper substitute produces a bimodal "
+        "latency distribution; a queue-multiplexing relay shows "
+        "multi-modal patterns. Stable low-variance latency is the "
+        "honest baseline. **Informational only** in v1.8 -- not fed "
+        "into the overall risk rating.\n"
+    )
+
+    result = run_latency_variance(client, count=probe_count)
+    latencies = result["latencies"]
+    errors = result["errors"]
+    stats = result["stats"]
+
+    if not latencies:
+        report.flag(
+            "yellow",
+            f"Latency variance test inconclusive: all {len(errors)} "
+            "probes failed. The relay is refusing or erroring on even "
+            "tiny requests.",
+        )
+        print("  Done: latency variance (inconclusive, all probes errored)")
+        return result
+
+    report.p("| Metric | Value |")
+    report.p("|--------|-------|")
+    report.p(f"| successful probes | {stats['count']} / {probe_count} |")
+    report.p(f"| failed probes | {len(errors)} |")
+    report.p(f"| min | {stats['min']:.3f}s |")
+    report.p(f"| median | {stats['median']:.3f}s |")
+    report.p(f"| max | {stats['max']:.3f}s |")
+    report.p(f"| mean | {stats['mean']:.3f}s |")
+    report.p(f"| stdev | {stats['stdev']:.3f}s |")
+    report.p(f"| coefficient of variation | {stats['cv']:.3f} |")
+    report.p(f"| largest-gap / median | {result['gap_ratio']:.3f} |")
+    report.p(f"| verdict | `{result['verdict']}` |")
+
+    verdict = result["verdict"]
+    if verdict == "bimodal":
+        report.flag(
+            "yellow",
+            "Latency distribution is **bimodal**: probes cluster into "
+            "two distinct response-time groups. Possible silent A/B "
+            "testing between the advertised model and a cheaper "
+            "substitute. Informational only in v1.8 -- verify with "
+            "Step 5 identity checks and Step 12 infra fingerprint.",
+        )
+    elif verdict == "high-variance":
+        report.flag(
+            "yellow",
+            f"Latency **high-variance** (CV={stats['cv']:.2f}). "
+            "Informational only in v1.8; could be network jitter, "
+            "congested upstream, or routing instability.",
+        )
+    elif verdict == "variable":
+        report.flag(
+            "green",
+            f"Latency **variable** (CV={stats['cv']:.2f}). "
+            "Within typical network-jitter range.",
+        )
+    elif verdict == "stable":
+        report.flag(
+            "green",
+            f"Latency **stable** (CV={stats['cv']:.2f}). "
+            "Consistent with a single honest upstream.",
+        )
+    else:  # inconclusive
+        report.flag(
+            "yellow",
+            f"Latency variance **inconclusive** (only {stats['count']} "
+            "successful probes). Re-run with --latency-probe-count >= 4.",
+        )
+
+    print(f"  Done: latency variance ({verdict}, "
+          f"CV={stats['cv']:.2f}, n={stats['count']})")
+    return result
+
+
 # ============================================================
 # Fail-open step wrapper
 # ============================================================
@@ -1126,94 +1239,94 @@ def main():
 
     # 1. Infrastructure
     if not args.skip_infra:
-        print("[1/12] Infrastructure recon...")
+        print("[1/13] Infrastructure recon...")
         _run_step("Step 1 infrastructure", report,
                   test_infrastructure, client.base_url, report,
                   crashes=step_crashes)
     else:
-        print("[1/12] Infrastructure recon (skipped)")
+        print("[1/13] Infrastructure recon (skipped)")
 
     # 2. Models
-    print("[2/12] Model list...")
+    print("[2/13] Model list...")
     _run_step("Step 2 model list", report, test_models, client, report,
               crashes=step_crashes)
 
     # 3. Token injection
-    print("[3/12] Token injection detection...")
+    print("[3/13] Token injection detection...")
     injection = _run_step("Step 3 token injection", report,
                           test_token_injection, client, report,
                           default=None, crashes=step_crashes)
 
     # 4. Prompt extraction
-    print("[4/12] Prompt extraction tests...")
+    print("[4/13] Prompt extraction tests...")
     leaked = _run_step("Step 4 prompt extraction", report,
                        test_prompt_extraction, client, report,
                        default=False, crashes=step_crashes)
 
     # 5. Instruction conflict
-    print("[5/12] Instruction conflict tests...")
+    print("[5/13] Instruction conflict tests...")
     overridden = _run_step("Step 5 instruction override", report,
                            test_instruction_conflict, client, report,
                            default=None, crashes=step_crashes)
 
     # 6. Jailbreak
-    print("[6/12] Jailbreak tests...")
+    print("[6/13] Jailbreak tests...")
     _run_step("Step 6 jailbreak", report, test_jailbreak, client, report,
               crashes=step_crashes)
 
     # 7. Context length
     if not args.skip_context:
-        print("[7/12] Context length test...")
+        print("[7/13] Context length test...")
         _run_step("Step 7 context length", report,
                   test_context_length, client, report,
                   crashes=step_crashes)
     else:
-        print("[7/12] Context length test (skipped)")
+        print("[7/13] Context length test (skipped)")
 
     # 8. Tool-call package substitution (AC-1.a)
     substitution_detected = False
     substitution_inconclusive = False
     if not args.skip_tool_substitution:
-        print("[8/12] Tool-call substitution test...")
+        print("[8/13] Tool-call substitution test...")
         substitution_detected, substitution_inconclusive = _run_step(
             "Step 8 tool substitution", report,
             test_tool_substitution, client, report,
             default=(False, True), crashes=step_crashes,
         )
     else:
-        print("[8/12] Tool-call substitution test (skipped)")
+        print("[8/13] Tool-call substitution test (skipped)")
 
     # 9. Error response header leakage (AC-2 adjacent)
     err_severity = "none"
     err_inconclusive = False
     if not args.skip_error_leakage:
-        print("[9/12] Error response leakage test...")
+        print("[9/13] Error response leakage test...")
         err_severity, err_inconclusive = _run_step(
             "Step 9 error leakage", report,
             test_error_leakage, client, args, report,
             default=("none", True), crashes=step_crashes,
         )
     else:
-        print("[9/12] Error response leakage test (skipped)")
+        print("[9/13] Error response leakage test (skipped)")
 
     # 10. Stream integrity (AC-1 SSE-level)
     stream_verdict = "clean"
     stream_inconclusive = False
     if not args.skip_stream_integrity:
-        print("[10/12] Stream integrity test...")
+        print("[10/13] Stream integrity test...")
         stream_verdict, stream_inconclusive = _run_step(
             "Step 10 stream integrity", report,
             test_stream_integrity, client, report,
             default=("clean", True), crashes=step_crashes,
         )
     else:
-        print("[10/12] Stream integrity test (skipped)")
+        print("[10/13] Stream integrity test (skipped)")
 
     # 11. Web3 prompt injection (profile=web3|full only)
     web3_inj_verdict = "clean"
     web3_inj_inconclusive = False
     if args.profile in ("web3", "full") and not args.skip_web3_injection:
-        print("[11/12] Web3 prompt injection test...")
+        print("[11/13] Web3 prompt injection test...")
         web3_inj_verdict, web3_inj_inconclusive = _run_step(
             "Step 11 web3 injection", report,
             test_web3_injection, client, report,
@@ -1221,20 +1334,32 @@ def main():
         )
     else:
         if args.profile == "general":
-            print("[11/12] Web3 prompt injection test (profile=general, skipped)")
+            print("[11/13] Web3 prompt injection test (profile=general, skipped)")
         else:
-            print("[11/12] Web3 prompt injection test (skipped)")
+            print("[11/13] Web3 prompt injection test (skipped)")
 
     # 12. Infrastructure fingerprint (v1.8, informational)
     if not args.skip_infra_fingerprint:
-        print("[12/12] Infrastructure fingerprint...")
+        print("[12/13] Infrastructure fingerprint...")
         _run_step(
             "Step 12 infra fingerprint", report,
             test_infra_fingerprint, client, report,
             default=(None, "unknown"), crashes=step_crashes,
         )
     else:
-        print("[12/12] Infrastructure fingerprint (skipped)")
+        print("[12/13] Infrastructure fingerprint (skipped)")
+
+    # 13. Latency variance (v1.8, informational)
+    if not args.skip_latency_variance:
+        print("[13/13] Latency variance...")
+        _run_step(
+            "Step 13 latency variance", report,
+            test_latency_variance, client, report,
+            args.latency_probe_count,
+            default=None, crashes=step_crashes,
+        )
+    else:
+        print("[13/13] Latency variance (skipped)")
 
     # Overall rating
     # Dimensions (v3, post-v1.7.5):
@@ -1258,7 +1383,7 @@ def main():
     #   d2                                          -> MEDIUM
     #   d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_crashed -> MEDIUM
     #   else                                        -> LOW
-    report.h2("13. Overall Rating")
+    report.h2("14. Overall Rating")
     any_step_crashed = bool(step_crashes)
     d1 = injection is not None and injection > 100
     d1i = injection is None
