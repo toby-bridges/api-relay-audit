@@ -28,6 +28,10 @@ from api_relay_audit.client import APIClient
 from api_relay_audit.context import run_context_scan
 from api_relay_audit.error_leakage import run_error_leakage_test
 from api_relay_audit.identity_patterns import find_non_claude_identities
+from api_relay_audit.infra_fingerprint import (
+    aggregate_framework,
+    run_infra_fingerprint,
+)
 from api_relay_audit.reporter import Reporter
 from api_relay_audit.stream_integrity import analyze_stream
 from api_relay_audit.tool_substitution import run_tool_substitution_test
@@ -202,6 +206,10 @@ def parse_args():
     p.add_argument("--skip-web3-injection", action="store_true",
                    help="Skip Step 11 Web3 prompt injection probes (only "
                         "runs under --profile web3 or full).")
+    p.add_argument("--skip-infra-fingerprint", action="store_true",
+                   help="Skip Step 12 infrastructure fingerprinting "
+                        "(framework family detection via header + body "
+                        "signatures).")
     p.add_argument("--warmup", type=int, default=0, metavar="N",
                    help="Send N benign requests before the audit to mitigate "
                         "request-count-gated backdoors (AC-1.b). Default: 0")
@@ -928,6 +936,92 @@ def test_context_length(client, report):
     print("  Done: context length test")
 
 
+def test_infra_fingerprint(client, report):
+    """Step 12: Infrastructure Fingerprinting (v1.8).
+
+    Fires 3 unauthenticated GET probes at the relay (``/``,
+    ``/v1/models``, ``/nonexistent-abc12345xyz``) and classifies the
+    response-header + body signatures against a small database of
+    known relay frameworks (one-api, new-api, lobechat, fastgpt,
+    cloudflare, raw nginx/caddy).
+
+    Rationale: Zhang et al., *Real Money, Fake Models*, arXiv:2603.01919,
+    Table 2 reports that 11 of 17 identified shadow APIs are built on
+    OneAPI / NewAPI forks. Knowing the framework lets the user assess
+    operator professionalism and cross-reference framework-level CVEs.
+
+    v1.8 classification is **informational only** -- the result does
+    NOT feed into the 6D risk matrix. A future version may promote
+    unknown-framework or operator-reputation signals to a dimension.
+
+    Returns ``(framework, confidence)`` where ``confidence`` is one of
+    ``"confirmed"`` / ``"tentative"`` / ``"unknown"``.
+    """
+    report.h2("12. Infrastructure Fingerprint")
+    report.p(
+        "Probe the relay's ``/``, ``/v1/models``, and a nonexistent "
+        "endpoint with unauthenticated GET requests, then match "
+        "response headers and body against a small database of known "
+        "relay-framework signatures. Rationale: Zhang et al., *Real "
+        "Money, Fake Models*, arXiv:2603.01919, reports 11 of 17 "
+        "identified shadow APIs are built on OneAPI / NewAPI forks. "
+        "Framework identification is **informational only** in v1.8 "
+        "-- it does not feed into the overall risk rating.\n"
+    )
+
+    results = run_infra_fingerprint(client)
+
+    report.p("| Probe | Path | Status | Framework | Signals |")
+    report.p("|-------|------|--------|-----------|---------|")
+    for r in results:
+        name = r["probe"]
+        path = r["path"]
+        status_cell = str(r["status"]) if r["status"] else "—"
+        if r["error"]:
+            status_cell = f"ERR: {r['error'][:40]}"
+        framework = r["framework"] or "—"
+        if r["signals"]:
+            sig_strs = [f"{src}='{needle}'" for src, needle in r["signals"]]
+            signals_cell = ", ".join(sig_strs)[:120]
+        else:
+            signals_cell = "—"
+        report.p(f"| {name} | `{path}` | {status_cell} | `{framework}` | {signals_cell} |")
+
+    # Informative headers across all probes, de-duplicated per (name, value)
+    merged_headers = {}
+    for r in results:
+        for k, v in r["headers"].items():
+            merged_headers.setdefault(k, v)
+    if merged_headers:
+        report.p("\n**Operator-profile headers**:")
+        for k, v in merged_headers.items():
+            report.p(f"- `{k}`: `{v[:120]}`")
+
+    framework, confidence = aggregate_framework(results)
+
+    if confidence == "confirmed":
+        report.flag(
+            "green",
+            f"Relay framework identified: **{framework}** "
+            f"(confirmed by multiple probes). Informational only in v1.8.",
+        )
+    elif confidence == "tentative":
+        report.flag(
+            "green",
+            f"Relay framework possibly **{framework}** "
+            f"(single probe hit). Informational only in v1.8.",
+        )
+    else:
+        report.flag(
+            "green",
+            "No framework branding detected. Likely a direct reverse "
+            "proxy, a custom backend, or a stripped-branding fork.",
+        )
+
+    print(f"  Done: infra fingerprint ({framework or 'unknown'}/{confidence})")
+    return framework, confidence
+
+
 # ============================================================
 # Fail-open step wrapper
 # ============================================================
@@ -1032,94 +1126,94 @@ def main():
 
     # 1. Infrastructure
     if not args.skip_infra:
-        print("[1/11] Infrastructure recon...")
+        print("[1/12] Infrastructure recon...")
         _run_step("Step 1 infrastructure", report,
                   test_infrastructure, client.base_url, report,
                   crashes=step_crashes)
     else:
-        print("[1/11] Infrastructure recon (skipped)")
+        print("[1/12] Infrastructure recon (skipped)")
 
     # 2. Models
-    print("[2/11] Model list...")
+    print("[2/12] Model list...")
     _run_step("Step 2 model list", report, test_models, client, report,
               crashes=step_crashes)
 
     # 3. Token injection
-    print("[3/11] Token injection detection...")
+    print("[3/12] Token injection detection...")
     injection = _run_step("Step 3 token injection", report,
                           test_token_injection, client, report,
                           default=None, crashes=step_crashes)
 
     # 4. Prompt extraction
-    print("[4/11] Prompt extraction tests...")
+    print("[4/12] Prompt extraction tests...")
     leaked = _run_step("Step 4 prompt extraction", report,
                        test_prompt_extraction, client, report,
                        default=False, crashes=step_crashes)
 
     # 5. Instruction conflict
-    print("[5/11] Instruction conflict tests...")
+    print("[5/12] Instruction conflict tests...")
     overridden = _run_step("Step 5 instruction override", report,
                            test_instruction_conflict, client, report,
                            default=None, crashes=step_crashes)
 
     # 6. Jailbreak
-    print("[6/11] Jailbreak tests...")
+    print("[6/12] Jailbreak tests...")
     _run_step("Step 6 jailbreak", report, test_jailbreak, client, report,
               crashes=step_crashes)
 
     # 7. Context length
     if not args.skip_context:
-        print("[7/11] Context length test...")
+        print("[7/12] Context length test...")
         _run_step("Step 7 context length", report,
                   test_context_length, client, report,
                   crashes=step_crashes)
     else:
-        print("[7/11] Context length test (skipped)")
+        print("[7/12] Context length test (skipped)")
 
     # 8. Tool-call package substitution (AC-1.a)
     substitution_detected = False
     substitution_inconclusive = False
     if not args.skip_tool_substitution:
-        print("[8/11] Tool-call substitution test...")
+        print("[8/12] Tool-call substitution test...")
         substitution_detected, substitution_inconclusive = _run_step(
             "Step 8 tool substitution", report,
             test_tool_substitution, client, report,
             default=(False, True), crashes=step_crashes,
         )
     else:
-        print("[8/11] Tool-call substitution test (skipped)")
+        print("[8/12] Tool-call substitution test (skipped)")
 
     # 9. Error response header leakage (AC-2 adjacent)
     err_severity = "none"
     err_inconclusive = False
     if not args.skip_error_leakage:
-        print("[9/11] Error response leakage test...")
+        print("[9/12] Error response leakage test...")
         err_severity, err_inconclusive = _run_step(
             "Step 9 error leakage", report,
             test_error_leakage, client, args, report,
             default=("none", True), crashes=step_crashes,
         )
     else:
-        print("[9/11] Error response leakage test (skipped)")
+        print("[9/12] Error response leakage test (skipped)")
 
     # 10. Stream integrity (AC-1 SSE-level)
     stream_verdict = "clean"
     stream_inconclusive = False
     if not args.skip_stream_integrity:
-        print("[10/11] Stream integrity test...")
+        print("[10/12] Stream integrity test...")
         stream_verdict, stream_inconclusive = _run_step(
             "Step 10 stream integrity", report,
             test_stream_integrity, client, report,
             default=("clean", True), crashes=step_crashes,
         )
     else:
-        print("[10/11] Stream integrity test (skipped)")
+        print("[10/12] Stream integrity test (skipped)")
 
     # 11. Web3 prompt injection (profile=web3|full only)
     web3_inj_verdict = "clean"
     web3_inj_inconclusive = False
     if args.profile in ("web3", "full") and not args.skip_web3_injection:
-        print("[11/11] Web3 prompt injection test...")
+        print("[11/12] Web3 prompt injection test...")
         web3_inj_verdict, web3_inj_inconclusive = _run_step(
             "Step 11 web3 injection", report,
             test_web3_injection, client, report,
@@ -1127,9 +1221,20 @@ def main():
         )
     else:
         if args.profile == "general":
-            print("[11/11] Web3 prompt injection test (profile=general, skipped)")
+            print("[11/12] Web3 prompt injection test (profile=general, skipped)")
         else:
-            print("[11/11] Web3 prompt injection test (skipped)")
+            print("[11/12] Web3 prompt injection test (skipped)")
+
+    # 12. Infrastructure fingerprint (v1.8, informational)
+    if not args.skip_infra_fingerprint:
+        print("[12/12] Infrastructure fingerprint...")
+        _run_step(
+            "Step 12 infra fingerprint", report,
+            test_infra_fingerprint, client, report,
+            default=(None, "unknown"), crashes=step_crashes,
+        )
+    else:
+        print("[12/12] Infrastructure fingerprint (skipped)")
 
     # Overall rating
     # Dimensions (v3, post-v1.7.5):
@@ -1153,7 +1258,7 @@ def main():
     #   d2                                          -> MEDIUM
     #   d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_crashed -> MEDIUM
     #   else                                        -> LOW
-    report.h2("12. Overall Rating")
+    report.h2("13. Overall Rating")
     any_step_crashed = bool(step_crashes)
     d1 = injection is not None and injection > 100
     d1i = injection is None

@@ -31,6 +31,7 @@ import subprocess
 import sys
 import time
 import uuid
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -1721,6 +1722,219 @@ def run_web3_injection_probes(client, sleep=1.0):
 
 
 # ============================================================
+# Section 3f: Infrastructure Fingerprinting (Step 12, v1.8)
+# ============================================================
+#
+# Identifies the relay-framework family (one-api / new-api / lobechat /
+# nginx / caddy / cloudflare ...) from response headers and response
+# bodies. Pure passive detection -- no fraud inference in v1.8; the
+# finding is informational and does NOT feed into the 6D risk matrix.
+#
+# Rationale: Zhang et al., *Real Money, Fake Models: Deceptive Model
+# Claims in Shadow APIs*, arXiv:2603.01919, Table 2 reports that 11 of
+# 17 identified shadow APIs are built on OneAPI / NewAPI open-source
+# backbones. Knowing the framework lets the user (a) assess the
+# operator's professionalism, (b) cross-reference known framework-level
+# CVEs, and (c) distinguish first-party relays from plain reverse
+# proxies. Paired with Step 13 Latency Variance, this section forms
+# v1.8's "Infrastructure Audit Layer".
+#
+# Detection surface:
+#     - GET /                          -- landing page (often HTML)
+#     - GET /v1/models                 -- 401/200 body, auth-header
+#                                        echo, x-powered-by
+#     - GET /nonexistent-abc12345xyz   -- 404 envelope
+#
+# Signals are matched against a small hand-curated list of framework-
+# specific substrings in headers and body text. A framework is
+# "confirmed" if it fires in >=2 of 3 probes, "tentative" if 1 of 3,
+# and "unknown" if 0 of 3.
+
+# Each entry is (framework_name, signals) where signals is a list of
+# (source, needle) tuples:
+#   source = "body"           -> substring match against response body
+#   source = "header:<name>"  -> substring match against header value.
+#                                If needle is empty, header presence
+#                                alone is the signal.
+# Needles are compared case-insensitively. Order matters: the first
+# framework whose signals fire wins, so list specific frameworks
+# (new-api, one-api) before generic ones (nginx, caddy).
+FRAMEWORK_SIGNATURES = [
+    # New API: song-quan-peng/one-api hard fork by Calcium-Ion.
+    # Keeps most upstream shapes but rebrands landing page + about.
+    ("new-api", [
+        ("body", "new api"),
+        ("body", "calcium-ion/new-api"),
+        ("body", "new-api"),
+        ("header:x-powered-by", "new-api"),
+    ]),
+    # One API: song-quanpeng/one-api. Upstream of new-api and numerous
+    # private forks. 58k+ GitHub stars; the single most-used shadow
+    # API backbone per arXiv:2603.01919.
+    ("one-api", [
+        ("body", "one api"),
+        ("body", "songquanpeng/one-api"),
+        ("body", "oneapi"),
+        ("header:x-powered-by", "one-api"),
+    ]),
+    # LobeChat relay mode. Usually exposes /v1 proxy endpoints
+    # plus a Next.js chat UI at /.
+    ("lobechat-relay", [
+        ("body", "lobechat"),
+        ("body", "lobe-chat"),
+        ("header:x-powered-by", "next.js"),
+    ]),
+    # FastGPT. Commonly deployed alongside one-api as a UI layer.
+    ("fastgpt", [
+        ("body", "fastgpt"),
+        ("body", "labring/fastgpt"),
+    ]),
+    # Cloudflare AI Gateway. Strong signal: cf-ray is present on
+    # every response from behind Cloudflare.
+    ("cloudflare", [
+        ("header:cf-ray", ""),
+        ("header:server", "cloudflare"),
+    ]),
+    # Raw nginx. No relay-specific branding; the operator just put a
+    # thin proxy in front of an upstream provider. Still informative:
+    # distinguishes "homemade" from "framework-based" relays.
+    ("nginx-raw", [
+        ("header:server", "nginx/"),
+    ]),
+    # Caddy. Same category as raw nginx.
+    ("caddy-raw", [
+        ("header:server", "caddy"),
+    ]),
+]
+
+
+# Headers that are always informative for operator profiling,
+# regardless of whether a framework was identified.
+INFORMATIVE_HEADERS = (
+    "server",
+    "x-powered-by",
+    "via",
+    "cf-ray",
+    "x-served-by",
+    "x-cache",
+    "x-request-id",
+    "x-frame-options",
+)
+
+
+# Body scan cap. Relay landing pages can be megabytes of HTML; we only
+# need enough to catch framework branding which is always near the top.
+_BODY_SCAN_LIMIT = 8192
+
+
+def _match_signal(signal, headers_lower, body_lower):
+    """Return True if the (source, needle) signal fires."""
+    source, needle = signal
+    needle_lower = needle.lower()
+    if source == "body":
+        return needle_lower in body_lower
+    if source.startswith("header:"):
+        header_name = source.split(":", 1)[1].lower()
+        if needle_lower == "":
+            return header_name in headers_lower
+        value = headers_lower.get(header_name, "")
+        return needle_lower in value.lower()
+    return False
+
+
+def classify_framework(headers, body):
+    """Classify a single response into (framework_name, matched_signals).
+
+    Returns (None, []) if no framework matched. The first framework
+    (in declaration order) whose signals fire wins.
+    """
+    if headers is None:
+        headers = {}
+    if body is None:
+        body = ""
+    headers_lower = {str(k).lower(): str(v) for k, v in headers.items()}
+    body_lower = body[:_BODY_SCAN_LIMIT].lower()
+
+    for framework, signals in FRAMEWORK_SIGNATURES:
+        hits = [s for s in signals if _match_signal(s, headers_lower, body_lower)]
+        if hits:
+            return framework, hits
+    return None, []
+
+
+def extract_informative_headers(headers):
+    """Return the subset of headers in INFORMATIVE_HEADERS (case-
+    insensitive), preserving the original header-name casing."""
+    if not headers:
+        return {}
+    out = {}
+    for k, v in headers.items():
+        if str(k).lower() in INFORMATIVE_HEADERS:
+            out[str(k)] = str(v)
+    return out
+
+
+def aggregate_framework(results):
+    """Pick the single most-confident framework across all probe results.
+
+    Rule: majority vote. If the same framework fires in >=2 probes, it
+    is "confirmed". If it fires in exactly 1, "tentative". If no
+    framework fired at all, "unknown".
+    """
+    frameworks = [r["framework"] for r in results if r.get("framework")]
+    if not frameworks:
+        return None, "unknown"
+    counts = Counter(frameworks)
+    top, n = counts.most_common(1)[0]
+    confidence = "confirmed" if n >= 2 else "tentative"
+    return top, confidence
+
+
+def run_infra_fingerprint(client):
+    """Fire the 3 infrastructure probes and return per-probe results.
+
+    Each probe is a raw_request with no auth headers. Some relays
+    reject unauthenticated /v1/models; the rejection body is still
+    useful as a fingerprint source.
+    """
+    probes = [
+        ("landing", "GET", "/"),
+        ("models", "GET", "/v1/models"),
+        ("notfound", "GET", "/nonexistent-abc12345xyz"),
+    ]
+
+    results = []
+    for name, method, path in probes:
+        r = client.raw_request(
+            method=method,
+            path=path,
+            headers={},
+            body=b"",
+            content_type="application/json",
+            timeout=15,
+        )
+        status = r.get("status", 0)
+        headers = r.get("headers", {}) or {}
+        body = r.get("body", "") or ""
+        error = r.get("error")
+
+        framework, signals = classify_framework(headers, body)
+        info_headers = extract_informative_headers(headers)
+
+        results.append({
+            "probe": name,
+            "path": path,
+            "status": status,
+            "error": error,
+            "framework": framework,
+            "signals": signals,
+            "headers": info_headers,
+            "body_preview": body[:200],
+        })
+    return results
+
+
+# ============================================================
 # Section 4: CLI
 # ============================================================
 
@@ -1750,6 +1964,10 @@ def parse_args():
     p.add_argument("--skip-web3-injection", action="store_true",
                    help="Skip Step 11 Web3 prompt injection probes "
                         "(only runs under --profile web3 or full).")
+    p.add_argument("--skip-infra-fingerprint", action="store_true",
+                   help="Skip Step 12 infrastructure fingerprinting "
+                        "(framework family detection via header + body "
+                        "signatures).")
     p.add_argument("--warmup", type=int, default=0, metavar="N",
                    help="Send N benign requests before the audit to mitigate "
                         "request-count-gated backdoors (AC-1.b). Default: 0")
@@ -2528,6 +2746,92 @@ def test_context_length(client, report):
     print("  Done: context length test")
 
 
+def test_infra_fingerprint(client, report):
+    """Step 12: Infrastructure Fingerprinting (v1.8).
+
+    Fires 3 unauthenticated GET probes at the relay (``/``,
+    ``/v1/models``, ``/nonexistent-abc12345xyz``) and classifies the
+    response-header + body signatures against a small database of
+    known relay frameworks (one-api, new-api, lobechat, fastgpt,
+    cloudflare, raw nginx/caddy).
+
+    Rationale: Zhang et al., *Real Money, Fake Models*, arXiv:2603.01919,
+    Table 2 reports that 11 of 17 identified shadow APIs are built on
+    OneAPI / NewAPI forks. Knowing the framework lets the user assess
+    operator professionalism and cross-reference framework-level CVEs.
+
+    v1.8 classification is **informational only** -- the result does
+    NOT feed into the 6D risk matrix. A future version may promote
+    unknown-framework or operator-reputation signals to a dimension.
+
+    Returns ``(framework, confidence)`` where ``confidence`` is one of
+    ``"confirmed"`` / ``"tentative"`` / ``"unknown"``.
+    """
+    report.h2("12. Infrastructure Fingerprint")
+    report.p(
+        "Probe the relay's ``/``, ``/v1/models``, and a nonexistent "
+        "endpoint with unauthenticated GET requests, then match "
+        "response headers and body against a small database of known "
+        "relay-framework signatures. Rationale: Zhang et al., *Real "
+        "Money, Fake Models*, arXiv:2603.01919, reports 11 of 17 "
+        "identified shadow APIs are built on OneAPI / NewAPI forks. "
+        "Framework identification is **informational only** in v1.8 "
+        "-- it does not feed into the overall risk rating.\n"
+    )
+
+    results = run_infra_fingerprint(client)
+
+    report.p("| Probe | Path | Status | Framework | Signals |")
+    report.p("|-------|------|--------|-----------|---------|")
+    for r in results:
+        name = r["probe"]
+        path = r["path"]
+        status_cell = str(r["status"]) if r["status"] else "—"
+        if r["error"]:
+            status_cell = f"ERR: {r['error'][:40]}"
+        framework = r["framework"] or "—"
+        if r["signals"]:
+            sig_strs = [f"{src}='{needle}'" for src, needle in r["signals"]]
+            signals_cell = ", ".join(sig_strs)[:120]
+        else:
+            signals_cell = "—"
+        report.p(f"| {name} | `{path}` | {status_cell} | `{framework}` | {signals_cell} |")
+
+    # Informative headers across all probes, de-duplicated per (name, value)
+    merged_headers = {}
+    for r in results:
+        for k, v in r["headers"].items():
+            merged_headers.setdefault(k, v)
+    if merged_headers:
+        report.p("\n**Operator-profile headers**:")
+        for k, v in merged_headers.items():
+            report.p(f"- `{k}`: `{v[:120]}`")
+
+    framework, confidence = aggregate_framework(results)
+
+    if confidence == "confirmed":
+        report.flag(
+            "green",
+            f"Relay framework identified: **{framework}** "
+            f"(confirmed by multiple probes). Informational only in v1.8.",
+        )
+    elif confidence == "tentative":
+        report.flag(
+            "green",
+            f"Relay framework possibly **{framework}** "
+            f"(single probe hit). Informational only in v1.8.",
+        )
+    else:
+        report.flag(
+            "green",
+            "No framework branding detected. Likely a direct reverse "
+            "proxy, a custom backend, or a stripped-branding fork.",
+        )
+
+    print(f"  Done: infra fingerprint ({framework or 'unknown'}/{confidence})")
+    return framework, confidence
+
+
 # ============================================================
 # Fail-open step wrapper (v1.7.5)
 # ============================================================
@@ -2603,94 +2907,94 @@ def main():
 
     # 1. Infrastructure
     if not args.skip_infra:
-        print("[1/11] Infrastructure recon...")
+        print("[1/12] Infrastructure recon...")
         _run_step("Step 1 infrastructure", report,
                   test_infrastructure, client.base_url, report,
                   crashes=step_crashes)
     else:
-        print("[1/11] Infrastructure recon (skipped)")
+        print("[1/12] Infrastructure recon (skipped)")
 
     # 2. Models
-    print("[2/11] Model list...")
+    print("[2/12] Model list...")
     _run_step("Step 2 model list", report, test_models, client, report,
               crashes=step_crashes)
 
     # 3. Token injection
-    print("[3/11] Token injection detection...")
+    print("[3/12] Token injection detection...")
     injection = _run_step("Step 3 token injection", report,
                           test_token_injection, client, report,
                           default=None, crashes=step_crashes)
 
     # 4. Prompt extraction
-    print("[4/11] Prompt extraction tests...")
+    print("[4/12] Prompt extraction tests...")
     leaked = _run_step("Step 4 prompt extraction", report,
                        test_prompt_extraction, client, report,
                        default=False, crashes=step_crashes)
 
     # 5. Instruction conflict
-    print("[5/11] Instruction conflict tests...")
+    print("[5/12] Instruction conflict tests...")
     overridden = _run_step("Step 5 instruction override", report,
                            test_instruction_conflict, client, report,
                            default=None, crashes=step_crashes)
 
     # 6. Jailbreak
-    print("[6/11] Jailbreak tests...")
+    print("[6/12] Jailbreak tests...")
     _run_step("Step 6 jailbreak", report, test_jailbreak, client, report,
               crashes=step_crashes)
 
     # 7. Context length
     if not args.skip_context:
-        print("[7/11] Context length test...")
+        print("[7/12] Context length test...")
         _run_step("Step 7 context length", report,
                   test_context_length, client, report,
                   crashes=step_crashes)
     else:
-        print("[7/11] Context length test (skipped)")
+        print("[7/12] Context length test (skipped)")
 
     # 8. Tool-call package substitution (AC-1.a)
     substitution_detected = False
     substitution_inconclusive = False
     if not args.skip_tool_substitution:
-        print("[8/11] Tool-call substitution test...")
+        print("[8/12] Tool-call substitution test...")
         substitution_detected, substitution_inconclusive = _run_step(
             "Step 8 tool substitution", report,
             test_tool_substitution, client, report,
             default=(False, True), crashes=step_crashes,
         )
     else:
-        print("[8/11] Tool-call substitution test (skipped)")
+        print("[8/12] Tool-call substitution test (skipped)")
 
     # 9. Error response header leakage (AC-2 adjacent)
     err_severity = "none"
     err_inconclusive = False
     if not args.skip_error_leakage:
-        print("[9/11] Error response leakage test...")
+        print("[9/12] Error response leakage test...")
         err_severity, err_inconclusive = _run_step(
             "Step 9 error leakage", report,
             test_error_leakage, client, args, report,
             default=("none", True), crashes=step_crashes,
         )
     else:
-        print("[9/11] Error response leakage test (skipped)")
+        print("[9/12] Error response leakage test (skipped)")
 
     # 10. Stream integrity (AC-1 SSE-level)
     stream_verdict = "clean"
     stream_inconclusive = False
     if not args.skip_stream_integrity:
-        print("[10/11] Stream integrity test...")
+        print("[10/12] Stream integrity test...")
         stream_verdict, stream_inconclusive = _run_step(
             "Step 10 stream integrity", report,
             test_stream_integrity, client, report,
             default=("clean", True), crashes=step_crashes,
         )
     else:
-        print("[10/11] Stream integrity test (skipped)")
+        print("[10/12] Stream integrity test (skipped)")
 
     # 11. Web3 prompt injection (profile=web3|full only)
     web3_inj_verdict = "clean"
     web3_inj_inconclusive = False
     if args.profile in ("web3", "full") and not args.skip_web3_injection:
-        print("[11/11] Web3 prompt injection test...")
+        print("[11/12] Web3 prompt injection test...")
         web3_inj_verdict, web3_inj_inconclusive = _run_step(
             "Step 11 web3 injection", report,
             test_web3_injection, client, report,
@@ -2698,9 +3002,20 @@ def main():
         )
     else:
         if args.profile == "general":
-            print("[11/11] Web3 prompt injection test (profile=general, skipped)")
+            print("[11/12] Web3 prompt injection test (profile=general, skipped)")
         else:
-            print("[11/11] Web3 prompt injection test (skipped)")
+            print("[11/12] Web3 prompt injection test (skipped)")
+
+    # 12. Infrastructure fingerprint (v1.8, informational)
+    if not args.skip_infra_fingerprint:
+        print("[12/12] Infrastructure fingerprint...")
+        _run_step(
+            "Step 12 infra fingerprint", report,
+            test_infra_fingerprint, client, report,
+            default=(None, "unknown"), crashes=step_crashes,
+        )
+    else:
+        print("[12/12] Infrastructure fingerprint (skipped)")
 
     # Overall rating
     # Dimensions (v3, post-v1.7.5):
@@ -2724,7 +3039,7 @@ def main():
     #   d2                                          -> MEDIUM
     #   d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_crashed -> MEDIUM
     #   else                                        -> LOW
-    report.h2("12. Overall Rating")
+    report.h2("13. Overall Rating")
     any_step_crashed = bool(step_crashes)
     d1 = injection is not None and injection > 100
     d1i = injection is None
