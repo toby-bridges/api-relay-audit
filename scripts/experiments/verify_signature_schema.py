@@ -7,7 +7,7 @@ across channels (direct / bedrock / vertex / reverse-proxy).
 
 Usage:
     set ANTHROPIC_API_KEY=sk-ant-...
-    python scripts/verify_signature_schema.py
+    python scripts/experiments/verify_signature_schema.py
 
 Output: `reports/signature-schema-probe.txt` (hex dumps + parsed field
 tuples + 3-run stability diff). Read the report and decide:
@@ -18,6 +18,12 @@ tuples + 3-run stability diff). Read the report and decide:
     → abandon item 5, fall back to header-presence fingerprinting.
 
 Zero deps: stdlib only, curl-free (uses urllib). Python 3.7+.
+
+Status: archived under ``scripts/experiments/`` on 2026-04-20 as a
+one-shot investigation artifact. Not part of the production audit
+pipeline; no module imports it. Kept in-tree so the investigation is
+reproducible; move to a separate gist or delete if/when ROADMAP item
+5 closes definitively.
 """
 
 import base64

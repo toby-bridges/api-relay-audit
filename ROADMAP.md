@@ -6,7 +6,7 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-04-20 (session closes v1.8 Codex review #2 round 2, 562/562 passing)
+**Last updated**: 2026-04-20 (handoff-prep cleanup: Tier A archival shipped, v1.9 decouplings logged, 562/562 passing)
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -278,6 +278,90 @@ rather than real bugs — the v1.8.1 fixes themselves are correct,
 these tests just harden the regression guard. Revisit when the next
 feature cycle starts (same session that picks up 2.5 over-engineering
 prune is a natural fit).
+
+### 2.45 v1.9 — controlled-blast decouplings (handoff-prep triage, 2026-04-20)
+
+**Status**: audit done 2026-04-20 before front-end handoff.
+**Shipped in this audit**: Tier A archival — `scripts/verify_signature_
+schema.py` moved to `scripts/experiments/` (zero blast, no imports
+anywhere in the repo, one-shot investigation artifact).
+**Deferred to v1.9**: three real decoupling candidates ranked by
+blast-radius vs. leverage.
+
+1. **Extract `REFUSAL_MARKERS` + `_looks_like_refusal`**
+   from `scripts/audit.py` (lines 81, 156-158) into a new module
+   `api_relay_audit/refusal.py`.
+   **Scope**: ~25 LOC extraction + 6 import-site rewrites in
+   `scripts/audit.py` + 1 import rewrite in
+   `tests/test_refusal_detector.py` (currently references
+   `modular._looks_like_refusal`). Standalone `audit.py` keeps its
+   inline copy unchanged — the `TestRefusalMarkerParity` parity test
+   covers drift.
+   **Blast radius**: LOW. Parity test is the regression guard; if it
+   stays green and the test suite passes, the extraction is safe.
+   **Why now-safe**: unlike a client.py / audit.py split, this does
+   NOT require a standalone refactor because the parity strategy
+   already treats refusal markers as "inline on standalone, imported
+   on modular" in principle — we just need to complete that on the
+   modular side.
+   **Prereq**: none.
+   **Time estimate**: 25-30 min.
+   **Why deferred past this handoff**: medium-value, not zero-blast.
+   Parity tests exist but a typo in an import path or a missed call
+   site would produce a silent refusal-detection regression that
+   tests might miss if the test suite does not cover Step 4/6 end-
+   to-end with the moved module. Worth a proper code review rather
+   than a 30-min squeeze before handoff.
+
+2. **Split `api_relay_audit/client.py` (924 LOC)**
+   into `client/transport.py` + `client/format_detection.py` +
+   `client/stream.py` + `client/__init__.py` (re-exports).
+   **Scope**: ~300 LOC moved + all downstream import sites (every
+   module + every test that constructs `APIClient`). Public API
+   surface (`APIClient.call / get_models / raw_request / stream_call
+   / ensure_format`) preserved via `__init__.py` re-exports.
+   **Blast radius**: HIGH. Touches every module.
+   **Why not now**: standalone `audit.py` cannot be split in the
+   same way (it is a single flat file by design). Splitting modular
+   means the dual-distribution mirroring strategy has to change from
+   "character-identical blocks" to "character-identical blocks PLUS
+   class extraction into flat standalone". No clean playbook yet.
+   **Prereq**: dual-distribution policy decision (keep standalone /
+   deprecate standalone / auto-generate standalone from modular).
+   Without that decision any split strategy is guessing.
+   **Time estimate**: 2-3 hours, plus standalone strategy design.
+
+3. **Split `scripts/audit.py` (1536 LOC)**
+   into `scripts/steps/` subdirectory, one file per numbered step.
+   **Scope**: ~1200 LOC moved + `scripts/audit.py` becomes a thin
+   orchestrator that imports from `scripts.steps.step_NN_*`.
+   **Blast radius**: MEDIUM-HIGH. The `test_risk_matrix_character_
+   identical` parity test slices text between `# Overall rating`
+   and `# Output` comments; if the split moves those comments into
+   a step module the parity test breaks unless we relocate the slice
+   markers.
+   **Prereq**: same dual-distribution decision as #2; also needs the
+   parity test's slice markers redesigned.
+   **Time estimate**: 3-4 hours.
+
+4. **Extract `web/` dashboard to a separate repo**
+   `api-relay-audit-dashboard`.
+   **Scope**: `git filter-repo` / manual copy + new repo setup +
+   updated README pointing at it. `web/index.html` is currently
+   75 KB with inline JS/CSS; splitting into HTML + CSS + JS is a
+   separate frontend task.
+   **Blast radius**: LOW on backend (nothing imports the dashboard),
+   but the decision affects our front-end colleague who is about
+   to pick it up.
+   **Why not now**: defer to the front-end colleague's first-day
+   discussion. They may prefer to keep it in-tree for one more
+   iteration.
+   **Time estimate**: 1 hour (mechanical).
+
+**Cost of deferring further**: moderate. #1 is the highest-leverage
+of the three because it ships real module cohesion without touching
+standalone. #2 and #3 are blocked on the dual-distribution decision,
+which is itself ROADMAP 2.5 item #1 (biggest-debt candidate).
 
 ### 2.5 v1.9 — over-engineering prune (backlog, handoff-prep triage)
 **Status**: audit done 2026-04-20 before front-end handoff; no deletions
