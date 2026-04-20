@@ -72,6 +72,28 @@ class TestClassifyFramework:
         assert framework is None
         assert signals == []
 
+    def test_lone_next_js_header_does_not_classify_lobechat(self):
+        """v1.8.1 Codex review #4 fix: ``x-powered-by: next.js`` is
+        emitted by every Vercel site and every marketing Next.js
+        frontend. Using it as a standalone signal for lobechat-relay
+        produced confident misclassifications for operators that
+        merely happen to deploy on Next.js. The signal was removed;
+        this test locks in the new negative behavior.
+        """
+        framework, _ = classify_framework(
+            {"x-powered-by": "Next.js"}, "<html><body>hi</body></html>"
+        )
+        assert framework is None, (
+            "Lone next.js header must not classify as lobechat-relay"
+        )
+
+        # Body branding alone still wins.
+        framework, _ = classify_framework(
+            {"x-powered-by": "Next.js"},
+            "<html><title>LobeChat</title></html>",
+        )
+        assert framework == "lobechat-relay"
+
     def test_body_scan_capped(self):
         """Body scan is capped at 8KB; branding buried past that should
         not match. This prevents slow scans on multi-MB landing pages."""

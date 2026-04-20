@@ -65,10 +65,14 @@ FRAMEWORK_SIGNATURES = [
     ]),
     # LobeChat relay mode. Usually exposes ``/v1`` proxy endpoints
     # plus a Next.js chat UI at ``/``.
+    # v1.8.1 Codex review #4 fix: the ``x-powered-by: next.js`` header
+    # was removed as a standalone signal because every Vercel site and
+    # unrelated Next.js frontend emits it, producing confident
+    # lobechat-relay classifications on clearly unrelated operators.
+    # LobeChat branding in the HTML body is the real fingerprint.
     ("lobechat-relay", [
         ("body", "lobechat"),
         ("body", "lobe-chat"),
-        ("header:x-powered-by", "next.js"),
     ]),
     # FastGPT. Commonly deployed alongside one-api as a UI layer.
     ("fastgpt", [

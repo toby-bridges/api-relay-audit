@@ -169,6 +169,8 @@ def test_latency_variance_constants_parity():
         CV_STABLE_CUTOFF as MODULAR_STABLE,
         CV_VARIABLE_CUTOFF as MODULAR_VARIABLE,
         DEFAULT_PROBE_COUNT as MODULAR_PROBE_COUNT,
+        LATENCY_PROBE_MAX as MODULAR_PROBE_MAX,
+        LATENCY_PROBE_MIN as MODULAR_PROBE_MIN,
     )
 
     standalone = _load_standalone_audit()
@@ -188,4 +190,16 @@ def test_latency_variance_constants_parity():
     assert standalone.DEFAULT_PROBE_COUNT == MODULAR_PROBE_COUNT, (
         "DEFAULT_PROBE_COUNT drift between latency_variance.py and "
         "standalone audit.py."
+    )
+    # v1.8.1 Codex review #5 fix: --latency-probe-count CLI bounds
+    # must match across distributions, otherwise a value accepted on
+    # one side (e.g. N=60 on modular) would be rejected on the other
+    # and documented help text would lie.
+    assert standalone.LATENCY_PROBE_MIN == MODULAR_PROBE_MIN, (
+        "LATENCY_PROBE_MIN drift between latency_variance.py and "
+        "standalone audit.py. CLI bounds must match."
+    )
+    assert standalone.LATENCY_PROBE_MAX == MODULAR_PROBE_MAX, (
+        "LATENCY_PROBE_MAX drift between latency_variance.py and "
+        "standalone audit.py. CLI bounds must match."
     )

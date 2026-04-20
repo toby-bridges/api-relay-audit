@@ -562,6 +562,26 @@ class APIClient:
 
     # -- Public API -----------------------------------------------------------
 
+    def ensure_format(self):
+        """Warm-up call that forces format auto-detection to complete.
+
+        Step 13 latency timing is sensitive to the detection cost: the
+        first ``call()`` on an OpenAI-compatible relay silently costs
+        one failing Anthropic probe plus the successful OpenAI request,
+        so that first "sample" is actually 2 round-trips and inflates
+        the measured variance. Call this before the Step 13 timing
+        loop so every measured sample is identical.
+        """
+        if self._format is not None:
+            return
+        try:
+            self.call(
+                [{"role": "user", "content": "ok"}],
+                max_tokens=1,
+            )
+        except Exception:
+            pass
+
     def call(self, messages, system=None, max_tokens=512):
         """Send a chat completion request, auto-detecting format on first call."""
         start = time.time()
@@ -1780,10 +1800,12 @@ FRAMEWORK_SIGNATURES = [
     ]),
     # LobeChat relay mode. Usually exposes /v1 proxy endpoints
     # plus a Next.js chat UI at /.
+    # v1.8.1 Codex review #4 fix: ``x-powered-by: next.js`` was
+    # dropped as a lone signal because every Vercel/Next.js frontend
+    # emits it, producing confident misclassifications.
     ("lobechat-relay", [
         ("body", "lobechat"),
         ("body", "lobe-chat"),
-        ("header:x-powered-by", "next.js"),
     ]),
     # FastGPT. Commonly deployed alongside one-api as a UI layer.
     ("fastgpt", [
@@ -2036,15 +2058,24 @@ def run_latency_variance(client, count=DEFAULT_PROBE_COUNT,
                          max_tokens=DEFAULT_PROBE_MAX_TOKENS,
                          sleep=DEFAULT_INTER_PROBE_SLEEP):
     """Fire `count` identical minimal requests and measure latency."""
+    # v1.8.1 Codex review #2 fix: discard the format-detection cost
+    # before the timing loop starts. Otherwise the first "sample" on
+    # an OpenAI-compatible relay is a failing Anthropic probe plus
+    # a successful OpenAI request and is not really identical to the
+    # rest.
+    if hasattr(client, "ensure_format"):
+        client.ensure_format()
+
     latencies = []
     errors = []
     for i in range(count):
-        t0 = time.time()
+        # v1.8.1 Codex review #3 fix: monotonic clock, not wall clock.
+        t0 = time.perf_counter()
         r = client.call(
             [{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
         )
-        elapsed = time.time() - t0
+        elapsed = time.perf_counter() - t0
         if "error" in r:
             errors.append(r["error"])
         else:
@@ -2069,6 +2100,29 @@ def run_latency_variance(client, count=DEFAULT_PROBE_COUNT,
 # ============================================================
 # Section 4: CLI
 # ============================================================
+
+# v1.8.1 Codex review #5 fix: mirror the modular
+# ``api_relay_audit.latency_variance.validate_probe_count`` validator.
+# Dual-distribution invariant: names match constants/function names
+# in the module so reviewers can diff the two sides quickly.
+LATENCY_PROBE_MIN = 3
+LATENCY_PROBE_MAX = 50
+
+
+def validate_probe_count(value):
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"--latency-probe-count must be an integer, got {value!r}"
+        )
+    if n < LATENCY_PROBE_MIN or n > LATENCY_PROBE_MAX:
+        raise argparse.ArgumentTypeError(
+            f"--latency-probe-count must be between {LATENCY_PROBE_MIN} "
+            f"and {LATENCY_PROBE_MAX}, got {n}"
+        )
+    return n
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="API Relay Security Audit Tool")
@@ -2103,11 +2157,12 @@ def parse_args():
     p.add_argument("--skip-latency-variance", action="store_true",
                    help="Skip Step 13 latency variance fingerprinting "
                         "(bimodality heuristic over N identical probes).")
-    p.add_argument("--latency-probe-count", type=int, default=10,
-                   metavar="N",
-                   help="Number of identical probes fired in Step 13. "
-                        "Minimum 4 to enable bimodality detection. "
-                        "Default: 10.")
+    p.add_argument("--latency-probe-count", type=validate_probe_count,
+                   default=10, metavar="N",
+                   help=f"Number of identical probes fired in Step 13. "
+                        f"Range: {LATENCY_PROBE_MIN}-{LATENCY_PROBE_MAX}. "
+                        f"Minimum 4 to enable bimodality detection. "
+                        f"Default: 10.")
     p.add_argument("--warmup", type=int, default=0, metavar="N",
                    help="Send N benign requests before the audit to mitigate "
                         "request-count-gated backdoors (AC-1.b). Default: 0")

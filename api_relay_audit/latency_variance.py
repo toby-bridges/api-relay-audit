@@ -42,6 +42,7 @@ rule prevents a single outlier from being misclassified as a bimodal
 distribution; requires at least 4 samples to be meaningful.
 """
 
+import argparse
 import statistics
 import time
 
@@ -50,6 +51,36 @@ DEFAULT_PROBE_COUNT = 10
 DEFAULT_PROBE_PROMPT = "Reply with the single word: ok"
 DEFAULT_PROBE_MAX_TOKENS = 8
 DEFAULT_INTER_PROBE_SLEEP = 0.2
+
+# v1.8.1 Codex review #5 fix: bound ``--latency-probe-count`` so 0
+# or negative values can't silently collapse Step 13 into "all 0
+# probes failed", and absurd values can't linearly inflate billing.
+# 3 is the minimum for ``classify_variance`` to fire; 4 is the
+# minimum for bimodality detection; 50 is an arbitrary-but-
+# generous upper bound.
+LATENCY_PROBE_MIN = 3
+LATENCY_PROBE_MAX = 50
+
+
+def validate_probe_count(value):
+    """argparse ``type=`` callable for ``--latency-probe-count``.
+
+    Accepts an int-coercible value in ``[LATENCY_PROBE_MIN,
+    LATENCY_PROBE_MAX]``; raises :class:`argparse.ArgumentTypeError`
+    otherwise.
+    """
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"--latency-probe-count must be an integer, got {value!r}"
+        )
+    if n < LATENCY_PROBE_MIN or n > LATENCY_PROBE_MAX:
+        raise argparse.ArgumentTypeError(
+            f"--latency-probe-count must be between {LATENCY_PROBE_MIN} "
+            f"and {LATENCY_PROBE_MAX}, got {n}"
+        )
+    return n
 
 # Ratio of largest-inter-sample-gap to median above which the sample
 # is flagged bimodal. 0.5 means the gap has to be at least half the
@@ -161,15 +192,30 @@ def run_latency_variance(client, count=DEFAULT_PROBE_COUNT,
         ``gap_ratio``  -- float (largest_gap / median)
         ``verdict``    -- str (from :func:`classify_variance`)
     """
+    # v1.8.1 Codex review #2 fix: trigger format detection *before*
+    # starting the latency clock. If the caller hands us a fresh
+    # APIClient whose ``_format`` is still None, the first ``call()``
+    # silently costs 1 failing Anthropic probe + 1 successful OpenAI
+    # request on OpenAI-compatible relays. That first "sample" then
+    # contains TWO round-trips and inflates the measured variance,
+    # or worse produces a fake bimodal distribution.
+    if hasattr(client, "ensure_format"):
+        client.ensure_format()
+
     latencies = []
     errors = []
     for i in range(count):
-        t0 = time.time()
+        # v1.8.1 Codex review #3 fix: use ``perf_counter`` (monotonic
+        # high-resolution) rather than ``time.time`` (wall clock).
+        # NTP adjustments / clock skew / virtualization jitter can
+        # otherwise inject negative or spuriously large gaps into
+        # the samples feeding CV and bimodality detection.
+        t0 = time.perf_counter()
         r = client.call(
             [{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
         )
-        elapsed = time.time() - t0
+        elapsed = time.perf_counter() - t0
         if "error" in r:
             errors.append(r["error"])
         else:

@@ -32,7 +32,12 @@ from api_relay_audit.infra_fingerprint import (
     aggregate_framework,
     run_infra_fingerprint,
 )
-from api_relay_audit.latency_variance import run_latency_variance
+from api_relay_audit.latency_variance import (
+    LATENCY_PROBE_MAX,
+    LATENCY_PROBE_MIN,
+    run_latency_variance,
+    validate_probe_count,
+)
 from api_relay_audit.reporter import Reporter
 from api_relay_audit.stream_integrity import analyze_stream
 from api_relay_audit.tool_substitution import run_tool_substitution_test
@@ -214,11 +219,12 @@ def parse_args():
     p.add_argument("--skip-latency-variance", action="store_true",
                    help="Skip Step 13 latency variance fingerprinting "
                         "(bimodality heuristic over N identical probes).")
-    p.add_argument("--latency-probe-count", type=int, default=10,
-                   metavar="N",
-                   help="Number of identical probes fired in Step 13. "
-                        "Minimum 4 to enable bimodality detection. "
-                        "Default: 10.")
+    p.add_argument("--latency-probe-count", type=validate_probe_count,
+                   default=10, metavar="N",
+                   help=f"Number of identical probes fired in Step 13. "
+                        f"Range: {LATENCY_PROBE_MIN}-{LATENCY_PROBE_MAX}. "
+                        f"Minimum 4 to enable bimodality detection. "
+                        f"Default: 10.")
     p.add_argument("--warmup", type=int, default=0, metavar="N",
                    help="Send N benign requests before the audit to mitigate "
                         "request-count-gated backdoors (AC-1.b). Default: 0")

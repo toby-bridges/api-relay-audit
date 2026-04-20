@@ -6,7 +6,7 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-04-18 (session ending at commit `d0fb5d9`, v1.8 + Codex review closed)
+**Last updated**: 2026-04-20 (session closes v1.8 Codex review #2, 560/560 passing)
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -143,6 +143,27 @@ repo, cumulative 18 real bugs/limitations found across the loop.
 - **Final test count**: 546/546 passing (v1.7.7 baseline 493 → v1.8 ship 537
   → v1.8 Codex follow-up 546, +53 net for v1.8).
 
+### v1.8.1 Codex review cycle #2 (handoff-prep, 2026-04-20)
+Second Codex pass before front-end handoff. 5 findings (1 HIGH already in
+v1.8.1 backlog + 2 MEDIUM + 2 LOW); 4 fixed in this cycle.
+- **HIGH** (majority-vote mixes app-layer and edge-layer): **unchanged** —
+  already tracked as v1.8.1 item #0 below; deferral rationale still stands.
+- **MEDIUM** #2 (Step 13 first sample polluted by format detection): **fixed**.
+  New `APIClient.ensure_format()` warm-up; `run_latency_variance` calls it
+  before the timing loop so no sample includes a failed Anthropic probe plus
+  a successful OpenAI request. 2 new tests (call ordering + graceful
+  degradation for clients lacking the method).
+- **MEDIUM** #3 (`time.time` is wall clock, not monotonic): **fixed**.
+  Migrated to `time.perf_counter()` in both distributions. Removes NTP / VM
+  clock-skew artifacts from CV / bimodality inputs.
+- **LOW** #4 (LobeChat's `x-powered-by: next.js` misfires on every Vercel
+  site): **fixed**. Signal removed; body branding (`lobechat` / `lobe-chat`)
+  is still the identifier. Negative test locks behavior.
+- **LOW** #5 (`--latency-probe-count` took 0 / negatives / huge values):
+  **fixed**. `validate_probe_count` rejects values outside `[3, 50]` with a
+  readable `argparse.ArgumentTypeError`. 11 new tests around the bounds.
+- **Final test count**: 560/560 passing (546 → 560, +14 this cycle).
+
 ---
 
 ## 🔜 Near-term candidates (next 1-2 sessions)
@@ -195,6 +216,42 @@ SOL Token Program / ERC-20 transfer calldata / BTC bech32 address.
 **Dependencies**: none. Byte-level string comparison, no crypto libs.
 **Cost of deferring further**: low — no new adversarial case reported
 since the original paper.
+
+### 2.5 v1.9 — over-engineering prune (backlog, handoff-prep triage)
+**Status**: audit done 2026-04-20 before front-end handoff; no deletions
+yet — items tabled because deletion before handoff is high-risk.
+**Scope**: each item below is a separate consideration; don't do them all
+at once.
+
+Top-5 candidates ranked by maintenance-cost-per-value (worst first):
+
+1. **Dual-distribution invariant** (`audit.py` standalone, ~2500 LOC
+   char-parity with `scripts/audit.py`): biggest recurring tax. Every
+   feature ships twice; 3 dual-distribution parity tests guard risk
+   matrix / Web3 markers / refusal vocab. **Prerequisite for deletion**:
+   data on actual standalone usage. If user telemetry shows <5% of runs
+   use `audit.py`, deprecate it; otherwise keep.
+2. **`error_leakage` GitHub-issue cross-reference**: every leak marker
+   maps to a real LiteLLM issue number (#5762, #8075, ...). Elegant when
+   shipped but issue state rots (renames, merges, closures). Simplify
+   to the regex + literal substring paths; keep issue refs only in
+   `FOR_JOHN.md` provenance notes.
+3. **`transparent_log.py`**: JSONL forensic logger (`--transparent-log`
+   gated). Academic anchor (arXiv §7.3) but real-world usage
+   unconfirmed. Convert to an optional extra once packaging is
+   introduced (same packaging work needed for v2.5 LLMmap Pro).
+4. **Web3 profile** (Step 11, 3 probes + profile gating + hard-injected
+   override): low invocation rate expected vs. surface area. Could
+   collapse to a single probe while keeping the `--profile web3` CLI
+   surface.
+5. **`latency_variance` bimodality branch**: Step 13 is already
+   informational-only; bimodality adds inference complexity without
+   affecting risk matrix. Could report only CV + count and still
+   deliver the same operator value.
+
+**Cost of deferring further**: zero. Pruning helps only if we keep
+shipping new features on top; if development pauses, these stay as
+inert reference code. Revisit when next feature cycle starts.
 
 ### 3. MistTrack AML integration (profile=web3|full, optional)
 **Status**: sketched in SlowMist OpenClaw Practice Guide, not started

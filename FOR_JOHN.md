@@ -844,3 +844,70 @@ D 的 insight:**真正的 Claude 响应会自称 Claude / 提到 Anthropic**;被
    - **Crypto address substitution**(近期 #2)——spec 齐全,180 LOC,30 tests
    - **v2.0: 能力基准** — 跑小 GPQA / MMLU 子集,算命中率 delta,是"模型替换"的直接检测
    - **v2.5: LLMmap Pro** — 如果真的要做,得想清楚怎么和零依赖不变式共存(可能要走 optional extra: `pip install api-relay-audit[deep]`)
+
+---
+
+## 2026-04-20 session: v1.8.1 Codex review 循环 #2(handoff 前清理)
+
+前端同事接手前的 handoff 前清理。第二轮 Codex 审查,5 个新发现,修了 4 个,HIGH 那条保持 v1.8.1 backlog 不动。
+
+### Codex 审查 #2 结果摘要
+
+| # | 严重 | 位置 | 发现 | 处置 |
+|---|-----|------|------|------|
+| 1 | HIGH | `infra_fingerprint.py:165-181` | majority vote 混淆 edge/app 层 | **不动**,已在 v1.8.1 backlog |
+| 2 | MEDIUM | `latency_variance.py:166-182` + `client.py` | Step 13 首样本被 format detection 污染 | 修:新加 `APIClient.ensure_format()` 预热 |
+| 3 | MEDIUM | `latency_variance.py:167-172` | `time.time()` 不单调 | 修:`time.perf_counter()` |
+| 4 | LOW | `infra_fingerprint.py:68-72` | LobeChat 的 Next.js 头过于泛化 | 修:删孤立信号,留 body 品牌 |
+| 5 | LOW | `--latency-probe-count` | 无边界校验(0 / 负数 / 超大) | 修:`validate_probe_count` + 11 个测试 |
+
+### 为什么 MEDIUM #2 值得修
+
+场景:新鲜 `APIClient` 打到 OpenAI-兼容的 relay。
+
+```
+第 1 次 call():
+  尝试 Anthropic    → 失败    (~200ms)
+  回退到 OpenAI    → 成功    (~600ms)
+  合计往返:        ~800ms   ← Step 13 记录为首个"样本"
+
+第 2..N 次 call():
+  _format == "openai", 直达 ~600ms
+```
+
+首样本比后续高 30%。CV 被人为放大,可能假造成 bimodal。修法:`run_latency_variance` 开头先调一次 `client.ensure_format()`,把探测开销丢掉,之后测出的 N 次是真正同构的请求。
+
+### 为什么 MEDIUM #3 值得修
+
+`time.time()` 返回 wall clock — NTP 校时、VM host clock drift 都可能让连续两次调用之间出现负差(或异常大差)。`time.perf_counter()` 是单调高精度,不会被系统时间影响。Windows 上尤其重要,这次是 Windows 11 环境。
+
+### 为什么 LOW #4 值得修
+
+`x-powered-by: next.js` 命中率太高 — 所有 Vercel 站、所有营销页面都命中。如果 LobeChat relay 的 body 里没有 "lobechat" 字样(比如运营方改 UI),靠这个 header 会把任何 Next.js 站点判为 lobechat-relay。真正的 LobeChat fingerprint 是 body 里的品牌字符串,不是通用框架头。
+
+### 为什么 LOW #5 值得修
+
+`--latency-probe-count=0` 会进入 `run_latency_variance` 循环 0 次,导致 "0 successful / 0 failed" 的 inconclusive,文案报的是"all 0 probes failed",操作员看不懂。`--latency-probe-count=100000` 会线性放大时间 + 计费成本。`[3, 50]` 是合理带宽,超出直接 argparse 报错。
+
+### 选择 Pareto-最优的"现在修 vs. 拖 v1.9"
+
+| # | 修(min) | 收益 | Pareto |
+|---|---------|------|--------|
+| 2 | 30 | OpenAI 兼容 relay 的 variance 测量才准确 | ✅ 立即修 |
+| 3 | 10 | 避免 Windows / 虚拟化环境的时钟伪影 | ✅ 立即修 |
+| 4 | 5 | Vercel 站点不再被误判为 LobeChat | ✅ 立即修 |
+| 5 | 15 | CLI 用户传错值有清晰错误信息 | ✅ 立即修 |
+
+全部 1 小时内完成 + 14 个新测试 + 双分发同步。选 C(都修)明显优于 B(只修 MEDIUM)。
+
+### Codex review 计数器 +1
+
+累计 **7 轮独立 Codex review,19 个真实 bug / limitation**(上次 18 + 本次 HIGH 保留 + 4 个新修)。
+
+### 给下次 session 的你(更新 v2)
+
+1. **本 session 结束状态**:handoff 给前端同事前的清理完成,560/560 测试通过(+14 新测试),双分发同步,ROADMAP 更新
+2. v1.9 over-engineering prune **不做**,只是 ROADMAP 登记了 Top 5 候选(最贵的是双分发不变量)。handoff 前删代码 = 给接手人埋雷
+3. v1.8.1 app-layer/edge-layer 分层仍是下次 session 的最大 HIGH 候选,前置条件仍是本地 Docker 实测数据
+4. LLMmap 整合(Step 14,v2.5)已 clone 到 `C:\Users\john\Downloads\LLMmap\` — 还没做 wrapper,等 handoff 结束再回来
+5. **前端同事要看的东西**:`scripts/extract-data.py` + `web/data.json` 格式 + `web/` 目录(dashboard)。后端契约没变,只是 Step 13 的延迟数值现在更准

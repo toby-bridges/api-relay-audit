@@ -1,12 +1,18 @@
 """Tests for api_relay_audit.latency_variance (Step 13, v1.8)."""
 
+import argparse
+
+import pytest
 from unittest.mock import MagicMock
 
 from api_relay_audit.latency_variance import (
+    LATENCY_PROBE_MAX,
+    LATENCY_PROBE_MIN,
     classify_variance,
     detect_bimodality,
     run_latency_variance,
     summarize_latencies,
+    validate_probe_count,
 )
 
 
@@ -205,10 +211,10 @@ class TestRunLatencyVariance:
         assert result["stats"] == {}
 
     def test_latencies_are_positive_floats(self):
-        """Sanity: measured latencies must be >= 0 (monotonic clock
-        via time.time is not guaranteed strictly monotonic, but we
-        don't sleep between t0 and the mocked return, so this is
-        essentially a type check)."""
+        """Sanity: measured latencies must be >= 0. v1.8.1 Codex review
+        #3 moved the clock from ``time.time`` (wall clock) to
+        ``time.perf_counter`` (monotonic, high-resolution), so negative
+        latencies from NTP adjustments are no longer possible."""
         client = self._make_client(n=3)
         result = run_latency_variance(client, count=3, sleep=0)
         for lat in result["latencies"]:
@@ -223,6 +229,52 @@ class TestRunLatencyVariance:
         for call_args in client.call.call_args_list:
             kwargs = call_args.kwargs
             assert kwargs.get("max_tokens", 999) <= 16
+
+    def test_ensure_format_called_before_timing(self):
+        """v1.8.1 Codex review #2 fix: Step 13 must trigger format
+        auto-detection via ``client.ensure_format()`` before the timing
+        loop starts. Otherwise the first ``call()`` on a fresh
+        OpenAI-compatible client silently pays for a failed Anthropic
+        probe plus the successful OpenAI request and inflates the
+        measured variance -- potentially even producing a fake
+        bimodal verdict.
+        """
+        call_order = []
+
+        client = MagicMock()
+        client.ensure_format = MagicMock(
+            side_effect=lambda: call_order.append("ensure_format"))
+        client.call = MagicMock(
+            side_effect=lambda *a, **kw: (
+                call_order.append("call"),
+                {"text": "ok", "input_tokens": 1, "output_tokens": 1,
+                 "raw": {}, "time": 0.1},
+            )[1])
+
+        run_latency_variance(client, count=3, sleep=0)
+
+        assert client.ensure_format.called, (
+            "Step 13 must call client.ensure_format() before timing"
+        )
+        # ensure_format must precede the very first call()
+        assert call_order[0] == "ensure_format"
+        assert call_order.count("ensure_format") == 1
+        assert call_order.count("call") == 3
+
+    def test_works_without_ensure_format_method(self):
+        """Older clients or test doubles may lack ``ensure_format``.
+        Step 13 must degrade gracefully rather than crash with an
+        AttributeError.
+        """
+        client = MagicMock(spec=["call"])  # no ensure_format on spec
+        client.call = MagicMock(return_value={
+            "text": "ok", "input_tokens": 1, "output_tokens": 1,
+            "raw": {}, "time": 0.1,
+        })
+
+        # Must not raise.
+        result = run_latency_variance(client, count=3, sleep=0)
+        assert len(result["latencies"]) == 3
 
     def test_3_success_7_error_reaches_classified_verdict(self):
         """Partial-success scenario (Codex review 2026-04-18 LOW
@@ -244,3 +296,58 @@ class TestRunLatencyVariance:
         ), f"Expected CV-based verdict, got {result['verdict']!r}"
         # bimodal verdict requires N>=4 samples, so must not fire here
         assert result["bimodal"] is False
+
+
+# ---------------------------------------------------------------------------
+# validate_probe_count (v1.8.1 Codex review #5 fix)
+# ---------------------------------------------------------------------------
+
+class TestValidateProbeCount:
+    """Guards on ``--latency-probe-count``. Without these, N=0 silently
+    collapsed Step 13 into an "all 0 probes failed" inconclusive, and
+    absurdly-large N linearly inflated metered billing."""
+
+    def test_accepts_minimum(self):
+        assert validate_probe_count(LATENCY_PROBE_MIN) == LATENCY_PROBE_MIN
+
+    def test_accepts_maximum(self):
+        assert validate_probe_count(LATENCY_PROBE_MAX) == LATENCY_PROBE_MAX
+
+    def test_accepts_default(self):
+        assert validate_probe_count(10) == 10
+
+    def test_accepts_numeric_string(self):
+        """argparse feeds us string values from the command line."""
+        assert validate_probe_count("10") == 10
+
+    def test_rejects_zero(self):
+        with pytest.raises(argparse.ArgumentTypeError):
+            validate_probe_count(0)
+
+    def test_rejects_negative(self):
+        with pytest.raises(argparse.ArgumentTypeError):
+            validate_probe_count(-5)
+
+    def test_rejects_below_minimum(self):
+        """2 would allow classify_variance to fire but is below the
+        conservative floor; reject explicitly so the CLI error is
+        readable rather than silently producing a degenerate sample."""
+        with pytest.raises(argparse.ArgumentTypeError):
+            validate_probe_count(LATENCY_PROBE_MIN - 1)
+
+    def test_rejects_above_maximum(self):
+        with pytest.raises(argparse.ArgumentTypeError):
+            validate_probe_count(LATENCY_PROBE_MAX + 1)
+
+    def test_rejects_huge_value(self):
+        """A million probes would run for hours and rack up billing."""
+        with pytest.raises(argparse.ArgumentTypeError):
+            validate_probe_count(1_000_000)
+
+    def test_rejects_non_numeric_string(self):
+        with pytest.raises(argparse.ArgumentTypeError):
+            validate_probe_count("abc")
+
+    def test_rejects_none(self):
+        with pytest.raises(argparse.ArgumentTypeError):
+            validate_probe_count(None)

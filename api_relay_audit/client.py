@@ -401,6 +401,31 @@ class APIClient:
 
     # -- Public API -----------------------------------------------------------
 
+    def ensure_format(self):
+        """Warm-up call that forces format auto-detection to complete.
+
+        Step 13 latency-variance timing is sensitive to the detection
+        cost: the first ``call()`` on an OpenAI-compatible relay
+        silently executes an extra failing Anthropic probe before the
+        successful OpenAI request, so that first "sample" is actually
+        2 round-trips. Calling ``ensure_format()`` before the timing
+        loop discards that detection cost so every measured sample is
+        a truly identical minimal request.
+
+        Cost: at most one ``call()`` round-trip with ``max_tokens=1``.
+        Returns nothing; swallows any error (Step 13 will still surface
+        the failure if subsequent probes fail).
+        """
+        if self._format is not None:
+            return
+        try:
+            self.call(
+                [{"role": "user", "content": "ok"}],
+                max_tokens=1,
+            )
+        except Exception:
+            pass
+
     def call(self, messages, system=None, max_tokens=512):
         """Send a chat completion request, auto-detecting format on first call.
 
