@@ -39,7 +39,12 @@ from pathlib import Path
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 MODEL = "claude-opus-4-5"  # any thinking-capable model is fine
-OUT_DIR = Path(__file__).resolve().parent.parent / "reports"
+# Archival note (2026-04-20): file lives at
+# ``scripts/experiments/<this file>`` so repo root is 3 levels up
+# (was 2 before the move; Codex review flagged the drift).
+# Keeps the report at ``<repo_root>/reports/signature-schema-probe.txt``
+# regardless of where the script is invoked from.
+OUT_DIR = Path(__file__).resolve().parent.parent.parent / "reports"
 OUT_FILE = OUT_DIR / "signature-schema-probe.txt"
 
 # A prompt that reliably triggers extended-thinking content blocks.
