@@ -387,11 +387,13 @@ blast-radius vs. leverage.
      this workflow when extracting and rewire inside the new
      repo, or (b) keep a thin `web/` symlink/submodule in this
      repo that still satisfies the paths filter.
-   - `scripts/extract-data.py` produces `web/data.json` by
-     default (its docstring invocation is
-     `--output ./web/data.json`). After extraction, either the
-     script default changes or its output is piped into the
-     dashboard repo via CI.
+   - `scripts/extract-data.py` has `--output` as a **required
+     flag with no default** (`scripts/extract-data.py:197`);
+     the CLAUDE.md + docstring example just happens to pass
+     `--output ./web/data.json`. After extraction, either the
+     script gains a default pointing at the new repo path or
+     every caller/doc/CI invocation is updated to the new
+     location.
    - `web/index.html` is 75 KB with inline JS/CSS; splitting
      into HTML + CSS + JS is a separate frontend task that
      probably wants to happen IN the new repo rather than this
