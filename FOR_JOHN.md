@@ -904,10 +904,31 @@ D 的 insight:**真正的 Claude 响应会自称 Claude / 提到 Anthropic**;被
 
 累计 **7 轮独立 Codex review,19 个真实 bug / limitation**(上次 18 + 本次 HIGH 保留 + 4 个新修)。
 
-### 给下次 session 的你(更新 v2)
+### Codex 审查 #2 round 2(提交后复查)
 
-1. **本 session 结束状态**:handoff 给前端同事前的清理完成,560/560 测试通过(+14 新测试),双分发同步,ROADMAP 更新
-2. v1.9 over-engineering prune **不做**,只是 ROADMAP 登记了 Top 5 候选(最贵的是双分发不变量)。handoff 前删代码 = 给接手人埋雷
-3. v1.8.1 app-layer/edge-layer 分层仍是下次 session 的最大 HIGH 候选,前置条件仍是本地 Docker 实测数据
-4. LLMmap 整合(Step 14,v2.5)已 clone 到 `C:\Users\john\Downloads\LLMmap\` — 还没做 wrapper,等 handoff 结束再回来
-5. **前端同事要看的东西**:`scripts/extract-data.py` + `web/data.json` 格式 + `web/` 目录(dashboard)。后端契约没变,只是 Step 13 的延迟数值现在更准
+`122f23d` 提交完立刻再跑一遍 Codex。代码层全对,但挑出 3 个**测试覆盖漏洞** — 就是那种"现在测的是哄孩子,改回旧实现依然全绿"的假阳性覆盖。
+
+| # | 漏洞 | 闭环度 | 结论 |
+|---|------|--------|------|
+| 2 | `ensure_format` 只 mock 验证,没跑真身 `APIClient.ensure_format()` body | 部分 | 推到 v1.9 |
+| 3 | `perf_counter` 切换只靠 `lat >= 0.0` 断言,用 `time.time()` 也过 | **否**(false-green 风险) | **立即补** |
+| 5 | `validate_probe_count` 单测 OK,但没测 `parse_args()` 端到端接线 | 部分 | 推到 v1.9 |
+
+挑最实的 #3 当场修。思路:monkeypatch 全局 `time.perf_counter` 成确定性 +1 计数器、`time.time` 成常量,跑 Step 13,断言:
+- `perf_counter` 被调用 ≥ 2×probe 数(t0 + elapsed)
+- `time.time` 在 timing 循环里**零调用**
+- 测出的 latencies 恰好等于 fake clock 的增量(1.0 per probe)
+
+如果谁 revert 回 `time.time()`,mock 的 client 秒回,elapsed ≈ 0,跟 1.0 对不上,测试当场爆。双分发都加了一份,`test_latency_variance.py` 锁 modular,`test_dual_distribution_parity.py` 锁 standalone。
+
+#2 #5 没当场修的理由是:它们都是"防御强度不够"而不是"有洞",handoff 2 小时窗口,ROADMAP 登记比现场补更稳。
+
+### 给下次 session 的你(更新 v3)
+
+1. **本 session 结束状态**:562/562 测试通过(round 1 +14 + round 2 +2 = +16 新测试累计),ROADMAP 更新两处(v1.8.1 cycle #2 round 2 闭环节 + 新增 2.4 测试覆盖 follow-up 条目),双分发同步
+2. v1.9 over-engineering prune **不做**,ROADMAP 登记了 Top 5 候选(最贵的是双分发不变量)。handoff 前删代码 = 给接手人埋雷
+3. v1.9 新增 2.4 条目:#2 ensure_format 真身测试 + #5 argparse 端到端测试(共 ~40 LOC)。自然和 2.5 over-engineering prune 同 session 做
+4. v1.8.1 app-layer/edge-layer 分层仍是下次 session 的最大 HIGH 候选,前置条件仍是本地 Docker 实测数据
+5. LLMmap 整合(Step 14,v2.5)已 clone 到 `C:\Users\john\Downloads\LLMmap\` — 还没做 wrapper,等 handoff 结束再回来
+6. **前端同事要看的东西**:`scripts/extract-data.py` + `web/data.json` 格式 + `web/` 目录(dashboard)。后端契约没变,只是 Step 13 的延迟数值现在更准
+7. 累计 **7 轮独立 Codex review,21 个真实 bug / limitation / test-gap**(上次 19 + round 2 的 2 个测试覆盖 gap 进 backlog + 1 个 false-green 当场修)

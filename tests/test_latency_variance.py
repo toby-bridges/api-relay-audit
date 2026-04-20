@@ -214,12 +214,83 @@ class TestRunLatencyVariance:
         """Sanity: measured latencies must be >= 0. v1.8.1 Codex review
         #3 moved the clock from ``time.time`` (wall clock) to
         ``time.perf_counter`` (monotonic, high-resolution), so negative
-        latencies from NTP adjustments are no longer possible."""
+        latencies from NTP adjustments are no longer possible.
+
+        NOTE: this test alone is NOT a regression guard against
+        reverting to ``time.time``: on a steady clock, ``lat >= 0.0``
+        holds under either implementation. Codex review #2 flagged this
+        false-green. See ``test_uses_perf_counter_not_wall_clock`` below
+        for the actual clock-source regression test.
+        """
         client = self._make_client(n=3)
         result = run_latency_variance(client, count=3, sleep=0)
         for lat in result["latencies"]:
             assert isinstance(lat, float)
             assert lat >= 0.0
+
+    def test_uses_perf_counter_not_wall_clock(self, monkeypatch):
+        """v1.8.1 Codex review cycle #2 follow-up regression: prove
+        Step 13 calls ``time.perf_counter()`` and NOT ``time.time()``
+        for timing.
+
+        Why this test exists: the original
+        ``test_latencies_are_positive_floats`` above is a false-green.
+        It would pass identically under ``time.time()`` on a steady
+        clock because ``lat >= 0.0`` holds either way. Codex flagged
+        this as an open regression risk: a reviewer reverting to
+        ``time.time()`` for any reason (rebase, merge conflict,
+        stylistic "simplification") would sail through that check
+        and silently re-introduce wall-clock artifacts into CV /
+        bimodality detection.
+
+        This test directly instruments both clocks:
+
+          * ``time.perf_counter`` stubbed with a deterministic
+            1-per-call counter -> elapsed = 1.0 exactly.
+          * ``time.time`` stubbed to a constant -> any call to it
+            during timing would produce elapsed = 0.0 and fail the
+            latency assertion.
+
+        The ``latencies == [1.0, 1.0, 1.0]`` assertion therefore fails
+        loudly if anyone swaps back to ``time.time()``. We also
+        count invocations directly for a belt-and-suspenders check.
+        """
+        import time as time_mod
+
+        perf_counter_calls = [0]
+        time_time_calls = [0]
+        counter = [0]
+
+        def fake_perf_counter():
+            perf_counter_calls[0] += 1
+            counter[0] += 1
+            return float(counter[0])
+
+        def fake_time():
+            time_time_calls[0] += 1
+            return 1_700_000_000.0
+
+        monkeypatch.setattr(time_mod, "perf_counter", fake_perf_counter)
+        monkeypatch.setattr(time_mod, "time", fake_time)
+
+        client = self._make_client(n=3)
+        result = run_latency_variance(client, count=3, sleep=0)
+
+        # Two perf_counter calls per probe (t0 + elapsed) = 6 minimum.
+        assert perf_counter_calls[0] >= 6, (
+            f"Expected >= 6 perf_counter calls for 3 probes, got "
+            f"{perf_counter_calls[0]}. Step 13 may have reverted to "
+            f"time.time() which re-introduces wall-clock artifacts."
+        )
+        # time.time() must NOT participate in timing.
+        assert time_time_calls[0] == 0, (
+            f"time.time() was called {time_time_calls[0]} times inside "
+            f"latency_variance -- must use monotonic perf_counter only."
+        )
+        # Deterministic latencies from the fake clock (1.0 per probe).
+        # Under time.time(), each delta would be 0.0 since the mocked
+        # client.call returns instantaneously.
+        assert result["latencies"] == [1.0, 1.0, 1.0]
 
     def test_uses_minimal_max_tokens(self):
         """Contract: max_tokens default should be small (<= 16) so

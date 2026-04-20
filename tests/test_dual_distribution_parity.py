@@ -203,3 +203,72 @@ def test_latency_variance_constants_parity():
         "LATENCY_PROBE_MAX drift between latency_variance.py and "
         "standalone audit.py. CLI bounds must match."
     )
+
+
+def test_standalone_uses_perf_counter_not_wall_clock(monkeypatch):
+    """v1.8.1 Codex review cycle #2 follow-up: parity regression on the
+    clock source.
+
+    The modular side is guarded by
+    ``tests/test_latency_variance.py::test_uses_perf_counter_not_wall_clock``.
+    This test mirrors that guard onto the standalone distribution so
+    neither side can silently revert Step 13 timing to ``time.time``.
+
+    Strategy: patch ``time.perf_counter`` at the module level to a
+    deterministic 1-per-call counter, patch ``time.time`` to a constant,
+    run the standalone's ``run_latency_variance`` against a mock client,
+    then assert:
+      * perf_counter invoked >= 2 times per probe (t0 + elapsed)
+      * time.time never invoked during the timing loop
+      * latencies exactly equal to the fake clock deltas
+
+    Under a wall-clock implementation these assertions fail loudly
+    because the mock client returns instantaneously (elapsed ~ 0),
+    whereas our fake perf_counter yields elapsed = 1.0 per probe.
+    """
+    import time as time_mod
+    from unittest.mock import MagicMock
+
+    perf_counter_calls = [0]
+    time_time_calls = [0]
+    counter = [0]
+
+    def fake_perf_counter():
+        perf_counter_calls[0] += 1
+        counter[0] += 1
+        return float(counter[0])
+
+    def fake_time():
+        time_time_calls[0] += 1
+        return 1_700_000_000.0
+
+    monkeypatch.setattr(time_mod, "perf_counter", fake_perf_counter)
+    monkeypatch.setattr(time_mod, "time", fake_time)
+
+    standalone = _load_standalone_audit()
+
+    client = MagicMock()
+    client.ensure_format = MagicMock()
+    client.call = MagicMock(return_value={
+        "text": "ok",
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "raw": {},
+        "time": 0.0,
+    })
+
+    result = standalone.run_latency_variance(client, count=3, sleep=0)
+
+    assert perf_counter_calls[0] >= 6, (
+        f"Standalone audit.py invoked perf_counter "
+        f"{perf_counter_calls[0]} times; expected >= 6 for 3 probes. "
+        f"Step 13 may have reverted to time.time() in the standalone "
+        f"distribution, which would silently re-introduce wall-clock "
+        f"artifacts."
+    )
+    assert time_time_calls[0] == 0, (
+        f"Standalone audit.py called time.time() {time_time_calls[0]} "
+        f"times during latency-variance timing; must use monotonic "
+        f"perf_counter only."
+    )
+    assert result["latencies"] == [1.0, 1.0, 1.0]

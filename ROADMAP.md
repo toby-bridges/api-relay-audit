@@ -6,7 +6,7 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-04-20 (session closes v1.8 Codex review #2, 560/560 passing)
+**Last updated**: 2026-04-20 (session closes v1.8 Codex review #2 round 2, 562/562 passing)
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -164,6 +164,37 @@ v1.8.1 backlog + 2 MEDIUM + 2 LOW); 4 fixed in this cycle.
   readable `argparse.ArgumentTypeError`. 11 new tests around the bounds.
 - **Final test count**: 560/560 passing (546 → 560, +14 this cycle).
 
+### v1.8.1 Codex review cycle #2 round 2 (post-commit verification, 2026-04-20)
+Re-ran Codex on commit `122f23d` right after v1.8.1 shipped. Codex
+confirmed all 4 code fixes were correct but flagged 3 **test-coverage
+gaps** — cases where the existing tests could be false-greens (pass
+identically if the underlying fix were reverted). Triaged under
+strict-2-hour handoff window; prioritized the one true false-green
+and deferred the other two to v1.9.
+- **#3 test gap — false-green clock-source check**: **fixed in this
+  round**. Added two new regression tests —
+  `tests/test_latency_variance.py::test_uses_perf_counter_not_wall_clock`
+  and `tests/test_dual_distribution_parity.py::test_standalone_uses_
+  perf_counter_not_wall_clock`. Both monkeypatch the `time` module,
+  instrument `perf_counter` with a deterministic counter + `time.time`
+  with a constant, then assert that `perf_counter` was invoked ≥2×
+  per probe, `time.time` was never called, and measured latencies
+  equal the fake clock deltas exactly. Under a reverted `time.time`
+  implementation these fail loudly because the mocked client returns
+  instantaneously (elapsed ≈ 0), whereas the fake `perf_counter`
+  yields `elapsed = 1.0`. Both distributions pinned.
+- **#2 test gap — `ensure_format` only exercised via mock**: deferred
+  to v1.9 (see item 2.5 below). Current `test_ensure_format_called_
+  before_timing` proves the ordering contract but does not exercise
+  the real `APIClient.ensure_format()` body.
+- **#5 test gap — validator not tested at `parse_args()` level**:
+  deferred to v1.9. Unit tests on `validate_probe_count` + parity
+  test on the constants are both green; what is missing is an
+  end-to-end `parse_args(["--latency-probe-count", "0"])` test that
+  fails with `SystemExit(2)` proving the wiring inside `scripts/
+  audit.py` AND the standalone argparse actually uses the validator.
+- **Final test count**: 562/562 passing (560 → 562, +2 this round).
+
 ---
 
 ## 🔜 Near-term candidates (next 1-2 sessions)
@@ -216,6 +247,37 @@ SOL Token Program / ERC-20 transfer calldata / BTC bech32 address.
 **Dependencies**: none. Byte-level string comparison, no crypto libs.
 **Cost of deferring further**: low — no new adversarial case reported
 since the original paper.
+
+### 2.4 v1.9 — test-coverage follow-ups from Codex review cycle #2 round 2
+**Status**: 2 deferred test-coverage gaps from 2026-04-20 Codex
+verification; code-side fixes already shipped in v1.8.1.
+**Scope**: ~40 LOC new tests, no product changes.
+
+1. **`ensure_format` real-body integration test** — current
+   `test_ensure_format_called_before_timing` proves the call-ordering
+   contract via a mock but never runs the real
+   `api_relay_audit.client.APIClient.ensure_format()` body. A reviewer
+   could silently replace the real method with a no-op and all tests
+   would still pass. Add an integration-style test that constructs a
+   real `APIClient` (mocked HTTP transport), calls `ensure_format()`,
+   and asserts `_format` is set to a sentinel value afterwards. Mirror
+   into the standalone via the `_load_standalone_audit()` helper in
+   `test_dual_distribution_parity.py`.
+2. **`--latency-probe-count` parser-level wiring test** — current
+   `TestValidateProbeCount` class exercises the validator directly but
+   does not prove `scripts/audit.py`'s argparse AND the standalone
+   argparse both actually wire the validator. Add a test that invokes
+   each distribution's `parse_args` (or entry point with
+   `monkeypatch.setattr(sys, "argv", ...)`) with values `0`, `-1`,
+   `51` and asserts `SystemExit(2)`. Without this, someone could
+   accidentally drop `type=validate_probe_count` from the
+   `add_argument` call and all existing tests would still pass.
+
+**Cost of deferring further**: low. Both are "defence-in-depth"
+rather than real bugs — the v1.8.1 fixes themselves are correct,
+these tests just harden the regression guard. Revisit when the next
+feature cycle starts (same session that picks up 2.5 over-engineering
+prune is a natural fit).
 
 ### 2.5 v1.9 — over-engineering prune (backlog, handoff-prep triage)
 **Status**: audit done 2026-04-20 before front-end handoff; no deletions
