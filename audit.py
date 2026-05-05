@@ -1,26 +1,33 @@
 #!/usr/bin/env python3
 """
-API Relay Security Audit Tool v2.2 --- Standalone Edition
+API Relay Security Audit Tool v2.3 --- Standalone Edition
 
 A COMPLETE, SELF-CONTAINED audit script with ZERO external dependencies.
 Uses only Python stdlib + curl subprocess calls for all HTTP communication.
 
-Full 9-step audit (expanding to 11 in v3): infrastructure, models, token
-injection, prompt extraction, instruction conflict, jailbreak, context
-length, tool-call package substitution (AC-1.a), and error response header
-leakage (AC-2 adjacent). Threat taxonomy follows Liu et al., *Your Agent Is
-Mine*, arXiv:2604.08407.
+Full 13-step audit: infrastructure recon, model list, token injection,
+prompt extraction, instruction conflict + identity, jailbreak, context
+length, tool-call substitution (AC-1.a), error response leakage (AC-2),
+stream integrity (AC-1 SSE), Web3 prompt injection (profile=web3|full),
+infrastructure fingerprint, latency variance. Threat taxonomy follows
+Liu et al., *Your Agent Is Mine*, arXiv:2604.08407 (AC-1, AC-1.a, AC-1.b,
+AC-2). Steps 12-13 sourced from Zhang et al., *Real Money, Fake Models*,
+arXiv:2603.01919.
 
 Usage:
   python audit.py --key YOUR_KEY --url https://relay.example.com/v1 --model claude-opus-4-6
 
-Combined from:
-  - api_relay_audit/client.py            (APIClient class)
-  - api_relay_audit/reporter.py          (Reporter class)
-  - api_relay_audit/context.py           (context scan logic)
-  - api_relay_audit/tool_substitution.py (AC-1.a tool-call substitution test)
-  - api_relay_audit/error_leakage.py     (AC-2 error response header leakage test)
-  - scripts/audit.py                     (9-step audit orchestration)
+Combined from the modular distribution:
+  - api_relay_audit/client.py                (APIClient class)
+  - api_relay_audit/reporter.py              (Reporter class)
+  - api_relay_audit/context.py               (context scan logic)
+  - api_relay_audit/tool_substitution.py     (AC-1.a tool-call substitution)
+  - api_relay_audit/error_leakage.py         (AC-2 error response leakage)
+  - api_relay_audit/stream_integrity.py      (AC-1 SSE-level invariants)
+  - api_relay_audit/web3/injection_probes.py (Step 11, profile-gated)
+  - api_relay_audit/infra_fingerprint.py     (Step 12, informational)
+  - api_relay_audit/latency_variance.py      (Step 13, informational)
+  - scripts/audit.py                         (13-step audit orchestration)
 """
 
 import argparse

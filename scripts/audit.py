@@ -2,11 +2,14 @@
 """
 API Relay Security Audit Tool v2.3
 
-Full 9-step audit (expanding to 11 in v3): infrastructure, models, token
-injection, prompt extraction, instruction conflict, jailbreak, context
-length, tool-call package substitution (AC-1.a), and error response header
-leakage (AC-2 adjacent). Threat taxonomy follows Liu et al., *Your Agent Is
-Mine*, arXiv:2604.08407.
+Full 13-step audit: infrastructure recon, model list, token injection,
+prompt extraction, instruction conflict + identity, jailbreak, context
+length, tool-call substitution (AC-1.a), error response leakage (AC-2),
+stream integrity (AC-1 SSE), Web3 prompt injection (profile=web3|full),
+infrastructure fingerprint, latency variance. Threat taxonomy follows
+Liu et al., *Your Agent Is Mine*, arXiv:2604.08407 (AC-1, AC-1.a, AC-1.b,
+AC-2). Steps 12-13 sourced from Zhang et al., *Real Money, Fake Models*,
+arXiv:2603.01919.
 
 Usage:
   python scripts/audit.py --key YOUR_KEY --url https://relay.example.com/v1 --model claude-opus-4-6
