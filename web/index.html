@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>API Relay Audit — AI 中转站安全审计</title>
-<meta name="description" content="开源 11 步安全审计工具，检测 AI API 中转站的 Token 注入、Prompt 泄露、身份替换、工具调用改写等安全风险。本地运行，Key 不离开你的机器。">
+<meta name="description" content="开源 13 步安全审计工具，检测 AI API 中转站的 Token 注入、Prompt 泄露、身份替换、工具调用改写等安全风险。本地运行，Key 不离开你的机器。">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -250,9 +250,9 @@ footer a:hover{color:var(--text)}
   </div>
   <h1 data-i18n="hero_title"><span class="gradient">AI API Relay</span> Security Audit</h1>
   <div class="hero-stats">
-    <div class="stat"><div class="stat-num">11</div><div class="stat-label" data-i18n="stat_steps">Audit Steps</div></div>
+    <div class="stat"><div class="stat-num">13</div><div class="stat-label" data-i18n="stat_steps">Audit Steps</div></div>
     <div class="stat"><div class="stat-num">6D</div><div class="stat-label" data-i18n="stat_matrix">Risk Matrix</div></div>
-    <div class="stat"><div class="stat-num">493</div><div class="stat-label" data-i18n="stat_tests">Unit Tests</div></div>
+    <div class="stat"><div class="stat-num">569</div><div class="stat-label" data-i18n="stat_tests">Unit Tests</div></div>
     <div class="stat"><div class="stat-num">0</div><div class="stat-label" data-i18n="stat_deps">Dependencies (standalone)</div></div>
   </div>
   <div class="hero-cta">
@@ -364,7 +364,7 @@ footer a:hover{color:var(--text)}
 
   <!-- Tab: Agent -->
   <div class="tab-panel" id="tab-agent">
-    <p class="agent-pitch" data-i18n="agent_pitch">Install as a Claude Code Skill — say one sentence, the agent runs the full 11-step audit for you.</p>
+    <p class="agent-pitch" data-i18n="agent_pitch">Install as a Claude Code Skill — say one sentence, the agent runs the full 13-step audit for you.</p>
 
     <div class="agent-steps">
       <div class="agent-step">
@@ -393,7 +393,7 @@ footer a:hover{color:var(--text)}
           <div class="agent-step-num">3</div>
           <div class="agent-step-title" data-i18n="agent_step3_title">Agent does everything</div>
         </div>
-        <p data-i18n="agent_step3_desc">Claude Code automatically downloads the script, runs all 11 steps, and presents the findings — you just read the result.</p>
+        <p data-i18n="agent_step3_desc">Claude Code automatically downloads the script, runs all 13 steps, and presents the findings — you just read the result.</p>
       </div>
     </div>
 
@@ -527,7 +527,7 @@ footer a:hover{color:var(--text)}
   </div>
   <div class="faq-item">
     <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q3">What's the difference between this and hvoy.ai / cctest.ai?</div>
-    <div class="faq-a" data-i18n="faq_a3">Three tools, three approaches. <strong>hvoy.ai</strong> excels at information aggregation — its public leaderboard of 40+ relays is the fastest way to check a relay's reputation. <strong>cctest.ai</strong> offers one-click convenience and a unique channel fingerprint (protobuf signature parsing). <strong>api-relay-audit</strong> covers 11 audit dimensions (vs ~5 for hvoy, ~2 for cctest), runs locally, and is fully open-source. Only api-relay-audit detects tool-call rewriting (AC-1.a), error response credential leakage (AC-2), context truncation, and Web3 injection. Pick based on your needs: quick lookup → hvoy; one-click check → cctest; full security audit → api-relay-audit. <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/comparison-api-relay-audit-vs-hvoy-vs-cctest.md" target="_blank" rel="noopener noreferrer">Full comparison →</a></div>
+    <div class="faq-a" data-i18n="faq_a3">Three tools, three approaches. <strong>hvoy.ai</strong> excels at information aggregation — its public leaderboard of 40+ relays is the fastest way to check a relay's reputation. <strong>cctest.ai</strong> offers one-click convenience and a unique channel fingerprint (protobuf signature parsing). <strong>api-relay-audit</strong> covers 13 audit dimensions (vs ~5 for hvoy, 5 for cctest), runs locally, and is fully open-source. Only api-relay-audit detects tool-call rewriting (AC-1.a), error response credential leakage (AC-2), context truncation, and Web3 injection. Pick based on your needs: quick lookup → hvoy; one-click check → cctest; full security audit → api-relay-audit. <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/comparison-api-relay-audit-vs-hvoy-vs-cctest.md" target="_blank" rel="noopener noreferrer">Full comparison →</a></div>
   </div>
   <div class="faq-item">
     <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q4">What does "token injection" mean?</div>
@@ -817,7 +817,7 @@ const i18n={
     nav_demo:"Demo",nav_install:"快速开始",nav_faq:"FAQ",
     hero_badge:"本地运行 — API Key 不经过任何第三方服务器",
     hero_title:'<span class="gradient">AI API 中转站</span>安全审计',
-    hero_sub:"开源 11 步审计工具。检测 Token 注入、Prompt 泄露、身份替换、工具调用改写、错误响应凭证回显、SSE 流完整性篡改。",
+    hero_sub:"开源 13 步审计工具。检测 Token 注入、Prompt 泄露、身份替换、工具调用改写、错误响应凭证回显、SSE 流完整性篡改。",
     stat_steps:"审计步骤",stat_matrix:"风险矩阵",stat_tests:"单元测试",stat_deps:"依赖项 (standalone)",
     cta_demo:"查看 Demo 报告",cta_install:"开始审计",
     demo_title:"审计报告 Demo",
@@ -853,23 +853,23 @@ const i18n={
     cmd_step1:"打开终端（macOS: Terminal.app / Windows: PowerShell）",
     cmd_step2:"粘贴以下命令并回车 — 约 2 分钟完成：",
     cmd_step3:"完成！Markdown 审计报告会保存在当前目录。",
-    cmd_comment:"下载审计脚本并运行 11 步审计",
+    cmd_comment:"下载审计脚本并运行 13 步审计",
     cmd_history_hint:"Tip: 命令中的 Key 会留在 shell history 中。如需更安全，可改用环境变量: export KEY=sk-... 然后 --key $KEY",
     tab_human:"手动运行",tab_agent:"Agent 自动运行",
-    agent_pitch:"安装为 Claude Code Skill — 说一句话，agent 替你跑完 11 步审计。",
+    agent_pitch:"安装为 Claude Code Skill — 说一句话，agent 替你跑完 13 步审计。",
     agent_step1_title:"安装 Skill",agent_step1_desc:"在终端运行一次，将审计技能添加到 Claude Code：",
     agent_step2_title:"一句话触发",agent_step2_desc:"打开 Claude Code，说：",
     agent_trigger:'\u201c帮我审计这个中转站：https://your-relay.com/v1，key 是 sk-xxx\u201d',
-    agent_step3_title:"Agent 全自动执行",agent_step3_desc:"Claude Code 自动下载脚本、运行 11 步检测、呈现结果 — 你只需要看报告。",
+    agent_step3_title:"Agent 全自动执行",agent_step3_desc:"Claude Code 自动下载脚本、运行 13 步检测、呈现结果 — 你只需要看报告。",
     agent_security:"同样的安全模型 — agent 在你的本地机器上运行，Key 不经过任何第三方服务器。",
     term_downloading:"audit.py 已下载 (2,847 行, 零依赖)",
-    term_step1:"[Step 1/11] 基础设施侦察...",
+    term_step1:"[Step 1/13] 基础设施侦察...",
     term_step1_out:"  CDN: Cloudflare | 系统: New API | SSL: Let's Encrypt",
-    term_step3:"[Step 3/11] Token 注入检测...",
+    term_step3:"[Step 3/13] Token 注入检测...",
     term_step3_out:"  ⚠ 检测到注入: +80 tokens (疑似 Claude Code CLI 身份)",
-    term_step5:"[Step 5/11] 身份替换检测...",
+    term_step5:"[Step 5/13] 身份替换检测...",
     term_step5_out:"  ✓ 身份确认: Claude by Anthropic",
-    term_step8:"[Step 8/11] 工具调用改写检测 (AC-1.a)...",
+    term_step8:"[Step 8/13] 工具调用改写检测 (AC-1.a)...",
     term_step8_out:"  ✓ 5/5 包管理器探测完整，无改写",
     term_done:"✓ 审计完成! 报告已保存: audit-{domain}.md",
     term_open_hint:"用任意文本编辑器打开 .md 文件查看完整报告",
@@ -882,7 +882,7 @@ const i18n={
     faq_q2:"输入 API Key 安全吗？",
     faq_a2:'api-relay-audit 完全在你的机器上运行。你的 API Key 仅发送到你指定的中转站地址 — 也就是你本来就在使用的那个中转站。没有数据发送给我们，没有遥测，没有分析。Standalone 版本是一个单 Python 文件，零依赖（只用 stdlib + curl）— 你可以在运行前阅读每一行代码。这与要求你在网页上输入 Key 的工具有本质区别。',
     faq_q3:"和 hvoy.ai / cctest.ai 有什么区别？",
-    faq_a3:'三个工具，三种思路。<strong>hvoy.ai</strong> 擅长信息聚合 — 40+ 中转站的公开排行榜是最快的查看方式。<strong>cctest.ai</strong> 提供一键便利和独特的通道指纹（protobuf 签名解析）。<strong>api-relay-audit</strong> 覆盖 11 个审计维度（vs hvoy ~5 个，cctest ~2 个），本地运行，完全开源。只有 api-relay-audit 能检测工具调用改写 (AC-1.a)、错误响应凭证泄漏 (AC-2)、上下文截断和 Web3 注入。按需选择：快速查看 → hvoy；一键检查 → cctest；完整安全审计 → api-relay-audit。<a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/comparison-api-relay-audit-vs-hvoy-vs-cctest.md" target="_blank" rel="noopener noreferrer">完整评测 →</a>',
+    faq_a3:'三个工具，三种思路。<strong>hvoy.ai</strong> 擅长信息聚合 — 40+ 中转站的公开排行榜是最快的查看方式。<strong>cctest.ai</strong> 提供一键便利和独特的通道指纹（protobuf 签名解析）。<strong>api-relay-audit</strong> 覆盖 13 个审计步骤（vs hvoy ~5 个，cctest 5 个），本地运行，完全开源。只有 api-relay-audit 能检测工具调用改写 (AC-1.a)、错误响应凭证泄漏 (AC-2)、上下文截断和 Web3 注入。按需选择：快速查看 → hvoy；一键检查 → cctest；完整安全审计 → api-relay-audit。<a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/comparison-api-relay-audit-vs-hvoy-vs-cctest.md" target="_blank" rel="noopener noreferrer">完整评测 →</a>',
     faq_q4:"什么是 Token 注入？",
     faq_a4:'当你向 AI API 发送消息时，中转站可能暗中在前面插入一段隐藏 system prompt。这注入了额外的 token — 例如 3200 tokens 的指令让模型表现为 "Kiro" 而非 Claude。你为这些隐藏 token 付费，更严重的是它们可以覆盖你的指令。api-relay-audit 通过对比实际 token 数与预期值来检测：如果你发送了 100 tokens 但模型报告使用了 3300，说明有 ~3200 tokens 的注入。类似于 hvoy.ai 的 "掺水率" 概念，但以绝对 token 差值衡量，更精确。',
     faq_q5:"什么是 AC-1.a 工具调用改写？",
@@ -897,7 +897,7 @@ const i18n={
     nav_demo:"Demo",nav_install:"Quick Start",nav_faq:"FAQ",
     hero_badge:"Local execution — your API Key is never sent to a third-party server",
     hero_title:'<span class="gradient">AI API Relay</span> Security Audit',
-    hero_sub:"Open-source 11-step audit tool. Detects token injection, prompt leakage, identity substitution, tool-call rewriting, credential leakage in error responses, and SSE stream tampering.",
+    hero_sub:"Open-source 13-step audit tool. Detects token injection, prompt leakage, identity substitution, tool-call rewriting, credential leakage in error responses, and SSE stream tampering.",
     stat_steps:"Audit Steps",stat_matrix:"Risk Matrix",stat_tests:"Unit Tests",stat_deps:"Dependencies (standalone)",
     cta_demo:"See Demo Report",cta_install:"Start Audit",
     demo_title:"Audit Report Demo",demo_sub:"Real audit results from three relay services — click tabs to compare",
@@ -932,23 +932,23 @@ const i18n={
     cmd_step1:"Open your terminal (macOS: Terminal.app / Windows: PowerShell)",
     cmd_step2:"Paste this command and press Enter — takes ~2 minutes:",
     cmd_step3:"Done! A Markdown audit report will be saved to your current directory.",
-    cmd_comment:"Download audit script and run full 11-step audit",
+    cmd_comment:"Download audit script and run full 13-step audit",
     cmd_history_hint:"Tip: The Key in this command will persist in shell history. For better hygiene: export KEY=sk-... then use --key $KEY",
     tab_human:"Run Manually",tab_agent:"Agent Auto-Run",
-    agent_pitch:"Install as a Claude Code Skill — say one sentence, the agent runs the full 11-step audit for you.",
+    agent_pitch:"Install as a Claude Code Skill — say one sentence, the agent runs the full 13-step audit for you.",
     agent_step1_title:"Install the Skill",agent_step1_desc:"Run this once in your terminal to add the audit skill to Claude Code:",
     agent_step2_title:"Trigger with one sentence",agent_step2_desc:"Open Claude Code and say:",
     agent_trigger:'"Audit this relay: https://your-relay.com/v1, my key is sk-xxx"',
-    agent_step3_title:"Agent does everything",agent_step3_desc:"Claude Code automatically downloads the script, runs all 11 steps, and presents the findings — you just read the result.",
+    agent_step3_title:"Agent does everything",agent_step3_desc:"Claude Code automatically downloads the script, runs all 13 steps, and presents the findings — you just read the result.",
     agent_security:"Same security model — the agent runs locally on your machine, Key never touches a third-party server.",
     term_downloading:"audit.py downloaded (2,847 lines, zero dependencies)",
-    term_step1:"[Step 1/11] Infrastructure recon...",
+    term_step1:"[Step 1/13] Infrastructure recon...",
     term_step1_out:"  CDN: Cloudflare | System: New API | SSL: Let's Encrypt",
-    term_step3:"[Step 3/11] Token injection detection...",
+    term_step3:"[Step 3/13] Token injection detection...",
     term_step3_out:"  ⚠ Injection detected: +80 tokens (Claude Code CLI identity)",
-    term_step5:"[Step 5/11] Identity substitution check...",
+    term_step5:"[Step 5/13] Identity substitution check...",
     term_step5_out:"  ✓ Identity confirmed: Claude by Anthropic",
-    term_step8:"[Step 8/11] Tool-call rewriting (AC-1.a)...",
+    term_step8:"[Step 8/13] Tool-call rewriting (AC-1.a)...",
     term_step8_out:"  ✓ 5/5 package manager probes intact, no rewriting",
     term_done:"✓ Audit complete! Report saved: audit-{domain}.md",
     term_open_hint:"Open the .md file with any text editor to view the full report",
@@ -961,7 +961,7 @@ const i18n={
     faq_a2:'api-relay-audit runs entirely on your machine. Your API Key is only sent to the relay URL you specify — the same relay you\'re already using. No data is sent to us, no telemetry, no analytics. The standalone version is a single Python file with zero dependencies (just stdlib + curl) — you can read every line of code before running it. This is fundamentally different from web-based tools that ask you to enter your key into a webpage.',
     faq_q2:"Is it safe to enter my API Key?",
     faq_q3:"What's the difference between this and hvoy.ai / cctest.ai?",
-    faq_a3:'Three tools, three approaches. <strong>hvoy.ai</strong> excels at information aggregation — its public leaderboard of 40+ relays is the fastest way to check a relay\'s reputation. <strong>cctest.ai</strong> offers one-click convenience and a unique channel fingerprint (protobuf signature parsing). <strong>api-relay-audit</strong> covers 11 audit dimensions (vs ~5 for hvoy, ~2 for cctest), runs locally, and is fully open-source. Only api-relay-audit detects tool-call rewriting (AC-1.a), error response credential leakage (AC-2), context truncation, and Web3 injection. Pick based on your needs: quick lookup → hvoy; one-click check → cctest; full security audit → api-relay-audit. <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/comparison-api-relay-audit-vs-hvoy-vs-cctest.md" target="_blank" rel="noopener noreferrer">Full comparison →</a>',
+    faq_a3:'Three tools, three approaches. <strong>hvoy.ai</strong> excels at information aggregation — its public leaderboard of 40+ relays is the fastest way to check a relay\'s reputation. <strong>cctest.ai</strong> offers one-click convenience and a unique channel fingerprint (protobuf signature parsing). <strong>api-relay-audit</strong> covers 13 audit dimensions (vs ~5 for hvoy, 5 for cctest), runs locally, and is fully open-source. Only api-relay-audit detects tool-call rewriting (AC-1.a), error response credential leakage (AC-2), context truncation, and Web3 injection. Pick based on your needs: quick lookup → hvoy; one-click check → cctest; full security audit → api-relay-audit. <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/comparison-api-relay-audit-vs-hvoy-vs-cctest.md" target="_blank" rel="noopener noreferrer">Full comparison →</a>',
     faq_q4:'What does "token injection" mean?',
     faq_a4:'When you send a message to an AI API, the relay may secretly prepend a hidden system prompt. This injects extra tokens into your request — for example, 3200 tokens of instructions telling the model to behave as "Kiro" instead of Claude. You pay for these hidden tokens, and worse, they can override your own instructions. api-relay-audit detects this by comparing actual token counts against expected values: if you sent 100 tokens but the model reports using 3300, there are ~3200 tokens of injection. Similar to hvoy.ai\'s "掺水率" (dilution rate) concept, but measured as an absolute token delta for precision.',
     faq_q5:"What is AC-1.a tool-call rewriting?",
