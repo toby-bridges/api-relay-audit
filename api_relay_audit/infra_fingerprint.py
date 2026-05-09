@@ -46,6 +46,38 @@ from collections import Counter
 # framework whose signals fire wins, so list specific frameworks
 # (new-api, one-api) before generic ones (nginx, caddy).
 FRAMEWORK_SIGNATURES = [
+    # LiteLLM: BerriAI/litellm proxy layer. Injects x-litellm-* on every
+    # response including unauthenticated 401s. Header-prefix detection is
+    # deterministic (1.0 confidence), concept from LLMprobe-engine
+    # channel-signature.ts (clean-room reimplementation).
+    ("litellm", [
+        ("header_prefix:x-litellm-", ""),
+    ]),
+    # Helicone: Helicone.ai observability proxy. Injects helicone-* on
+    # every response.
+    ("helicone", [
+        ("header_prefix:helicone-", ""),
+    ]),
+    # Portkey: Portkey.ai API gateway. Injects x-portkey-* on every
+    # response.
+    ("portkey", [
+        ("header_prefix:x-portkey-", ""),
+    ]),
+    # Kong Gateway: Kong Inc. API gateway. Injects x-kong-* on every
+    # response.
+    ("kong-gateway", [
+        ("header_prefix:x-kong-", ""),
+    ]),
+    # Alibaba DashScope: Alibaba Cloud model API gateway. Injects
+    # x-dashscope-* on every response.
+    ("alibaba-dashscope", [
+        ("header_prefix:x-dashscope-", ""),
+    ]),
+    # Azure AI Foundry: Azure API Management layer. apim-request-id is
+    # present on every response routed through Azure APIM.
+    ("azure-foundry", [
+        ("header:apim-request-id", ""),
+    ]),
     # New API: song-quan-peng/one-api hard fork by Calcium-Ion.
     # Keeps most upstream shapes but rebrands landing page + about.
     ("new-api", [
@@ -110,6 +142,10 @@ INFORMATIVE_HEADERS = (
     "x-cache",
     "x-request-id",
     "x-frame-options",
+    "x-litellm-version",
+    "helicone-id",
+    "x-portkey-request-id",
+    "apim-request-id",
 )
 
 
@@ -130,6 +166,9 @@ def _match_signal(signal, headers_lower, body_lower):
             return header_name in headers_lower
         value = headers_lower.get(header_name, "")
         return needle_lower in value.lower()
+    if source.startswith("header_prefix:"):
+        prefix = source.split(":", 1)[1].lower()
+        return any(k.startswith(prefix) for k in headers_lower)
     return False
 
 
