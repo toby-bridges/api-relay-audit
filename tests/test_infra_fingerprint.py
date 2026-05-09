@@ -167,6 +167,29 @@ class TestClassifyFramework:
             "Prefix x-litellm- must not match header key x-litellm (no dash)"
         )
 
+    def test_header_prefix_case_insensitive_key(self):
+        """Header keys arrive in arbitrary casing from real servers.
+        classify_framework lowercases all keys before matching, so
+        header_prefix: detection must be case-insensitive end-to-end."""
+        framework, _ = classify_framework(
+            {"X-LiteLLM-Call-Id": "abc123"}, ""
+        )
+        assert framework == "litellm", (
+            "Mixed-case header key X-LiteLLM-Call-Id must match "
+            "header_prefix:x-litellm- after lowercasing"
+        )
+
+    def test_header_prefix_shadowed_by_earlier_prefix(self):
+        """When both x-litellm-* and helicone-* headers are present,
+        litellm is listed first in FRAMEWORK_SIGNATURES and must win."""
+        framework, _ = classify_framework(
+            {"x-litellm-version": "1.0", "helicone-id": "h123"}, ""
+        )
+        assert framework == "litellm", (
+            "litellm entry precedes helicone in FRAMEWORK_SIGNATURES — "
+            "must win when both header prefixes are present"
+        )
+
 
 # ---------------------------------------------------------------------------
 # extract_informative_headers
