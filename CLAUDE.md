@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Security audit tool for third-party AI API relay/proxy services. Detects hidden prompt injection, prompt leakage, instruction override with non-Claude identity substitution, context truncation, tool-call package substitution (AC-1.a), error response header leakage (AC-2 adjacent), SSE-level stream integrity anomalies (AC-1 SSE-layer), Web3 prompt injection (SlowMist signature isolation, profile-gated), relay-framework fingerprinting, and latency-variance fingerprinting.
+Security audit tool for third-party AI API relay/proxy services. Detects hidden prompt injection, prompt leakage, instruction override with non-Claude identity substitution, context truncation, tool-call package substitution (AC-1.a), error response header leakage (AC-2 adjacent), SSE-level stream integrity anomalies (AC-1 SSE-layer), Web3 prompt injection (SlowMist signature isolation, profile-gated), relay-framework fingerprinting, latency-variance fingerprinting, and upstream channel classification.
 
-Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407 — AC-1 (payload injection), AC-1.a (dependency-targeted injection), AC-1.b (conditional delivery), AC-2 (secret exfiltration). Infrastructure fingerprint (Step 12) and latency variance (Step 13) are sourced from Zhang et al., *Real Money, Fake Models*, arXiv:2603.01919. AC-1 full tool_call support and AC-1.b beyond warm-up mitigation remain on the backlog (see FOR_JOHN.md).
+Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407 — AC-1 (payload injection), AC-1.a (dependency-targeted injection), AC-1.b (conditional delivery), AC-2 (secret exfiltration). Infrastructure fingerprint (Step 12) and latency variance (Step 13) are sourced from Zhang et al., *Real Money, Fake Models*, arXiv:2603.01919. Upstream channel classifier (Step 14) is a clean-room reimplementation of the LLMprobe-engine `channel-signature.ts` technique (Bazaarlinkorg/LLMprobe-engine, AGPL-3.0). AC-1 full tool_call support and AC-1.b beyond warm-up mitigation remain on the backlog (see FOR_JOHN.md).
 
 ## Scope / Constraints
 
@@ -84,7 +84,8 @@ When making changes to audit logic, `audit.py` (root) must be updated to stay in
 - `api_relay_audit/web3/injection_probes.py` — 3 SlowMist-derived probes; safe-priority aggregation with `HARD_INJECTED_MARKERS` override for contradictory responses. Profile-gated (`--profile web3|full`).
 - `api_relay_audit/infra_fingerprint.py` — 3 unauthenticated GET probes; signature DB covers 7 frameworks; majority vote → `confirmed`/`tentative`/`unknown`. Informational only, does not feed the risk matrix.
 - `api_relay_audit/latency_variance.py` — N identical `max_tokens=8` requests timed with `time.perf_counter` (not `time.time` — monotonicity, v1.8.1 fix). `ensure_format()` is called before the timing loop to prevent the first sample silently including a failed Anthropic probe. Bimodality is the strong signal for silent A/B model substitution. Informational only.
-- `scripts/audit.py` — 13-step orchestration. **6D risk matrix**: D1=token injection, D2=instruction override, D3=tool-call substitution, D4=error leakage, D5=stream anomaly, D6=Web3 injection (profile-gated). Steps 12/13 informational only. `--profile` gates step set at runtime — rejected branch-forking to preserve the dual-distribution invariant.
+- `api_relay_audit/channel_classifier.py` — One minimal `/v1/messages` probe; classifies upstream serving channel via 3-tier rule set (Tier 1 deterministic: OpenRouter, CF AI Gateway; Tier 2 weighted: AWS Bedrock, Vertex, AWS API Gateway, Anthropic Official; Tier 3 inference: transparent Anthropic relay from native `msg_01...` id with no other signals). Channels Step 12 already covers (litellm/helicone/portkey/kong-gateway/alibaba-dashscope/azure-foundry/new-api/one-api/cloudflare) are deliberately omitted to avoid double-counting. Informational only. Clean-room reimplementation of LLMprobe-engine `channel-signature.ts`.
+- `scripts/audit.py` — 14-step orchestration. **6D risk matrix**: D1=token injection, D2=instruction override, D3=tool-call substitution, D4=error leakage, D5=stream anomaly, D6=Web3 injection (profile-gated). Steps 12/13/14 informational only. `--profile` gates step set at runtime — rejected branch-forking to preserve the dual-distribution invariant.
 
 ### APIClient Return Format
 ```python
@@ -94,7 +95,7 @@ When making changes to audit logic, `audit.py` (root) must be updated to stay in
 ```
 
 ## CLI Flags for `scripts/audit.py`
-`--key`, `--url`, `--model`, `--output`, `--profile {general,web3,full}`, `--skip-infra`, `--skip-context`, `--skip-tool-substitution`, `--skip-error-leakage`, `--aggressive-error-probes`, `--skip-stream-integrity`, `--skip-web3-injection`, `--skip-infra-fingerprint`, `--skip-latency-variance`, `--latency-probe-count N`, `--warmup N`, `--timeout`
+`--key`, `--url`, `--model`, `--output`, `--profile {general,web3,full}`, `--skip-infra`, `--skip-context`, `--skip-tool-substitution`, `--skip-error-leakage`, `--aggressive-error-probes`, `--skip-stream-integrity`, `--skip-web3-injection`, `--skip-infra-fingerprint`, `--skip-latency-variance`, `--skip-channel-classifier`, `--latency-probe-count N`, `--warmup N`, `--timeout`
 
 ## Dual-distribution invariant
 Whenever `scripts/audit.py` or any `api_relay_audit/*.py` module changes, the standalone `audit.py` at the repo root must be updated to match. The standalone version is a character-copy of the modular code with curl subprocess replacing httpx. New helper modules (e.g. `tool_substitution.py`) get inlined as a new `Section` block in `audit.py`.
