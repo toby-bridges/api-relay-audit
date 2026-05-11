@@ -156,6 +156,46 @@ def test_infra_fingerprint_constants_parity():
     )
 
 
+def test_channel_classifier_constants_parity():
+    """Regression (v1.9): Step 14 channel-classifier constants must match
+    between the modular and standalone distributions. Adding a new channel
+    label, changing a Tier 2 weight, or rearranging TIER2_PRIORITY on one
+    side without the other would silently produce different verdicts for
+    the same response data depending on which distribution a user installed.
+    """
+    from api_relay_audit.channel_classifier import (
+        TIER1_RULES as MODULAR_TIER1,
+        TIER2_PRIORITY as MODULAR_TIER2_PRIORITY,
+        TIER2_WEIGHTS as MODULAR_TIER2_WEIGHTS,
+        TIER3_RELAY_CONFIDENCE as MODULAR_TIER3_CONFIDENCE,
+        TIER3_RELAY_ID_PATTERN as MODULAR_TIER3_PATTERN,
+    )
+
+    standalone = _load_standalone_audit()
+
+    assert standalone.TIER1_RULES == MODULAR_TIER1, (
+        "TIER1_RULES drift between api_relay_audit/channel_classifier.py "
+        "and standalone audit.py. Order matters (first match wins)."
+    )
+    assert standalone.TIER2_WEIGHTS == MODULAR_TIER2_WEIGHTS, (
+        "TIER2_WEIGHTS drift. Weight changes silently shift the score "
+        "boundary at which a channel wins; mirror into both."
+    )
+    assert standalone.TIER2_PRIORITY == MODULAR_TIER2_PRIORITY, (
+        "TIER2_PRIORITY drift. The tie-break order determines the "
+        "winner when two channels score equally; mirror into both."
+    )
+    assert standalone.TIER3_RELAY_ID_PATTERN.pattern == MODULAR_TIER3_PATTERN.pattern, (
+        "TIER3_RELAY_ID_PATTERN drift between channel_classifier.py and "
+        "standalone audit.py. Pattern controls the transparent-relay "
+        "inference; mirror exactly."
+    )
+    assert standalone.TIER3_RELAY_CONFIDENCE == MODULAR_TIER3_CONFIDENCE, (
+        "TIER3_RELAY_CONFIDENCE drift. The 0.5 confidence is the user-"
+        "visible signal strength of the relay-proxy inference."
+    )
+
+
 def test_latency_variance_constants_parity():
     """Regression (v1.8, Codex LOW finding 2026-04-18): Step 13
     latency-variance thresholds must match between the modular and

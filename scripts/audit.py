@@ -2,14 +2,16 @@
 """
 API Relay Security Audit Tool v2.3
 
-Full 13-step audit: infrastructure recon, model list, token injection,
+Full 14-step audit: infrastructure recon, model list, token injection,
 prompt extraction, instruction conflict + identity, jailbreak, context
 length, tool-call substitution (AC-1.a), error response leakage (AC-2),
 stream integrity (AC-1 SSE), Web3 prompt injection (profile=web3|full),
-infrastructure fingerprint, latency variance. Threat taxonomy follows
-Liu et al., *Your Agent Is Mine*, arXiv:2604.08407 (AC-1, AC-1.a, AC-1.b,
-AC-2). Steps 12-13 sourced from Zhang et al., *Real Money, Fake Models*,
-arXiv:2603.01919.
+infrastructure fingerprint, latency variance, upstream channel classifier.
+Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407
+(AC-1, AC-1.a, AC-1.b, AC-2). Steps 12-13 sourced from Zhang et al.,
+*Real Money, Fake Models*, arXiv:2603.01919. Step 14 clean-room
+reimplementation of LLMprobe-engine `channel-signature.ts` technique
+(Bazaarlinkorg/LLMprobe-engine, AGPL-3.0).
 
 Usage:
   python scripts/audit.py --key YOUR_KEY --url https://relay.example.com/v1 --model claude-opus-4-6
@@ -27,6 +29,7 @@ from urllib.parse import urlparse
 # Allow importing from parent directory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from api_relay_audit.channel_classifier import run_channel_classifier
 from api_relay_audit.client import APIClient
 from api_relay_audit.context import run_context_scan
 from api_relay_audit.error_leakage import run_error_leakage_test
@@ -222,6 +225,11 @@ def parse_args():
     p.add_argument("--skip-latency-variance", action="store_true",
                    help="Skip Step 13 latency variance fingerprinting "
                         "(bimodality heuristic over N identical probes).")
+    p.add_argument("--skip-channel-classifier", action="store_true",
+                   help="Skip Step 14 upstream channel classifier "
+                        "(one /v1/messages probe; classifies upstream as "
+                        "AWS Bedrock / Vertex / Anthropic-official / "
+                        "OpenRouter / CF-AI-Gateway / transparent relay).")
     p.add_argument("--latency-probe-count", type=validate_probe_count,
                    default=10, metavar="N",
                    help=f"Number of identical probes fired in Step 13. "
@@ -1166,6 +1174,117 @@ def test_latency_variance(client, report, probe_count=10):
     return result
 
 
+def test_channel_classifier(client, report):
+    """Step 14: Upstream Channel Classifier (v1.9).
+
+    Fires one minimal /v1/messages probe (max_tokens=4) and classifies
+    the upstream serving channel from response headers + id + body
+    using a 3-tier rule set:
+
+        Tier 1 (deterministic, 1.0):   OpenRouter, Cloudflare AI Gateway
+        Tier 2 (weighted, max wins):   AWS Bedrock, Google Vertex,
+                                       AWS API Gateway, Anthropic Official
+        Tier 3 (inference, 0.5):       transparent Anthropic relay
+                                       (native msg_01... id, no other signal)
+
+    Complements Step 12 (which uses unauthenticated GET probes to find
+    the relay-framework family). Step 12 cannot see msg_bdrk_*, msg_vrtx_*,
+    or anthropic-ratelimit-* because those only appear on authenticated
+    message responses. Channels detected by Step 12 (LiteLLM, Helicone,
+    Portkey, one-api, etc.) are deliberately omitted from Step 14 to
+    avoid double-counting.
+
+    **Informational only** in v1.9 -- result does NOT feed the 6D risk
+    matrix. Channel labels (aws-bedrock, anthropic-official, etc.) are
+    legitimate serving paths; they become a fraud signal only when paired
+    with Step 5 identity substitution or Step 13 latency bimodality
+    (multi-step accumulation, ROADMAP §2.6.3.2).
+
+    Concept clean-room re-implemented from LLMprobe-engine
+    `channel-signature.ts` (Bazaarlinkorg/LLMprobe-engine, AGPL-3.0).
+    """
+    report.h2("14. Upstream Channel Classifier")
+    report.p(
+        "Fire a single minimal `/v1/messages` probe (`max_tokens=4`) and "
+        "classify the upstream serving channel from the response headers, "
+        "the message `id`, and the body. Complements Step 12 by detecting "
+        "post-relay upstream paths that only appear on authenticated "
+        "responses (`msg_bdrk_*` for Bedrock, `msg_vrtx_*` for Vertex, "
+        "`anthropic-ratelimit-*` for direct Anthropic, etc.). "
+        "**Informational only** in v1.9 -- not fed into the overall risk "
+        "rating. A non-Anthropic upstream is not by itself fraud; combine "
+        "with Step 5 identity findings.\n"
+    )
+
+    result = run_channel_classifier(client)
+    channel = result["channel"]
+    confidence = result["confidence"]
+    evidence = result["evidence"]
+    raw_status = result["raw_status"]
+    message_id = result["message_id"]
+    error = result["error"]
+    verdict = result["verdict"]
+
+    report.p("| Field | Value |")
+    report.p("|-------|-------|")
+    if error:
+        report.p(f"| HTTP status | ERR: {error[:80]} |")
+    else:
+        report.p(f"| HTTP status | {raw_status if raw_status else '—'} |")
+    report.p(f"| message id | `{message_id or '—'}` |")
+    report.p(f"| classified channel | `{channel}` |")
+    report.p(f"| confidence | {confidence:.2f} |")
+    report.p(f"| verdict | `{verdict}` |")
+    if evidence:
+        ev_str = ", ".join(evidence)[:200]
+        report.p(f"| evidence | {ev_str} |")
+    else:
+        report.p("| evidence | — |")
+
+    if verdict == "inconclusive":
+        if error:
+            report.flag(
+                "yellow",
+                f"Channel classifier **inconclusive**: probe transport error "
+                f"({error[:120]}). Cannot classify upstream channel.",
+            )
+        else:
+            report.flag(
+                "yellow",
+                f"Channel classifier **inconclusive**: probe returned status "
+                f"{raw_status} (expected 200). Likely auth rejection, model "
+                "name mismatch, or upstream error envelope. Re-run with a "
+                "valid key + supported model to enable classification.",
+            )
+    elif channel == "anthropic-relay":
+        report.flag(
+            "green",
+            f"Upstream **transparent Anthropic relay** (confidence "
+            f"{confidence:.2f}, Tier 3 inference from native `msg_01...` id "
+            "with no rate-limit headers). The relay forwards Anthropic's "
+            "id verbatim but strips Anthropic's response headers. "
+            "Informational only in v1.9.",
+        )
+    elif channel == "unknown":
+        report.flag(
+            "green",
+            "Upstream channel **unknown**: probe succeeded (200) but no "
+            "Tier 1/2/3 signals fired. The relay strips or rewrites all "
+            "upstream identifiers, or this combination is not in our "
+            "signature DB. Informational only in v1.9.",
+        )
+    else:
+        report.flag(
+            "green",
+            f"Upstream channel: **{channel}** (confidence "
+            f"{confidence:.2f}). Informational only in v1.9.",
+        )
+
+    print(f"  Done: channel classifier ({channel}, conf={confidence:.2f}, "
+          f"verdict={verdict})")
+    return result
+
+
 # ============================================================
 # Fail-open step wrapper
 # ============================================================
@@ -1270,94 +1389,94 @@ def main():
 
     # 1. Infrastructure
     if not args.skip_infra:
-        print("[1/13] Infrastructure recon...")
+        print("[1/14] Infrastructure recon...")
         _run_step("Step 1 infrastructure", report,
                   test_infrastructure, client.base_url, report,
                   crashes=step_crashes)
     else:
-        print("[1/13] Infrastructure recon (skipped)")
+        print("[1/14] Infrastructure recon (skipped)")
 
     # 2. Models
-    print("[2/13] Model list...")
+    print("[2/14] Model list...")
     _run_step("Step 2 model list", report, test_models, client, report,
               crashes=step_crashes)
 
     # 3. Token injection
-    print("[3/13] Token injection detection...")
+    print("[3/14] Token injection detection...")
     injection = _run_step("Step 3 token injection", report,
                           test_token_injection, client, report,
                           default=None, crashes=step_crashes)
 
     # 4. Prompt extraction
-    print("[4/13] Prompt extraction tests...")
+    print("[4/14] Prompt extraction tests...")
     leaked = _run_step("Step 4 prompt extraction", report,
                        test_prompt_extraction, client, report,
                        default=False, crashes=step_crashes)
 
     # 5. Instruction conflict
-    print("[5/13] Instruction conflict tests...")
+    print("[5/14] Instruction conflict tests...")
     overridden = _run_step("Step 5 instruction override", report,
                            test_instruction_conflict, client, report,
                            default=None, crashes=step_crashes)
 
     # 6. Jailbreak
-    print("[6/13] Jailbreak tests...")
+    print("[6/14] Jailbreak tests...")
     _run_step("Step 6 jailbreak", report, test_jailbreak, client, report,
               crashes=step_crashes)
 
     # 7. Context length
     if not args.skip_context:
-        print("[7/13] Context length test...")
+        print("[7/14] Context length test...")
         _run_step("Step 7 context length", report,
                   test_context_length, client, report,
                   crashes=step_crashes)
     else:
-        print("[7/13] Context length test (skipped)")
+        print("[7/14] Context length test (skipped)")
 
     # 8. Tool-call package substitution (AC-1.a)
     substitution_detected = False
     substitution_inconclusive = False
     if not args.skip_tool_substitution:
-        print("[8/13] Tool-call substitution test...")
+        print("[8/14] Tool-call substitution test...")
         substitution_detected, substitution_inconclusive = _run_step(
             "Step 8 tool substitution", report,
             test_tool_substitution, client, report,
             default=(False, True), crashes=step_crashes,
         )
     else:
-        print("[8/13] Tool-call substitution test (skipped)")
+        print("[8/14] Tool-call substitution test (skipped)")
 
     # 9. Error response header leakage (AC-2 adjacent)
     err_severity = "none"
     err_inconclusive = False
     if not args.skip_error_leakage:
-        print("[9/13] Error response leakage test...")
+        print("[9/14] Error response leakage test...")
         err_severity, err_inconclusive = _run_step(
             "Step 9 error leakage", report,
             test_error_leakage, client, args, report,
             default=("none", True), crashes=step_crashes,
         )
     else:
-        print("[9/13] Error response leakage test (skipped)")
+        print("[9/14] Error response leakage test (skipped)")
 
     # 10. Stream integrity (AC-1 SSE-level)
     stream_verdict = "clean"
     stream_inconclusive = False
     if not args.skip_stream_integrity:
-        print("[10/13] Stream integrity test...")
+        print("[10/14] Stream integrity test...")
         stream_verdict, stream_inconclusive = _run_step(
             "Step 10 stream integrity", report,
             test_stream_integrity, client, report,
             default=("clean", True), crashes=step_crashes,
         )
     else:
-        print("[10/13] Stream integrity test (skipped)")
+        print("[10/14] Stream integrity test (skipped)")
 
     # 11. Web3 prompt injection (profile=web3|full only)
     web3_inj_verdict = "clean"
     web3_inj_inconclusive = False
     if args.profile in ("web3", "full") and not args.skip_web3_injection:
-        print("[11/13] Web3 prompt injection test...")
+        print("[11/14] Web3 prompt injection test...")
         web3_inj_verdict, web3_inj_inconclusive = _run_step(
             "Step 11 web3 injection", report,
             test_web3_injection, client, report,
@@ -1365,24 +1484,24 @@ def main():
         )
     else:
         if args.profile == "general":
-            print("[11/13] Web3 prompt injection test (profile=general, skipped)")
+            print("[11/14] Web3 prompt injection test (profile=general, skipped)")
         else:
-            print("[11/13] Web3 prompt injection test (skipped)")
+            print("[11/14] Web3 prompt injection test (skipped)")
 
     # 12. Infrastructure fingerprint (v1.8, informational)
     if not args.skip_infra_fingerprint:
-        print("[12/13] Infrastructure fingerprint...")
+        print("[12/14] Infrastructure fingerprint...")
         _run_step(
             "Step 12 infra fingerprint", report,
             test_infra_fingerprint, client, report,
             default=(None, "unknown"), crashes=step_crashes,
         )
     else:
-        print("[12/13] Infrastructure fingerprint (skipped)")
+        print("[12/14] Infrastructure fingerprint (skipped)")
 
     # 13. Latency variance (v1.8, informational)
     if not args.skip_latency_variance:
-        print("[13/13] Latency variance...")
+        print("[13/14] Latency variance...")
         _run_step(
             "Step 13 latency variance", report,
             test_latency_variance, client, report,
@@ -1390,7 +1509,18 @@ def main():
             default=None, crashes=step_crashes,
         )
     else:
-        print("[13/13] Latency variance (skipped)")
+        print("[13/14] Latency variance (skipped)")
+
+    # 14. Channel classifier (v1.9, informational)
+    if not args.skip_channel_classifier:
+        print("[14/14] Channel classifier...")
+        _run_step(
+            "Step 14 channel classifier", report,
+            test_channel_classifier, client, report,
+            default=None, crashes=step_crashes,
+        )
+    else:
+        print("[14/14] Channel classifier (skipped)")
 
     # Overall rating
     # Dimensions (v3, post-v1.7.5):

@@ -14,25 +14,25 @@
 |---|---|---|
 | 模块版版本 | `v2.3` | `scripts/audit.py` docstring |
 | 单文件版版本 | `v2.3` | `audit.py` docstring |
-| 步骤数 (Step N) | **13** | grep `Step N` in `scripts/audit.py` |
-| 步骤数 (单文件版) | 13 | grep `Step N` in `audit.py` |
-| 测试数 (pytest) | **569** | `pytest --collect-only` |
-| 测试数 (static) | 563 | grep `def test_*` in tests/ |
-| CLI flag 数 | 18 | grep `add_argument("--*")` |
+| 步骤数 (Step N) | **14** | grep `Step N` in `scripts/audit.py` |
+| 步骤数 (单文件版) | 14 | grep `Step N` in `audit.py` |
+| 测试数 (pytest) | **625** | `pytest --collect-only` |
+| 测试数 (static) | 619 | grep `def test_*` in tests/ |
+| CLI flag 数 | 19 | grep `add_argument("--*")` |
 | profile 选项 | general, web3, full | argparse choices |
-| ROADMAP 上次更新 | 2026-05-03 | `ROADMAP.md` 头部 |
+| ROADMAP 上次更新 | 2026-05-10 | `ROADMAP.md` 头部 |
 | Codex review 提及次数 | 4 | grep `Codex review (cycle\|round)` 在 Shipped 节 |
 | Codex review 已编号轮次（最大） | 6 | grep `Nth Codex review round` |
 | Codex bug 累计（最新声称） | 18 | grep `cumulative N real bug` |
 | 测试数演进 (ROADMAP) | [546, 560, 562] | grep `Final test count: N/N passing` |
-| HEAD SHA | `4289883` | `git rev-parse HEAD` |
-| HEAD 日期 | 2026-05-05 | `git log -1` |
+| HEAD SHA | `118a1ac` | `git rev-parse HEAD` |
+| HEAD 日期 | 2026-05-09 | `git log -1` |
 
 ## 一致性自检
 
 - ✅ 版本一致：两份都是 `v2.3`。
-- ✅ 步骤数一致：13。
-- ⚠️ ROADMAP 最后一次记录 562 个测试，但当前 pytest 是 569。要么 ROADMAP 漏更新，要么有未记录的新测试。
+- ✅ 步骤数一致：14。
+- ⚠️ ROADMAP 最后一次记录 562 个测试，但当前 pytest 是 625。要么 ROADMAP 漏更新，要么有未记录的新测试。
 
 ## 人工 review 边界（脚本抓不到，每次发布要人工核对）
 

@@ -102,6 +102,94 @@ class TestClassifyFramework:
         framework, _ = classify_framework({}, body)
         assert framework is None
 
+    # v1.9 header_prefix: signal tests ----------------------------------------
+
+    def test_litellm_header_prefix_match(self):
+        framework, signals = classify_framework(
+            {"x-litellm-call-id": "abc123"}, ""
+        )
+        assert framework == "litellm"
+        assert any("x-litellm-" in s[0] for s in signals)
+
+    def test_helicone_header_prefix_match(self):
+        framework, signals = classify_framework(
+            {"helicone-id": "xyz"}, ""
+        )
+        assert framework == "helicone"
+        assert any("helicone-" in s[0] for s in signals)
+
+    def test_portkey_header_prefix_match(self):
+        framework, signals = classify_framework(
+            {"x-portkey-request-id": "xyz"}, ""
+        )
+        assert framework == "portkey"
+        assert any("x-portkey-" in s[0] for s in signals)
+
+    def test_kong_header_prefix_match(self):
+        framework, signals = classify_framework(
+            {"x-kong-upstream-latency": "12"}, ""
+        )
+        assert framework == "kong-gateway"
+        assert any("x-kong-" in s[0] for s in signals)
+
+    def test_dashscope_header_prefix_match(self):
+        framework, signals = classify_framework(
+            {"x-dashscope-request-id": "xyz"}, ""
+        )
+        assert framework == "alibaba-dashscope"
+        assert any("x-dashscope-" in s[0] for s in signals)
+
+    def test_azure_foundry_header_match(self):
+        framework, signals = classify_framework(
+            {"apim-request-id": "00000000-0000-0000-0000-000000000001"}, ""
+        )
+        assert framework == "azure-foundry"
+        assert any("apim-request-id" in s[0] for s in signals)
+
+    def test_header_prefix_beats_body_match(self):
+        """header_prefix: entries appear before body-based entries in
+        FRAMEWORK_SIGNATURES, so a LiteLLM header wins over new-api body text."""
+        framework, _ = classify_framework(
+            {"x-litellm-version": "1.0.0"},
+            "<html>new api</html>",
+        )
+        assert framework == "litellm", (
+            "header_prefix signal should win over body match when listed first"
+        )
+
+    def test_header_prefix_no_partial_key_match(self):
+        """``x-litellm`` (no trailing dash) must not match the
+        ``header_prefix:x-litellm-`` rule — the dash is load-bearing."""
+        framework, _ = classify_framework(
+            {"x-litellm": "some-value"}, ""
+        )
+        assert framework is None, (
+            "Prefix x-litellm- must not match header key x-litellm (no dash)"
+        )
+
+    def test_header_prefix_case_insensitive_key(self):
+        """Header keys arrive in arbitrary casing from real servers.
+        classify_framework lowercases all keys before matching, so
+        header_prefix: detection must be case-insensitive end-to-end."""
+        framework, _ = classify_framework(
+            {"X-LiteLLM-Call-Id": "abc123"}, ""
+        )
+        assert framework == "litellm", (
+            "Mixed-case header key X-LiteLLM-Call-Id must match "
+            "header_prefix:x-litellm- after lowercasing"
+        )
+
+    def test_header_prefix_shadowed_by_earlier_prefix(self):
+        """When both x-litellm-* and helicone-* headers are present,
+        litellm is listed first in FRAMEWORK_SIGNATURES and must win."""
+        framework, _ = classify_framework(
+            {"x-litellm-version": "1.0", "helicone-id": "h123"}, ""
+        )
+        assert framework == "litellm", (
+            "litellm entry precedes helicone in FRAMEWORK_SIGNATURES — "
+            "must win when both header prefixes are present"
+        )
+
 
 # ---------------------------------------------------------------------------
 # extract_informative_headers
