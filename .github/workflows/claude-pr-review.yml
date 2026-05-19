@@ -18,6 +18,7 @@ jobs:
           fetch-depth: 0   # 让 Claude 能 diff 到 master
 
       - uses: anthropics/claude-code-action@v1
+        continue-on-error: true
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
