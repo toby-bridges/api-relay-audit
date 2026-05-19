@@ -11,6 +11,7 @@ so that drift is caught immediately.
 """
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -44,6 +45,55 @@ def test_risk_matrix_character_identical():
         "Risk matrix drift between scripts/audit.py and audit.py. "
         "Update both files so they are character-identical."
     )
+
+
+def test_curl_post_uses_stdin_payload_in_both_distributions(monkeypatch):
+    """Regression: the curl POST fallback must not place large JSON bodies or
+    secrets on the command line.
+
+    The GUI fork surfaced a Windows failure mode where long context bodies
+    exceed the 32 KB command-line limit. Both distributions should pipe the
+    request body via stdin with ``--data-binary @-`` while keeping headers in a
+    temporary curl config file rather than in argv.
+    """
+    import api_relay_audit.client as modular_client
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return MagicMock(returncode=0, stdout=b'{"ok": true}', stderr=b"")
+
+    monkeypatch.setattr(modular_client.subprocess, "run", fake_run)
+    modular = modular_client.APIClient(
+        "https://relay.example.com/v1", "sk-test", "claude-opus-4-6",
+    )
+    modular._curl_post(
+        "https://relay.example.com/v1/messages",
+        {"x-api-key": "sk-test", "content-type": "application/json"},
+        {"model": "claude-opus-4-6", "messages": [{"role": "user", "content": "x"}]},
+    )
+
+    standalone = _load_standalone_audit()
+    monkeypatch.setattr(standalone.subprocess, "run", fake_run)
+    standalone_client = standalone.APIClient(
+        "https://relay.example.com/v1", "sk-test", "claude-opus-4-6",
+    )
+    standalone_client._curl_post(
+        "https://relay.example.com/v1/messages",
+        {"x-api-key": "sk-test", "content-type": "application/json"},
+        {"model": "claude-opus-4-6", "messages": [{"role": "user", "content": "x"}]},
+    )
+
+    assert len(calls) == 2
+    for cmd, kwargs in calls:
+        assert "--data-binary" in cmd
+        assert "@-" in cmd
+        assert "-d" not in cmd
+        assert not any("sk-test" in str(part) for part in cmd)
+        payload = kwargs["input"]
+        assert isinstance(payload, bytes)
+        assert b'"model": "claude-opus-4-6"' in payload
 
 
 def _load_standalone_audit():

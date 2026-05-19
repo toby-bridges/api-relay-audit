@@ -32,11 +32,13 @@ Combined from the modular distribution:
 
 import argparse
 import json
+import os
 import re
 import shlex
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from collections import Counter
@@ -485,14 +487,34 @@ class APIClient:
     def _curl_post(self, url: str, headers: dict, body: dict) -> dict:
         """POST JSON via curl subprocess. Returns parsed JSON response."""
         cmd = ["curl", "-sk", "-X", "POST", url, "--max-time", str(self.timeout),
-               "--config", "-"]
-        cmd.extend(["-d", json.dumps(body)])
+               "--data-binary", "@-"]
         config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
-        r = subprocess.run(cmd, capture_output=True, text=True, input=config,
-                           timeout=self.timeout + 10)
-        if r.returncode != 0:
-            raise RuntimeError(f"curl failed: {r.stderr[:200]}")
-        return json.loads(r.stdout)
+        config_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", delete=False,
+            ) as config_file:
+                config_file.write(config)
+                config_path = config_file.name
+            cmd.extend(["--config", config_path])
+            payload = json.dumps(body).encode("utf-8")
+            r = subprocess.run(cmd, capture_output=True, input=payload,
+                               timeout=self.timeout + 10)
+            if r.returncode != 0:
+                err = r.stderr
+                if isinstance(err, bytes):
+                    err = err.decode("utf-8", errors="replace")
+                raise RuntimeError(f"curl failed: {err}")
+            output = r.stdout
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", errors="replace")
+            return json.loads(output)
+        finally:
+            if config_path:
+                try:
+                    os.unlink(config_path)
+                except OSError:
+                    pass
 
     def _curl_get(self, url: str, headers: dict) -> dict:
         """GET via curl subprocess. Returns parsed JSON response."""
