@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from api_relay_audit.client import APIClient
-from api_relay_audit.context import run_context_scan
+from api_relay_audit.context import context_coarse_steps, run_context_scan
 from api_relay_audit.error_leakage import run_error_leakage_test
 from api_relay_audit.identity_patterns import find_non_claude_identities
 from api_relay_audit.infra_fingerprint import (
@@ -261,6 +261,11 @@ def parse_args():
     p.add_argument("--model", default="claude-opus-4-6", help="Model name")
     p.add_argument("--skip-infra", action="store_true", help="Skip infrastructure recon")
     p.add_argument("--skip-context", action="store_true", help="Skip context length test")
+    p.add_argument("--context-mode", choices=["full", "fast"], default="full",
+                   help="Context scan ladder. 'full' (default) tests up to "
+                        "800K chars; 'fast' is a low-cost smoke test up to "
+                        "200K chars and is not a full context-window "
+                        "certification.")
     p.add_argument("--skip-tool-substitution", action="store_true",
                    help="Skip tool-call package substitution test (AC-1.a)")
     p.add_argument("--skip-error-leakage", action="store_true",
@@ -1017,12 +1022,21 @@ def test_web3_injection(client, report):
     return verdict, inconclusive
 
 
-def test_context_length(client, report):
+def test_context_length(client, report, context_mode="full"):
     report.h2("7. Context Length Test")
     report.p("Place 5 canary markers at equal intervals in long text, check if model can recall all.\n")
+    if context_mode == "fast":
+        report.p(
+            "**Mode**: `fast` — low-cost smoke scan up to 200K chars. "
+            "Use `--context-mode full` for full 800K-char coverage.\n"
+        )
+    else:
+        report.p("**Mode**: `full` — default scan up to 800K chars.\n")
 
-    print("  Context scan: ", end="", flush=True)
-    results = run_context_scan(client)
+    print(f"  Context scan ({context_mode}): ", end="", flush=True)
+    results = run_context_scan(
+        client, coarse_steps=context_coarse_steps(context_mode),
+    )
     print(" done")
 
     # Output table
@@ -1387,7 +1401,7 @@ def main():
     if not args.skip_context:
         print("[7/13] Context length test...")
         _run_step("Step 7 context length", report,
-                  test_context_length, client, report,
+                  test_context_length, client, report, args.context_mode,
                   crashes=step_crashes)
     else:
         print("[7/13] Context length test (skipped)")

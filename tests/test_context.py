@@ -4,7 +4,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from api_relay_audit.context import FILLER, run_context_scan, single_context_test
+from api_relay_audit.context import (
+    DEFAULT_CONTEXT_COARSE_STEPS,
+    FAST_CONTEXT_COARSE_STEPS,
+    FILLER,
+    context_coarse_steps,
+    run_context_scan,
+    single_context_test,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +147,19 @@ class TestSingleContextTest:
 # ---------------------------------------------------------------------------
 
 class TestRunContextScan:
+    def test_context_coarse_steps_modes(self):
+        assert context_coarse_steps("full") == DEFAULT_CONTEXT_COARSE_STEPS
+        assert context_coarse_steps("fast") == FAST_CONTEXT_COARSE_STEPS
+
+    def test_context_coarse_steps_returns_copy(self):
+        steps = context_coarse_steps("fast")
+        steps.append(999)
+        assert context_coarse_steps("fast") == FAST_CONTEXT_COARSE_STEPS
+
+    def test_context_coarse_steps_rejects_unknown_mode(self):
+        with pytest.raises(ValueError, match="unknown context scan mode"):
+            context_coarse_steps("turbo")
+
     @patch("api_relay_audit.context.time.sleep")
     def test_all_pass_no_binary_search(self, mock_sleep):
         """When all coarse steps pass, no binary search should occur."""

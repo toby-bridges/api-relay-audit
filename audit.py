@@ -919,6 +919,17 @@ class Reporter:
 # ============================================================
 
 FILLER = "abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ\n"
+DEFAULT_CONTEXT_COARSE_STEPS = [50, 100, 200, 400, 600, 800]
+FAST_CONTEXT_COARSE_STEPS = [25, 50, 100, 200]
+
+
+def context_coarse_steps(mode="full"):
+    """Return the coarse context scan ladder for ``mode``."""
+    if mode == "full":
+        return list(DEFAULT_CONTEXT_COARSE_STEPS)
+    if mode == "fast":
+        return list(FAST_CONTEXT_COARSE_STEPS)
+    raise ValueError(f"unknown context scan mode: {mode}")
 
 
 def single_context_test(client, target_k):
@@ -945,7 +956,7 @@ def single_context_test(client, target_k):
 def run_context_scan(client, coarse_steps=None, sleep_between=2):
     """Find the relay's context-truncation boundary via coarse scan + binary search."""
     if coarse_steps is None:
-        coarse_steps = [50, 100, 200, 400, 600, 800]
+        coarse_steps = context_coarse_steps("full")
 
     results = []
     last_ok, first_fail = 0, None
@@ -2203,6 +2214,11 @@ def parse_args():
     p.add_argument("--model", default="claude-opus-4-6", help="Model name")
     p.add_argument("--skip-infra", action="store_true", help="Skip infrastructure recon")
     p.add_argument("--skip-context", action="store_true", help="Skip context length test")
+    p.add_argument("--context-mode", choices=["full", "fast"], default="full",
+                   help="Context scan ladder. 'full' (default) tests up to "
+                        "800K chars; 'fast' is a low-cost smoke test up to "
+                        "200K chars and is not a full context-window "
+                        "certification.")
     p.add_argument("--skip-tool-substitution", action="store_true",
                    help="Skip tool-call package substitution test (AC-1.a)")
     p.add_argument("--skip-error-leakage", action="store_true",
@@ -3076,12 +3092,21 @@ def test_web3_injection(client, report):
     return verdict, inconclusive
 
 
-def test_context_length(client, report):
+def test_context_length(client, report, context_mode="full"):
     report.h2("7. Context Length Test")
     report.p("Place 5 canary markers at equal intervals in long text, check if model can recall all.\n")
+    if context_mode == "fast":
+        report.p(
+            "**Mode**: `fast` — low-cost smoke scan up to 200K chars. "
+            "Use `--context-mode full` for full 800K-char coverage.\n"
+        )
+    else:
+        report.p("**Mode**: `full` — default scan up to 800K chars.\n")
 
-    print("  Context scan: ", end="", flush=True)
-    results = run_context_scan(client)
+    print(f"  Context scan ({context_mode}): ", end="", flush=True)
+    results = run_context_scan(
+        client, coarse_steps=context_coarse_steps(context_mode),
+    )
     print(" done")
 
     # Output table
@@ -3412,7 +3437,7 @@ def main():
     if not args.skip_context:
         print("[7/13] Context length test...")
         _run_step("Step 7 context length", report,
-                  test_context_length, client, report,
+                  test_context_length, client, report, args.context_mode,
                   crashes=step_crashes)
     else:
         print("[7/13] Context length test (skipped)")

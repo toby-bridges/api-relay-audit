@@ -171,6 +171,24 @@ def test_standalone_find_non_claude_identities_behaves_like_modular():
         )
 
 
+def test_context_scan_mode_constants_parity():
+    """The fast/full context ladders are user-visible cost controls and must
+    match between modular and standalone distributions.
+    """
+    from api_relay_audit.context import (
+        DEFAULT_CONTEXT_COARSE_STEPS as MODULAR_DEFAULT_STEPS,
+        FAST_CONTEXT_COARSE_STEPS as MODULAR_FAST_STEPS,
+        context_coarse_steps as modular_context_coarse_steps,
+    )
+
+    standalone = _load_standalone_audit()
+
+    assert standalone.DEFAULT_CONTEXT_COARSE_STEPS == MODULAR_DEFAULT_STEPS
+    assert standalone.FAST_CONTEXT_COARSE_STEPS == MODULAR_FAST_STEPS
+    assert standalone.context_coarse_steps("full") == modular_context_coarse_steps("full")
+    assert standalone.context_coarse_steps("fast") == modular_context_coarse_steps("fast")
+
+
 # ---------------------------------------------------------------------------
 # Step 12 / Step 13 (v1.8) constants parity
 # ---------------------------------------------------------------------------

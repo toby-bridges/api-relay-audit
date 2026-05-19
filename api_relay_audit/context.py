@@ -4,6 +4,22 @@ import time
 import uuid
 
 FILLER = "abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ\n"
+DEFAULT_CONTEXT_COARSE_STEPS = [50, 100, 200, 400, 600, 800]
+FAST_CONTEXT_COARSE_STEPS = [25, 50, 100, 200]
+
+
+def context_coarse_steps(mode="full"):
+    """Return the coarse context scan ladder for ``mode``.
+
+    ``full`` preserves the historical 800K-char ceiling. ``fast`` is an
+    explicit operator tradeoff for low-cost smoke tests; it stops at 200K chars
+    and must not be treated as a full context-window certification.
+    """
+    if mode == "full":
+        return list(DEFAULT_CONTEXT_COARSE_STEPS)
+    if mode == "fast":
+        return list(FAST_CONTEXT_COARSE_STEPS)
+    raise ValueError(f"unknown context scan mode: {mode}")
 
 
 def single_context_test(client, target_k):
@@ -61,7 +77,7 @@ def run_context_scan(client, coarse_steps=None, sleep_between=2):
     Args:
         client: An ``APIClient`` instance used to send prompts.
         coarse_steps: List of context sizes (in k-chars) for the initial
-            sweep.  Defaults to ``[50, 100, 200, 400, 600, 800]``.
+            sweep. Defaults to ``DEFAULT_CONTEXT_COARSE_STEPS``.
         sleep_between: Seconds to pause between API calls to avoid
             rate-limiting. Defaults to 2.
 
@@ -78,7 +94,7 @@ def run_context_scan(client, coarse_steps=None, sleep_between=2):
         ...     print(f"{r[0]}k: {r[1]}/{r[2]} canaries, status={r[4]}")
     """
     if coarse_steps is None:
-        coarse_steps = [50, 100, 200, 400, 600, 800]
+        coarse_steps = context_coarse_steps("full")
 
     results = []
     last_ok, first_fail = 0, None
