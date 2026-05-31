@@ -22,6 +22,19 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
 
 ## ✅ Shipped
 
+### LLMprobe-engine absorption spikes (2026-06-01)
+- **Contribution boundary**: BazaarLink LLMprobe-engine is credited as an
+  external methodology/evidence contributor while first-party evidence-source
+  seeding remains separate from #24 and this spike PR.
+- **Experiment-only entrypoints**: added informational helpers for
+  model-substitution deltas, multimodal dilution fixtures, and AC-1.b local
+  watch-log analysis under `scripts/experiments/`.
+- **Boundary held**: no default audit wiring, no 6D risk-matrix expansion, no
+  0-100 scoring, no leaderboard/trusted-relay language, and no public
+  per-relay allegation without reviewable evidence.
+- **Final test count**: 682/682 passing (672 baseline -> 682 after
+  informational spike tests).
+
 ### v1.9 — Dual-distribution generation contract (2026-06-01)
 - **Standalone product promise preserved**: root `audit.py` stays committed,
   curl-downloadable, stdlib + curl only. It is now marked as a generated
@@ -660,6 +673,13 @@ like Step 12/13）。
 来自 `competitors/LLMprobe-engine/`，朋友项目（未来 contributor）。在 MIT 阶段只能
 clean-room 参考算法；全仓库改为 AGPL-3.0-only 后，可在保留归属、许可证和源码义务
 的前提下兼容引入或改写：
+
+> **2026-06-01 吸收优先级**：#26 已将本仓库切换到 AGPL-3.0-only。LLMprobe-engine
+> 的吸收顺序固定为：P1 外部证据源与测量方法（独立于 #24，不混入 evidence
+> gate PR）→ P2 模型替换检测体系（v2.0 spike）→ P3 多模态 dilution detector
+>（`scripts/experiments/multimodal_dilution_spike.py`）→ P4 AC-1.b 长期观测
+> companion mode（`scripts/experiments/ac1b_watch_spike.py`）。P2/P3/P4 全部
+> informational-first，不改默认 audit，不进 6D 风险矩阵。
 
 1. **Bayesian log-odds identity scorer** (`fingerprint-bayesian.ts`)：
    用 softmax 归一化的 log-likelihood ratio 替代我们 Step 5 的布尔关键词检测，

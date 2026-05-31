@@ -12,6 +12,10 @@ arrives as a direct pull request.
   a downstream fork that contributed the Windows long-context stability
   finding and the opt-in fast context scan idea tracked in
   [issue #14](https://github.com/toby-bridges/api-relay-audit/issues/14).
+- [BazaarLink LLMprobe-engine](https://github.com/Bazaarlinkorg/LLMprobe-engine)
+  — external methodology and evidence contributor for model-substitution
+  measurement, upstream channel-classification ideas, multimodal dilution
+  fixture design, and AC-1.b long-running watch-mode patterns.
 
 ## Attribution Policy
 

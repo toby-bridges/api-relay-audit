@@ -16,16 +16,16 @@
 | 单文件版版本 | `v2.3` | `audit.py` docstring |
 | 步骤数 (Step N) | **14** | grep `Step N` in `scripts/audit.py` |
 | 步骤数 (单文件版) | 14 | grep `Step N` in `audit.py` |
-| 测试数 (pytest) | **672** | `pytest --collect-only` |
-| 测试数 (static) | 664 | grep `def test_*` in tests/ |
+| 测试数 (pytest) | **682** | `pytest --collect-only` |
+| 测试数 (static) | 674 | grep `def test_*` in tests/ |
 | CLI flag 数 | 20 | grep `add_argument("--*")` |
 | profile 选项 | general, web3, full | argparse choices |
 | ROADMAP 上次更新 | 2026-06-01 | `ROADMAP.md` 头部 |
 | Codex review 提及次数 | 4 | grep `Codex review (cycle\|round)` 在 Shipped 节 |
 | Codex review 已编号轮次（最大） | 6 | grep `Nth Codex review round` |
 | Codex bug 累计（最新声称） | 18 | grep `cumulative N real bug` |
-| 测试数演进 (ROADMAP) | [546, 560, 562, 586, 642, 672] | grep `Final test count: N/N passing` |
-| HEAD SHA | `7773bbc` | `git rev-parse HEAD` |
+| 测试数演进 (ROADMAP) | [546, 560, 562, 586, 642, 672, 682] | grep `Final test count: N/N passing` |
+| HEAD SHA | `c051545` | `git rev-parse HEAD` |
 | HEAD 日期 | 2026-06-01 | `git log -1` |
 
 ## 一致性自检
