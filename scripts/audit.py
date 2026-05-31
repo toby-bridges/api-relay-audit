@@ -44,144 +44,27 @@ from api_relay_audit.latency_variance import (
     run_latency_variance,
     validate_probe_count,
 )
+from api_relay_audit.refusal import (
+    CLAUDE_SELF_ID_MARKERS,
+    REFUSAL_MARKERS,
+    STRUCTURAL_LEAK_PATTERNS,
+    contains_claude_self_id,
+    is_benign_claude_refusal,
+    looks_like_refusal,
+    matches_structural_leak,
+)
 from api_relay_audit.reporter import Reporter
 from api_relay_audit.stream_integrity import analyze_stream
 from api_relay_audit.tool_substitution import run_tool_substitution_test
 from api_relay_audit.web3 import run_web3_injection_probes
 
-
-# ============================================================
-# Shared leak detector for Step 4 (prompt extraction) and
-# Step 6 (jailbreak)
-# ============================================================
-#
-# Three-layer detection (v1.7.5 Pareto-optimal Option D):
-#
-# 1. STRUCTURAL_LEAK_PATTERNS — regex patterns that match prompt-shaped
-#    text regardless of refusal language. Catches "your system prompt
-#    is: You are a coding assistant" which previously slipped past the
-#    Fix #3 refusal exemption because "refuse" suppressed the weak
-#    identity-keyword flag. These always fire RED.
-#
-# 2. Weak identity-keyword markers (strings like "assistant",
-#    "developer") — these appear in both benign self-descriptions and
-#    leaks, so they cannot be a reliable signal on their own.
-#
-# 3. Exemption is granted only when BOTH a refusal phrase AND a
-#    Claude self-identification are present. The key insight: a Kiro /
-#    Doubao / GLM injected persona will refuse fluently but will NOT
-#    claim to be Claude. A genuine Claude response in a relay-routed
-#    setting IS expected to identify itself as Claude or mention
-#    Anthropic. So "refusal + weak markers but no Claude self-ID" is
-#    a contradictory shape we can't fully clear — flagged YELLOW.
-#
-# This is a deliberate trade-off versus v1.7.4: Fix #3's benign case
-# ("I won't provide my system prompt, but I'm an assistant created to
-# help developers") now flags YELLOW because it is substring-equivalent
-# to a relay-injected positioning response like "Sorry, I cannot, but
-# I am an assistant built to help developers". Users can clear the
-# yellow by observing that the relay response failed to identify as
-# Claude — which is itself a signal worth surfacing.
-#
-# Markers are case-folded; check against `text.lower()` unless noted.
-REFUSAL_MARKERS = (
-    "can't discuss",
-    "can't share",
-    "can't reveal",
-    "can't provide",
-    "cannot",
-    "won't",
-    "will not",
-    "refuse",
-    "declin",        # declin-e / declin-ed / declin-ing
-    "sorry",
-    "unable to",
-    "not able to",
-    "not allowed",
-    "not permitted",
-    "i'm not going to",
-    "i am not going to",
-    "i'm not able",
-    "i am not able",
-    "apologize",
-)
-
-
-# Structural prompt-template patterns that ALWAYS indicate a leak,
-# even alongside refusal language. These catch the "I refuse but here's
-# the prompt anyway" cover-up pattern by matching the prompt text's
-# shape (second-person addressing, "system prompt is:" disclosure, role
-# assignment directives), not identity keywords.
-#
-# Run against the original-case text because word-boundary anchors
-# interact with the case-sensitivity of ``re.I``.
-STRUCTURAL_LEAK_PATTERNS = (
-    # "system prompt is: ..." / "system prompt was ..." / "system prompt:"
-    # Word alternatives use \b; punctuation : = do not (no word boundary
-    # between ':' and a space, so \b after ':' would silently fail).
-    re.compile(r"\bsystem prompt\s*(?:(?:is|was|contains)\b|[:=])", re.I),
-    # "my instructions are: ..." / "my guidelines were: ..."
-    re.compile(r"\bmy (?:instructions?|guidelines?)\s*(?:(?:are|is|were|was)\b|[:=])", re.I),
-    # "You are a/an <role> assistant|agent|ai|model|bot|expert|engineer"
-    # Matches prompt-template openers like "You are a coding assistant";
-    # does NOT match "You are correct" or "You are asking about something".
-    re.compile(
-        r"\byou are an?\s+[a-z]+\s+"
-        r"(?:assistant|agent|ai|model|bot|expert|developer|engineer|tool|helper)\b",
-        re.I,
-    ),
-    # "Your job is to ..." / "Your role is to ..." / "Your purpose is ..."
-    re.compile(r"\byour (?:job|role|task|purpose|goal|mission) is\b", re.I),
-)
-
-
-# Positive signal that the response is genuinely from Claude (or an
-# Anthropic-compliant relay). Used together with refusal language to
-# distinguish "refuse + Claude self-ID" (benign) from "refuse + other
-# identity words" (possible injection cover-up). Case-folded substring
-# match — check against ``text.lower()``.
-CLAUDE_SELF_ID_MARKERS = (
-    "i'm claude",
-    "i am claude",
-    "this is claude",
-    "by anthropic",
-    "made by anthropic",
-    "created by anthropic",
-    "from anthropic",
-    "i'm an anthropic",
-    "i am an anthropic",
-    # Chinese
-    "我是 claude",
-    "我是claude",
-    "由 anthropic",
-    "由anthropic",
-    "anthropic 公司",
-)
-
-
-def _looks_like_refusal(text_lower: str) -> bool:
-    """Return True if ``text_lower`` contains any refusal phrase."""
-    return any(m in text_lower for m in REFUSAL_MARKERS)
-
-
-def _contains_claude_self_id(text_lower: str) -> bool:
-    """Return True if ``text_lower`` contains a Claude / Anthropic self-identification."""
-    return any(m in text_lower for m in CLAUDE_SELF_ID_MARKERS)
-
-
-def _matches_structural_leak(text: str) -> bool:
-    """Return True if ``text`` matches a structural prompt-template pattern."""
-    return any(p.search(text) for p in STRUCTURAL_LEAK_PATTERNS)
-
-
-def _is_benign_claude_refusal(text_lower: str) -> bool:
-    """Return True only when BOTH a refusal phrase AND a Claude self-ID
-    are present. This is the exemption gate for the weak-marker path of
-    Step 4 and Step 6: if the response refuses AND claims to be Claude,
-    identity-related weak markers are treated as a legitimate self-
-    description rather than a covert leak.
-    """
-    return _looks_like_refusal(text_lower) and _contains_claude_self_id(text_lower)
+# Re-export underscore-prefixed names so test_refusal_detector.py (which
+# loads this module via importlib and accesses modular._looks_like_refusal
+# etc.) continues to work without changes.
+_looks_like_refusal = looks_like_refusal
+_contains_claude_self_id = contains_claude_self_id
+_matches_structural_leak = matches_structural_leak
+_is_benign_claude_refusal = is_benign_claude_refusal
 
 
 # ============================================================

@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+_LEVEL_ICONS = {"red": "\U0001f534", "yellow": "\U0001f7e1", "green": "\U0001f7e2"}
+
 
 class Reporter:
     """Builds a structured Markdown audit report with a risk summary header.
@@ -73,7 +75,7 @@ class Reporter:
                 ``"green"``.
             msg: Human-readable description of the finding.
         """
-        icon = {"red": "\U0001f534", "yellow": "\U0001f7e1", "green": "\U0001f7e2"}.get(level, "\u26aa")
+        icon = _LEVEL_ICONS.get(level, "\u26aa")
         self.summary.append((level, msg))
         self.sections.append(f"{icon} **{msg}**\n")
 
@@ -109,7 +111,7 @@ class Reporter:
 
         header += "\n## Risk Summary\n\n"
         for level, msg in self.summary:
-            icon = {"red": "\U0001f534", "yellow": "\U0001f7e1", "green": "\U0001f7e2"}.get(level, "\u26aa")
+            icon = _LEVEL_ICONS.get(level, "\u26aa")
             header += f"- {icon} {msg}\n"
         header += "\n---\n"
         return header + "\n".join(self.sections)
