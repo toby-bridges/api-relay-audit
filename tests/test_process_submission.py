@@ -137,8 +137,8 @@ def test_domain_with_path_traversal():
         body = _make_body(relay_domain=bad_domain)
         fields = parse_issue_body(body)
         errors = validate_fields(fields)
-        path_errors = [e for e in errors if "path traversal" in e.lower()]
-        assert len(path_errors) > 0, f"Expected path-traversal error for domain {bad_domain!r}"
+        domain_errors = [e for e in errors if "relay_domain" in e and "hostname" in e]
+        assert len(domain_errors) > 0, f"Expected hostname error for domain {bad_domain!r}"
 
 
 def test_domain_with_special_chars():
@@ -147,8 +147,37 @@ def test_domain_with_special_chars():
         body = _make_body(relay_domain=bad_domain)
         fields = parse_issue_body(body)
         errors = validate_fields(fields)
-        char_errors = [e for e in errors if "illegal characters" in e.lower()]
-        assert len(char_errors) > 0, f"Expected illegal-char error for domain {bad_domain!r}"
+        domain_errors = [e for e in errors if "relay_domain" in e and "hostname" in e]
+        assert len(domain_errors) > 0, f"Expected hostname error for domain {bad_domain!r}"
+
+
+def test_domain_must_be_canonical_hostname():
+    """relay_domain must be a hostname, not a host:port or invalid label."""
+    bad_domains = [
+        "api.example.com:443",
+        "bad_domain.com",
+        "-bad.com",
+        "bad-.com",
+        ".",
+        "api..example.com",
+    ]
+    for bad_domain in bad_domains:
+        body = _make_body(relay_domain=bad_domain)
+        fields = parse_issue_body(body)
+        errors = validate_fields(fields)
+        domain_errors = [e for e in errors if "relay_domain" in e and "hostname" in e]
+        assert len(domain_errors) > 0, f"Expected hostname error for domain {bad_domain!r}"
+
+
+def test_domain_allows_case_and_trailing_dot():
+    """Case and trailing dot are canonicalized before hostname validation."""
+    body = _make_body(relay_domain="API.Example.COM.")
+    fields = parse_issue_body(body)
+    errors = validate_fields(fields)
+    domain_errors = [e for e in errors if "relay_domain" in e]
+    assert domain_errors == []
+    entry = build_relay_entry(fields, "tester", "100")
+    assert entry["domain"] == "api.example.com"
 
 
 def test_massive_body():
@@ -177,6 +206,23 @@ def test_multiple_images():
     entry = build_relay_entry(fields, "tester", "99")
     assert len(entry["reportImages"]) == 4
     assert "https://img.com/3.png" in entry["reportImages"]
+
+
+def test_report_images_must_be_https_without_markdown_title():
+    """Report image extraction accepts only strict HTTPS markdown image URLs."""
+    assert extract_image_urls("![x](http://img.com/a.png)") == []
+    assert extract_image_urls("![x](https://img.com/a.png title)") == []
+    assert extract_image_urls("![x](https://img.com/a.png)") == ["https://img.com/a.png"]
+
+    for bad_image in [
+        "![x](http://img.com/a.png)",
+        "![x](https://img.com/a.png title)",
+    ]:
+        body = _make_body(report_image=bad_image)
+        fields = parse_issue_body(body)
+        errors = validate_fields(fields)
+        image_errors = [e for e in errors if "report_image" in e]
+        assert image_errors, f"Expected report_image error for {bad_image!r}"
 
 
 def test_missing_report_image():
@@ -267,6 +313,13 @@ def test_rate_limit_old_entries():
         {"domain": "test.com", "submittedAt": recent_time} for _ in range(10)
     ]
     assert check_rate_limit("test.com", mixed_data_trigger) is True
+
+
+def test_rate_limit_normalizes_existing_domains():
+    """Legacy/manual relays.json domains should be normalized before comparison."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    fake_data = [{"domain": "TEST.com.", "submittedAt": now_iso} for _ in range(10)]
+    assert check_rate_limit("test.com", fake_data) is True
 
 
 def test_concurrent_json_write_safety(tmp_path, monkeypatch):

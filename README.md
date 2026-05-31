@@ -4,7 +4,7 @@
 
 **Local, evidence-first security audit for third-party AI API relays.**
 
-<img src="assets/readme/hero.png" alt="API Relay Audit black and orange README banner: 14 audit steps, 6D risk matrix, 643 tests, no hosted key upload" width="100%">
+<img src="assets/readme/hero.png" alt="API Relay Audit black and orange README banner: 14 audit steps, 6D risk matrix, 647 tests, no hosted key upload" width="100%">
 
 <a href="#readme-zh"><img alt="README Chinese" src="https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-111111?style=for-the-badge"></a>
 <a href="#readme-en"><img alt="README English" src="https://img.shields.io/badge/README-English-f5f5f5?style=for-the-badge&labelColor=111111&color=f5f5f5"></a>
@@ -119,7 +119,7 @@ python scripts/audit.py --key <YOUR_KEY> --url <BASE_URL> --model claude-opus-4-
 | 版本 | `v2.3` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 643 |
+| pytest collected tests | 647 |
 | CLI flags | 19 |
 | Runtime profiles | `general`, `web3`, `full` |
 
