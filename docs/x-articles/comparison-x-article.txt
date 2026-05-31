@@ -1,0 +1,183 @@
+API 中转站安全检测工具横向评测
+
+api-relay-audit vs. 禾维 AI (hvoy.ai) vs. CCTest (cctest.ai)
+
+by @li9292 · 2026-05-05  (原文 2026-04-14, V2 同步至 api-relay-audit v1.8.1 / cctest.ai 2026-05-03 复查)
+
+
+为什么需要这篇评测
+
+2026 年 4 月，中文市场同时出现了三个 AI API 中转站安全检测工具。它们解决同一个问题：你买的 Claude / GPT 中转站，背后到底有没有做手脚？
+
+三个工具的思路完全不同。我是 api-relay-audit 的作者，但这篇文章尽量做到公正——每个工具都有它擅长的地方，也都有盲区。最终选哪个取决于你的角色和需求。
+
+V2 相比 4 月 14 日的初版，主要更新：(1) api-relay-audit 升级至 v1.8.1（13 步 / 569 测试 / 8 轮 Codex review）；(2) cctest.ai 复查至 2026-05-03 后情报修正（实际 5 个黑盒检测项，原文低估为 1-2 个）；(3) 新增 §3.2.1 "误判风险与申诉路径"——一个被原文忽略的关键对比维度。
+
+
+一、30 秒了解三个工具
+
+[见配图：01-overview.html]
+
+
+二、检测能力对比
+
+这是最核心的对比。三个工具的检测覆盖面差距很大：
+
+[见配图：02-detection-capabilities.html]
+
+要点：api-relay-audit 覆盖 13 步审计（9 进 6D 风险矩阵 + 2 步 informational 如 Step 12/13 + 2 步增强如取证日志），hvoy.ai 5 个维度，cctest.ai 5 个黑盒检测项。
+
+数量不能完全反映价值：api-relay-audit 走广度 + 双论文锚定 + 开源；hvoy 走排行榜聚合；cctest 走 protobuf 签名 + 多模态做 Claude-only 深度检测。三者互补，使用场景不同。
+
+
+三、深度对比
+
+3.1 方法论：双论文锚定 vs. 经验驱动 vs. 黑盒
+
+api-relay-audit 的检测体系双论文锚定：
+
+Liu et al., "Your Agent Is Mine: Measuring Malicious Intermediary Attacks on the LLM Supply Chain" (arXiv:2604.08407) — 攻击模型 AC-1（载荷注入）/ AC-1.a（依赖定向注入）/ AC-1.b（条件投递）/ AC-2（秘密窃取）。Step 1-11 与 transparent log 都映射到这四个攻击类别。
+
+Zhang et al., "Real Money, Fake Models: Identifying and Profiling Shadow APIs Underlying the Underground LLM Marketplace" (arXiv:2603.01919) — 对 17 个真实野外 shadow API 的量化研究，§3.2 报告 11/17 跑在 OneAPI/NewAPI 上。Step 12（基础设施指纹）与 Step 13（延迟方差双峰）直接来自这篇的观察数据。
+
+双论文锚定的好处：
+- 检测的"为什么"完全公开——你可以查论文验证每一步的理论依据
+- 检测的"做什么"完全开源——你可以读代码确认它只干了它说的事
+- 新维度的加入需要回答"它映射到哪个 AC 类别 / Zhang 哪节观察"——这限制了 scope creep
+
+hvoy.ai 的方法是经验驱动的。它的检测维度（身份一致性、知识表现、协议一致性、思维链指纹、签名指纹）来自实战经验，没有对标学术分类。优点是灵活——发现新攻击方式可以快速加维度。缺点是缺乏系统性——容易覆盖已知攻击但遗漏理论上存在的未知攻击。
+
+cctest.ai 自称"黑盒模式，防止对抗，业界最专业的检测方法没有之一"，5 个黑盒检测项分别是：LLM 指纹、流结构、非流结构、签名校验（含 protobuf 解析）、多模态能力。具体规则闭源——你无法验证这个声称。每个检测项内部如何打分？阈值多少？签名校验是真去 Anthropic replay 还是匹配本地 fingerprint？用户无从得知。对安全工具来说，不可审计的安全声称是一个矛盾。
+
+
+3.2 安全模型：谁来审计审计工具？
+
+这是一个容易被忽略的问题：你用安全检测工具来检查中转站是否可信，但这个检测工具本身是否可信？
+
+[见配图：03-security-model.html]
+
+api-relay-audit 的 standalone 版本是一个单 Python 文件，只用 stdlib + curl。你可以用 200 行 shell 脚本对它做完整的流量审计。审计工具本身可被审计——这是安全工具的基本要求。v1.7.7 加入的 --transparent-log 进一步把每个 API 请求的 SHA-256 + 元数据记录到 append-only JSONL，hash-only 设计避免凭证泄漏。
+
+cctest.ai 要求你把 API Key 输入一个网页，然后信任它"不存储"。讽刺的是，这正是中转站要求用户做的事。
+
+
+3.2.1 误判风险与申诉路径
+
+一个独立用户报告：他用自己的 API 做了一个 pass-through 中转件，把响应格式、结构完整性、签名全部对齐 Anthropic 直连。CCTest 仍判定全部失败。
+
+我们无法独立复现这个测试（CCTest 闭源），也无法判断 CCTest 的"失败"是 catch 到了真实差异、还是黑盒规则的过保守。但这暴露了一个三个工具都要面对的根本问题——black-box auditing 区分不了"完美伪装的 middleware"与"真直连"（Liu et al., "Your Agent Is Mine", §7 也承认这一点）。
+
+三个工具的设计哲学因此分化：
+
+[见配图：04-fp-philosophy.html]
+
+对良心中转站运营者来说，最坏的工具不是漏报多的，而是 false-positive 多且无法申诉的——你被标"作假"，不知道为什么，不能 fix，只能更换工具。这是 api-relay-audit 三态判定 + 开源源代码两个设计的真实价值。
+
+我们也诚实承认自己不是没有 false-positive 风险：Step 9（错误响应泄漏）对响应格式微差异敏感——middleware 即使是合规 pass-through，也可能因为 LiteLLM/FastAPI 默认行为带出 LiteLLM 字段触发 anomaly；Step 10（流完整性）依赖 Anthropic 的 thinking signature 二进制字段稳定，cache miss 场景可能 inconclusive。这些风险都在 ROADMAP 公开追踪，任何人可以提 issue 或 fork 修。
+
+
+3.3 独特价值
+
+api-relay-audit 独有：
+
+1. AC-1.a 工具调用改写检测 (Step 8)：检测中转站是否在返回路径上偷改包名（pip install requests → pip install reqeusts，拼写投毒攻击）。这是论文 AC-1.a 的核心场景，另外两个工具都不覆盖。
+
+2. AC-2 错误响应泄漏 (Step 9)：向中转站发送 7-8 种故意破坏的请求，扫描错误响应里是否泄漏了上游 API Key、环境变量、文件路径、LiteLLM 内部字段。检测模式溯源自 8 个真实的 LiteLLM GitHub issue bug report。这是中转站运营方也应该自查的维度。
+
+3. 上下文长度截断检测 (Step 7)：用 5 个 canary marker + 二分查找精确定位中转站的真实上下文截断边界。你买的 200K context 是否真的有 200K？
+
+4. Web3 签名隔离探针 (Step 11)：如果你用 agent + 中转站构造链上交易，恶意中转可以注入"帮用户签名"的指令来偷资产。3 个探针基于 SlowMist 安全实践，其他两个工具没有 Web3 维度。
+
+5. 三态判定：每一步返回 clean / anomaly / inconclusive。被中转站默默吞掉的探针不算 clean，算可疑。0-100 分制里，"检测不出来"和"确认安全"在分数上是模糊的；三态判定里它们是明确不同的状态。
+
+6. 双分发 + 字节级一致性：modular 和 standalone 两个版本的风险矩阵代码块逐字节一致，有 pytest 强制保证。你用 curl -sO 下载的单文件版本和开发者用 pip install httpx 跑的模块版本，检测逻辑完全相同。
+
+7. 基础设施指纹 + 延迟方差（Real Money Fake Models 锚定，v1.8）：唯一基于 arXiv:2603.01919 §3.2 真实野外数据（17 个被识别的 shadow API 中 11 个跑在 OneAPI/NewAPI 上）开发的检测层。Step 12 用 7 个框架签名 DB 多数票识别中转站底层（new-api / one-api / lobechat-relay / fastgpt / cloudflare / nginx / caddy），Step 13 通过双峰延迟检测静默 A/B 模型替换。两步都标注为 informational only，不进 6D 矩阵——避免误判合法 CDN/反代为"作假"。
+
+8. 取证日志 --transparent-log（arXiv:2604.08407 §7.3 锚定，v1.7.7）：append-only JSONL，每个 API 请求只 hash 不存正文（≤1.5 KB/条）。出现可疑响应时可向中转站出示 SHA-256 链做不可抵赖证明。Hash-only 设计避免凭证泄漏。
+
+
+hvoy.ai 独有：
+
+1. 公开排行榜：40+ 真实中转站的在线率、掺水率、延迟、最新状态。这是 api-relay-audit 和 cctest.ai 都没有的——你不用自己跑审计，直接看结果。这对不愿意/不会用 CLI 的普通用户价值很大。
+
+2. 中转站推荐页：带价格、评价、和"推荐/中性/不推荐"评级。虽然是作者个人测试结果，但对新用户选站有直接参考价值。
+
+3. 多模型支持：同时支持 Claude、GPT、Gemini 的检测。api-relay-audit 的流完整性检测是 Anthropic-only (SSE schema 不同)，cctest.ai 只支持 Claude。
+
+4. 知识水平检测：通过出知识题检验模型真假。api-relay-audit 明确不做这个（原因：中转站可以在 system prompt 里硬编码"知识截止日期是 2025 年 5 月"来欺骗检测）。hvoy.ai 的作者也承认这个维度不够可靠，但它确实是一个额外的信号。
+
+
+cctest.ai 独有：
+
+1. 通道指纹检测（核心检测项 #4 签名校验）：通过解析 Claude thinking block 的 protobuf signature 字段来识别请求是走直连 Anthropic 还是 Bedrock / Vertex / Warp / Windsurf / Antigravity 等第三方通道。这是一个有技术含量的检测维度。api-relay-audit 已经完成了设计备忘录并准备了验证脚本（ROADMAP §2.6.1 spike 候选 = Step 14），但尚未实装——也因为 §3.2.1 提到的 false-positive 风险，我们倾向把它做成 informational-only 而非 evidential。
+
+2. 多模态能力探测（核心检测项 #5）：在常规检测后追加图像 + 文档识别请求，验证模型真有多模态能力——如果应答是空文本 / 拒绝识别 / 给出与图无关的内容，则上游可能被替换为非多模态廉价模型。api-relay-audit 把这块也列入了 backlog（ROADMAP §2.6.2 spike = Step 15 候选）。
+
+3. 多语言界面：中/英/日/韩四语。对非中文用户更友好。
+
+4. 极低使用门槛：打开网页 → 输入 Key → 点击检测。不需要安装任何东西。对技术小白是最优选择。
+
+
+3.4 工程质量
+
+[见配图：05-engineering-quality.html]
+
+这不是说 hvoy.ai 或 cctest.ai 的代码质量差——它们可能同样严谨，但只有 api-relay-audit 的质量数据是公开可验证的。569 个测试、23 个修复的 bug、零回归——这些数字在 GitHub 上可以 checkout 下来自己跑。
+
+
+3.5 使用场景匹配
+
+[见配图：06-use-cases.html]
+
+
+四、各自的短板（诚实面对）
+
+api-relay-audit：
+- 使用门槛高：CLI 工具，需要会用命令行。没有 Web 界面（正在开发中）。对非技术用户不友好。
+- 没有排行榜：不像 hvoy.ai 提供 40+ 中转站的公开评测数据，每个人需要自己跑。
+- 通道指纹 + 多模态尚未落地：cctest.ai 的 protobuf 签名解析 + 多模态稀释探测都是真实有效的检测维度，api-relay-audit 目前只有 ROADMAP §2.6 spike 设计文档。
+- 流完整性只支持 Anthropic：Step 10 SSE 检测只对 Anthropic 格式有效。如果你用的是 OpenAI 格式的中转站，这一步是 inconclusive 而非 clean。
+- Step 9 error path 对良心中转件敏感：错误响应序列化路径很难做到完美对齐 Anthropic——middleware 即使是合规 pass-through，也可能因为 LiteLLM/FastAPI 默认行为带出 LiteLLM 字段，触发 anomaly。这是公开追踪的已知风险（ROADMAP §2.45），不是设计 bug。
+
+hvoy.ai：
+- 不检测 AC-1.a / AC-2：工具调用改写和错误响应泄漏是两个严重的攻击面，hvoy.ai 不覆盖。
+- 0-100 分制语义模糊："75 分"意味着什么？需不需要担心？三态判定（clean/anomaly/inconclusive）更适合做安全决策。
+- 知识检测可被绕过：中转站在 system prompt 里加一行就能通过知识题考试。
+- 排行榜是主观的：基于作者个人测试经验，不是自动化持续检测。
+
+cctest.ai：
+- 闭源：安全工具闭源是一个根本性矛盾。你无法验证它做了什么、没做什么。
+- 可能的 false-positive 不可申诉：独立用户报告即使是完整对齐 Anthropic 响应格式 / 结构 / 签名的 pass-through 中转件，CCTest 仍判定为失败。我们无法验证 CCTest 是真 catch 到了差异还是规则过保守——闭源黑盒检测的内在风险（详见 §3.2.1）。
+- 检测维度仅限 Claude：5 项黑盒检测项主要覆盖身份 + 流结构 + 签名通道 + 多模态。但仍是 Claude only + 闭源——tool-call 改写、错误响应泄漏、上下文截断、Web3、基础设施指纹、延迟方差均不覆盖。一个中转站可以通过 cctest 5 项检测但在错误响应里泄漏你的 API Key——cctest 检测不到。
+- "业界最专业"不可证伪：没有公开的方法论、没有论文引用、没有测试覆盖数据。自称最专业但不允许第三方验证。
+- 需要信任第三方处理你的 Key：虽然声称不存储，但你无法验证。
+
+
+五、总结
+
+三个工具不是简单的"谁好谁差"，而是服务不同人群、走不同设计路线：
+
+hvoy.ai 服务的是大众用户——排行榜 + 网页检测，让不懂技术的人也能判断中转站好坏。它的核心价值是信息聚合。
+
+cctest.ai 服务的是 Claude Code 用户——快速检查 Key 有没有被掺水，protobuf 签名 + 多模态能力探测是它的两大独特技术维度。它的核心价值是便捷 + Claude 专深。已知短板是闭源不可申诉、可能的 false-positive。
+
+api-relay-audit 服务的是需要完整安全画像的用户——开发者、安全研究员、Web3 用户、中转站运营方。它的核心价值是广度 + 双论文锚定 + 透明可审计 + 三态判定降低误判。
+
+三者关系是互补而非碾压：如果你只是想快速看一眼中转站能不能用，hvoy.ai 的排行榜或 cctest.ai 的一键检测就够了。如果你需要知道中转站有没有偷改你的代码依赖、有没有在错误响应里泄漏上游凭证、有没有截断你的 200K context、有没有在流式传输层做手脚、有没有跑在已知漏洞的 OneAPI/NewAPI 旧版本上、被中转站误判时能不能申诉——这些维度只有 api-relay-audit 覆盖。
+
+安全工具最重要的品质不是"检测了多少"，也不是"判定结果多严厉"，而是"检测结果是否可信 + 误判时用户有没有申诉路径"。api-relay-audit 是三个工具里唯一可以被完整审计且每个判定都能追溯到代码 + 论文的——569 个测试、完全开源、双论文威胁模型、每个检测步骤都有论文或来源归属。审计工具本身可被审计，且误判可申诉，这是安全的基本要求。
+
+
+附录：功能对比速查表
+
+[见配图：07-quick-ref.html]
+
+
+本文作者是 api-relay-audit 的开发者。尽管尽力保持客观，读者应意识到这一利益关系。欢迎 hvoy.ai 和 cctest.ai 的开发者补充或纠正。
+
+GitHub: github.com/toby-bridges/api-relay-audit
+完整 Markdown 版（含 git history）: docs/comparison-api-relay-audit-vs-hvoy-vs-cctest.md
+
+
+#API中转站 #安全审计 #开源工具 #ClaudeCode #Web3安全

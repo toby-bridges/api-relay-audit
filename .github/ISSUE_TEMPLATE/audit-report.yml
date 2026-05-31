@@ -1,0 +1,73 @@
+name: Submit Audit Report / 提交审计报告
+description: Submit a community audit result for a relay / 提交中转站社区审计结果
+title: "[Audit] "
+labels: ["audit-submission"]
+body:
+  - type: input
+    id: relay_domain
+    attributes:
+      label: Relay Domain / 中转站域名
+      description: "e.g. api.example.com (domain only, no https:// prefix)"
+      placeholder: "api.example.com"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Audit Profile / 审计配置
+      options:
+        - general
+        - web3
+        - full
+    validations:
+      required: true
+
+  - type: input
+    id: tool_version
+    attributes:
+      label: Tool Version / 工具版本
+      description: "e.g. v2.3 — run `python audit.py --version` to check"
+      placeholder: "v2.3"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: overall_rating
+    attributes:
+      label: Overall Rating / 总体评级
+      options:
+        - LOW
+        - MEDIUM
+        - HIGH
+    validations:
+      required: true
+
+  - type: textarea
+    id: report_image
+    attributes:
+      label: Report Screenshot / 报告截图
+      description: |
+        Upload a screenshot or rendered image of your audit report.
+        Drag & drop the image here.
+        截图或渲染图片，直接拖拽到此处上传。
+      placeholder: "Drag & drop report image here"
+    validations:
+      required: true
+
+  - type: textarea
+    id: red_flags
+    attributes:
+      label: Key Findings / 主要发现
+      description: |
+        List the main red/yellow flags from the Risk Summary section.
+        列出风险摘要中的主要红/黄标记。
+      placeholder: |
+        - 🔴 Token injection: +3200 tokens
+        - 🟡 Prompt extraction: 2/6 methods succeeded
+
+  - type: textarea
+    id: additional_notes
+    attributes:
+      label: Additional Notes / 补充说明
+      description: "Any context about the audit (optional)"

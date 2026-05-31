@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a2e;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif}
+.banner{width:1500px;height:600px;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:center;padding:80px 100px;color:#fff}
+/* 背景装饰：网格 + 几何 */
+.grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.04) 1px,transparent 1px);background-size:60px 60px;pointer-events:none}
+.glow1{position:absolute;width:600px;height:600px;border-radius:50%;background:radial-gradient(circle,rgba(67,160,71,0.18) 0%,transparent 60%);top:-200px;right:-100px;pointer-events:none}
+.glow2{position:absolute;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(30,136,229,0.15) 0%,transparent 60%);bottom:-150px;left:-50px;pointer-events:none}
+.code{position:absolute;top:50px;right:80px;font-family:'JetBrains Mono','Consolas',monospace;font-size:13px;color:rgba(67,160,71,0.55);line-height:1.7;text-align:right;pointer-events:none}
+.code .c{color:rgba(255,255,255,0.4)}
+.code .k{color:rgba(96,165,250,0.7)}
+
+.tag-row{display:flex;gap:10px;margin-bottom:24px;position:relative;z-index:2}
+.tag{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.18);padding:6px 14px;border-radius:14px;font-size:13px;font-weight:600;color:rgba(255,255,255,0.85);backdrop-filter:blur(8px)}
+.tag.accent{background:rgba(67,160,71,0.2);border-color:rgba(67,160,71,0.5);color:#86efac}
+
+.title{font-size:62px;font-weight:800;line-height:1.1;letter-spacing:-1px;margin-bottom:18px;position:relative;z-index:2}
+.title .h{background:linear-gradient(90deg,#86efac,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.subtitle{font-size:24px;font-weight:500;color:rgba(255,255,255,0.78);line-height:1.4;margin-bottom:32px;position:relative;z-index:2;max-width:1100px}
+
+.tools-row{display:flex;gap:16px;align-items:center;font-size:18px;font-weight:600;color:rgba(255,255,255,0.85);position:relative;z-index:2}
+.tools-row .vs{color:rgba(255,255,255,0.4);font-weight:400;font-size:15px}
+.tool-pill{padding:8px 16px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12)}
+.tool-pill.us{background:linear-gradient(135deg,rgba(67,160,71,0.25),rgba(67,160,71,0.1));border-color:rgba(67,160,71,0.4);color:#bbf7d0}
+
+.footer{position:absolute;bottom:30px;left:100px;right:100px;display:flex;justify-content:space-between;align-items:center;font-size:14px;color:rgba(255,255,255,0.5);z-index:2}
+.footer .author{font-weight:600;color:rgba(255,255,255,0.7)}
+</style>
+</head>
+<body>
+<div class="banner">
+  <div class="grid"></div>
+  <div class="glow1"></div>
+  <div class="glow2"></div>
+  <div class="code">
+    <span class="c"># 13 step audit</span><br/>
+    <span class="k">def</span> audit_relay():<br/>
+    &nbsp;&nbsp;<span class="k">return</span> trustworthy()<br/>
+    <span class="c"># 569 tests · MIT</span>
+  </div>
+
+  <div class="tag-row">
+    <div class="tag accent">深度评测</div>
+    <div class="tag">2026-05-05</div>
+    <div class="tag">V2</div>
+  </div>
+
+  <div class="title">
+    AI 中转站安全检测<br/>
+    <span class="h">三家工具横向评测</span>
+  </div>
+  <div class="subtitle">
+    13 步审计 vs. 5 维排行榜 vs. 5 项黑盒检测 — 三种思路，一篇看懂
+  </div>
+
+  <div class="tools-row">
+    <div class="tool-pill us">api-relay-audit</div>
+    <div class="vs">vs.</div>
+    <div class="tool-pill">禾维 hvoy.ai</div>
+    <div class="vs">vs.</div>
+    <div class="tool-pill">CCTest cctest.ai</div>
+  </div>
+
+  <div class="footer">
+    <div><span class="author">@li9292</span> · github.com/toby-bridges/api-relay-audit</div>
+    <div>双论文威胁模型 · 完全开源 · 三态判定</div>
+  </div>
+</div>
+</body>
+</html>

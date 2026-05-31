@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;padding:24px;display:flex;justify-content:center}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);padding:28px;max-width:720px;width:100%}
+.badge{display:inline-block;background:#1a1a2e;color:#fff;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;margin-bottom:8px}
+.title{font-size:20px;font-weight:700;color:#1a1a2e;margin-bottom:4px}
+.subtitle{font-size:13px;color:#888;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#1a1a2e;color:#fff;padding:10px 8px;text-align:left;font-weight:600}
+th:first-child{width:18%}
+td{padding:10px 8px;border-bottom:1px solid #eee;vertical-align:top;line-height:1.5}
+tr:nth-child(even) td{background:#fafafa}
+td:first-child{font-weight:600;color:#1a1a2e}
+.tool-tag{display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;margin-bottom:4px}
+.t-ours{background:#e8f5e9;color:#2e7d32}
+.t-hvoy{background:#e3f2fd;color:#1565c0}
+.t-cctest{background:#fff3e0;color:#e65100}
+.src{font-size:11px;color:#aaa;margin-top:16px;text-align:right}
+</style>
+</head>
+<body>
+<div class="card">
+<span class="badge">§1 · 30 秒了解</span>
+<div class="title">三个工具一览</div>
+<div class="subtitle">api-relay-audit vs. hvoy.ai vs. cctest.ai</div>
+<table>
+<thead><tr><th></th><th><span class="tool-tag t-ours">api-relay-audit</span></th><th><span class="tool-tag t-hvoy">hvoy.ai</span></th><th><span class="tool-tag t-cctest">cctest.ai</span></th></tr></thead>
+<tbody>
+<tr><td>一句话</td><td>13 步 CLI 审计，<b>双论文威胁模型</b></td><td>中转站真假鉴定 + 公开排行榜</td><td>Claude relay <b>5 维度黑盒检测</b></td></tr>
+<tr><td>形态</td><td>CLI / 单文件脚本</td><td>网页端</td><td>网页端</td></tr>
+<tr><td>开源</td><td>完全开源 (MIT)</td><td>后端开源</td><td>闭源</td></tr>
+<tr><td>检测维度</td><td>13 步 × 6D 风险矩阵</td><td>~5 个维度</td><td>5 个黑盒检测项</td></tr>
+<tr><td>支持模型</td><td>Claude (流) + 任意模型</td><td>Claude / GPT / Gemini</td><td>Claude only (Sonnet/Opus 4.6/4.7)</td></tr>
+<tr><td>API Key 去向</td><td>本地，Key 不外传</td><td>声明纯前端</td><td>声明不存储</td></tr>
+<tr><td>产出</td><td>Markdown 报告 + 取证日志</td><td>排行榜指标</td><td>Token / 渠道 / 多模态判定</td></tr>
+<tr><td>费用</td><td>免费 (~$0.2-0.5)</td><td>免费</td><td>免费 (~$0.3)</td></tr>
+</tbody>
+</table>
+<div class="src">API 中转站安全检测对比 · 2026-05-05</div>
+</div>
+</body>
+</html>

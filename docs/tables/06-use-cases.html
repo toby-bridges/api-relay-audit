@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;padding:24px;display:flex;justify-content:center}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);padding:28px;max-width:680px;width:100%}
+.badge{display:inline-block;background:#1a1a2e;color:#fff;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;margin-bottom:8px}
+.title{font-size:20px;font-weight:700;color:#1a1a2e;margin-bottom:4px}
+.subtitle{font-size:13px;color:#888;margin-bottom:22px}
+.case{display:flex;align-items:center;padding:14px 16px;border-radius:10px;margin-bottom:10px;background:#fafafa;border-left:4px solid #ddd;gap:14px}
+.case-who{flex:1.4;font-size:12.5px;font-weight:600;color:#1a1a2e}
+.case-arrow{font-size:14px;color:#999;font-weight:700}
+.case-tool{flex:1;font-size:12.5px;font-weight:700}
+.case-why{flex:2.2;font-size:11px;color:#666;line-height:1.5}
+.case.ours{border-left-color:#43a047}
+.case.ours .case-tool{color:#2e7d32}
+.case.hvoy{border-left-color:#1e88e5}
+.case.hvoy .case-tool{color:#1565c0}
+.case.cctest{border-left-color:#fb8c00}
+.case.cctest .case-tool{color:#e65100}
+.case.either{border-left-color:#9c27b0}
+.case.either .case-tool{color:#7b1fa2}
+.src{font-size:11px;color:#aaa;margin-top:14px;text-align:right}
+</style>
+</head>
+<body>
+<div class="card">
+<span class="badge">§3.5 · 使用场景匹配</span>
+<div class="title">你是谁 → 用哪个工具</div>
+<div class="subtitle">三者互补，按角色挑工具</div>
+
+<div class="case hvoy">
+<div class="case-who">普通用户<br/><span style="font-weight:400;color:#666;font-size:11px">想快速看靠不靠谱</span></div>
+<div class="case-arrow">→</div>
+<div class="case-tool">hvoy.ai</div>
+<div class="case-why">直接看排行榜，不用跑工具</div>
+</div>
+
+<div class="case cctest">
+<div class="case-who">Claude Code 用户<br/><span style="font-weight:400;color:#666;font-size:11px">想检查 Key 有没有掺水</span></div>
+<div class="case-arrow">→</div>
+<div class="case-tool">cctest.ai</div>
+<div class="case-why">网页输 Key 即可，protobuf 签名 + 多模态独有</div>
+</div>
+
+<div class="case ours">
+<div class="case-who">开发者<br/><span style="font-weight:400;color:#666;font-size:11px">想深度审计全部维度</span></div>
+<div class="case-arrow">→</div>
+<div class="case-tool">api-relay-audit</div>
+<div class="case-why">13 步覆盖，CLI 灵活，报告 + 取证日志</div>
+</div>
+
+<div class="case ours">
+<div class="case-who">Web3 用户<br/><span style="font-weight:400;color:#666;font-size:11px">agent 会操作钱包</span></div>
+<div class="case-arrow">→</div>
+<div class="case-tool">api-relay-audit</div>
+<div class="case-why">唯一有 Web3 签名隔离探针</div>
+</div>
+
+<div class="case ours">
+<div class="case-who">中转站运营方<br/><span style="font-weight:400;color:#666;font-size:11px">想自查 + 向用户证清白</span></div>
+<div class="case-arrow">→</div>
+<div class="case-tool">api-relay-audit</div>
+<div class="case-why">三态判定 + 开源 = 误判可申诉</div>
+</div>
+
+<div class="case ours">
+<div class="case-who">安全研究员</div>
+<div class="case-arrow">→</div>
+<div class="case-tool">api-relay-audit</div>
+<div class="case-why">双论文威胁模型 + 开源 + 可审计</div>
+</div>
+
+<div class="case either">
+<div class="case-who">不想装东西<br/><span style="font-weight:400;color:#666;font-size:11px">不会用命令行</span></div>
+<div class="case-arrow">→</div>
+<div class="case-tool">hvoy / cctest</div>
+<div class="case-why">网页端，零门槛</div>
+</div>
+
+<div class="src">API 中转站安全检测对比 · 2026-05-05</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;padding:24px;display:flex;justify-content:center}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);padding:28px;max-width:680px;width:100%}
+.badge{display:inline-block;background:#1a1a2e;color:#fff;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;margin-bottom:8px}
+.title{font-size:20px;font-weight:700;color:#1a1a2e;margin-bottom:4px}
+.subtitle{font-size:13px;color:#888;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{background:#1a1a2e;color:#fff;padding:10px 8px;text-align:left;font-weight:600;font-size:11.5px}
+th:first-child{width:32%}
+td{padding:11px 8px;border-bottom:1px solid #eee;vertical-align:middle;line-height:1.5}
+tr:nth-child(even) td{background:#fafafa}
+td:first-child{font-weight:600;color:#1a1a2e}
+.metric{font-size:18px;font-weight:800;color:#43a047;line-height:1}
+.metric-sub{font-size:10.5px;color:#666;display:block;margin-top:2px}
+.unknown{color:#bdbdbd;font-style:italic;font-size:11.5px}
+.src{font-size:11px;color:#aaa;margin-top:16px;text-align:right}
+.note{font-size:11px;color:#666;background:#f5f5f5;padding:10px 12px;border-radius:6px;margin-top:14px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="card">
+<span class="badge">§3.4 · 工程质量</span>
+<div class="title">公开可验证的质量数据</div>
+<div class="subtitle">只有 api-relay-audit 的数字可以 git checkout 自己跑</div>
+<table>
+<thead><tr><th>指标</th><th>api-relay-audit</th><th>hvoy.ai</th><th>cctest.ai</th></tr></thead>
+<tbody>
+<tr><td>单元测试</td><td><span class="metric">569</span><span class="metric-sub">pytest</span></td><td><span class="unknown">未知</span></td><td><span class="unknown">未知 (闭源)</span></td></tr>
+<tr><td>代码审查</td><td><span class="metric">8 轮</span><span class="metric-sub">Codex review + 1 轮 peer review</span></td><td><span class="unknown">未知</span></td><td><span class="unknown">未知</span></td></tr>
+<tr><td>修复的 review-found bug</td><td><span class="metric">23 个</span><span class="metric-sub">含 fail-open / dual-distribution / regex 鲁棒性</span></td><td><span class="unknown">未知</span></td><td><span class="unknown">未知</span></td></tr>
+<tr><td>回归测试</td><td><span class="metric" style="font-size:14px">每个 fix 都有</span><span class="metric-sub">regression test</span></td><td><span class="unknown">未知</span></td><td><span class="unknown">未知</span></td></tr>
+<tr><td>借鉴归属</td><td><span class="metric" style="font-size:14px">docstring 全归属</span><span class="metric-sub">每个 ported concept</span></td><td>—</td><td>—</td></tr>
+</tbody>
+</table>
+<div class="note">这不是说另两个工具质量差——它们可能同样严谨，但 <b>只有 api-relay-audit 的质量数据公开可验证</b>。</div>
+<div class="src">API 中转站安全检测对比 · 2026-05-05</div>
+</div>
+</body>
+</html>

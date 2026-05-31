@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;padding:24px;display:flex;justify-content:center}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);padding:28px;max-width:720px;width:100%}
+.badge{display:inline-block;background:#1a1a2e;color:#fff;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;margin-bottom:8px}
+.title{font-size:20px;font-weight:700;color:#1a1a2e;margin-bottom:4px}
+.subtitle{font-size:13px;color:#888;margin-bottom:18px}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{background:#1a1a2e;color:#fff;padding:7px 6px;text-align:left;font-weight:600;font-size:10.5px}
+th.center,td.center{text-align:center;width:13%}
+th:first-child{width:48%}
+td{padding:6px 6px;border-bottom:1px solid #eee;vertical-align:middle;line-height:1.35}
+tr:nth-child(even) td{background:#fafafa}
+td:first-child{color:#1a1a2e}
+.y{color:#43a047;font-weight:700;font-size:13px}
+.n{color:#bdbdbd;font-weight:600;font-size:13px}
+.p{color:#fb8c00;font-weight:700;font-size:13px}
+.s{color:#1e88e5;font-weight:700;font-size:12px}
+.partial{color:#fb8c00;font-weight:600;font-size:10.5px}
+.metric{font-weight:700;color:#1a1a2e;font-size:11.5px}
+.unknown{color:#bdbdbd;font-style:italic;font-size:10.5px}
+.section-head td{background:#f0f2f5;font-weight:700;color:#666;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;padding:5px 6px}
+.src{font-size:11px;color:#aaa;margin-top:12px;text-align:right}
+</style>
+</head>
+<body>
+<div class="card">
+<span class="badge">附录 · 速查表</span>
+<div class="title">27 维度功能对比速查</div>
+<div class="subtitle">完整对照清单 — 一图收藏</div>
+<table>
+<thead><tr><th>维度</th><th class="center">api-relay-audit</th><th class="center">hvoy.ai</th><th class="center">cctest.ai</th></tr></thead>
+<tbody>
+<tr class="section-head"><td colspan="4">✦ 核心检测能力 (Liu et al. AC-1/AC-2)</td></tr>
+<tr><td>Token 注入</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="p">🟡</span></td></tr>
+<tr><td>Prompt 提取</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>身份替换 (26 关键词)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="y">✅</span></td></tr>
+<tr><td>越狱防护</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>上下文截断</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>工具调用改写 (AC-1.a)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>错误响应泄漏 (AC-2)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>流完整性 (SSE)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="y">✅</span></td></tr>
+<tr><td>思维链痕迹</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="p">🟡</span></td></tr>
+<tr><td>Web3 注入</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+
+<tr class="section-head"><td colspan="4">✦ 高级 / 实验性维度</td></tr>
+<tr><td>通道指纹 (protobuf)</td><td class="center"><span class="s">🔜</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="y">✅</span></td></tr>
+<tr><td>多模态稀释检测</td><td class="center"><span class="s">🔜</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="y">✅</span></td></tr>
+<tr><td>基础设施指纹 (Zhang §3.2)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>延迟方差双峰</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>取证日志 (hash-only JSONL)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>知识水平</td><td class="center"><span class="n">❌</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>公开排行榜</td><td class="center"><span class="n">❌</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td></tr>
+
+<tr class="section-head"><td colspan="4">✦ 设计 / 安全模型</td></tr>
+<tr><td>本地运行 (Key 不外传)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>完全开源</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="partial">部分</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>零安装使用</td><td class="center"><span class="n">❌</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="y">✅</span></td></tr>
+<tr><td>双论文威胁模型 (Liu+Zhang)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>三态判定 (含 inconclusive)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>误判可申诉路径</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="p">🟡</span></td><td class="center"><span class="n">❌</span></td></tr>
+
+<tr class="section-head"><td colspan="4">✦ 工程质量 / 输出</td></tr>
+<tr><td>单元测试 (公开)</td><td class="center"><span class="metric">569</span></td><td class="center"><span class="unknown">未知</span></td><td class="center"><span class="unknown">未知</span></td></tr>
+<tr><td>Web3 专用 profile</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>多模型排行</td><td class="center"><span class="n">❌</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>审计报告输出</td><td class="center"><span class="metric" style="font-size:10px">MD + JSONL</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+</tbody>
+</table>
+<div class="src">API 中转站安全检测对比 · 2026-05-05</div>
+</div>
+</body>
+</html>

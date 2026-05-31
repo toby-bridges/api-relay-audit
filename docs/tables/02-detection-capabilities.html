@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;padding:24px;display:flex;justify-content:center}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);padding:28px;max-width:720px;width:100%}
+.badge{display:inline-block;background:#1a1a2e;color:#fff;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;margin-bottom:8px}
+.title{font-size:20px;font-weight:700;color:#1a1a2e;margin-bottom:4px}
+.subtitle{font-size:13px;color:#888;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th{background:#1a1a2e;color:#fff;padding:8px 6px;text-align:left;font-weight:600;font-size:11px}
+th.center,td.center{text-align:center;width:14%}
+th:first-child{width:46%}
+td{padding:8px 6px;border-bottom:1px solid #eee;vertical-align:middle;line-height:1.4}
+tr:nth-child(even) td{background:#fafafa}
+td:first-child{font-weight:500;color:#1a1a2e}
+.y{color:#43a047;font-weight:700;font-size:14px}
+.n{color:#bdbdbd;font-weight:600;font-size:14px}
+.p{color:#fb8c00;font-weight:700;font-size:14px}
+.s{color:#1e88e5;font-weight:700;font-size:13px}
+.sub{font-size:9.5px;color:#888;display:block;margin-top:1px}
+.legend{font-size:10.5px;color:#666;margin-top:14px;text-align:center}
+.legend span{margin:0 6px}
+.src{font-size:11px;color:#aaa;margin-top:8px;text-align:right}
+</style>
+</head>
+<body>
+<div class="card">
+<span class="badge">§2 · 核心对比</span>
+<div class="title">检测能力对比（19 维度）</div>
+<div class="subtitle">api-relay-audit 13 步 / hvoy ~5 维度 / cctest 5 黑盒项</div>
+<table>
+<thead><tr><th>检测项</th><th class="center">api-relay-audit</th><th class="center">hvoy.ai</th><th class="center">cctest.ai</th></tr></thead>
+<tbody>
+<tr><td>Token 注入 <span class="sub">隐藏 system prompt</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="p">🟡</span></td></tr>
+<tr><td>Prompt 提取 <span class="sub">泄漏隐藏提示词</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>身份替换 <span class="sub">冒充 Claude 实为 GPT/GLM</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="y">✅</span></td></tr>
+<tr><td>越狱防护测试</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>上下文长度截断</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>工具调用改写 (AC-1.a) <span class="sub">拼写投毒供应链攻击</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>错误响应泄漏 (AC-2) <span class="sub">凭证/路径/内部字段</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>流完整性 (SSE 层)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="y">✅</span></td></tr>
+<tr><td>思维链痕迹</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="p">🟡</span></td></tr>
+<tr><td>Web3 注入检测 <span class="sub">SlowMist 签名隔离</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>通道指纹 (protobuf 签名)</td><td class="center"><span class="s">🔜</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="y">✅</span></td></tr>
+<tr><td>多模态稀释检测</td><td class="center"><span class="s">🔜</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="y">✅</span></td></tr>
+<tr><td>基础设施指纹 <span class="sub">Zhang et al. §3.2 锚定</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>延迟方差双峰 <span class="sub">静默 A/B 替换信号</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>取证日志 (hash-only)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>知识水平检测</td><td class="center"><span class="n">❌</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>基础设施侦察 (DNS/SSL)</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>模型列表枚举</td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td><td class="center"><span class="n">❌</span></td></tr>
+<tr><td>公开排行榜</td><td class="center"><span class="n">❌</span></td><td class="center"><span class="y">✅</span></td><td class="center"><span class="n">❌</span></td></tr>
+</tbody>
+</table>
+<div class="legend"><span><span class="y">✅</span> 完整覆盖</span><span><span class="p">🟡</span> 部分/间接</span><span><span class="s">🔜</span> 设计中</span><span><span class="n">❌</span> 不覆盖</span></div>
+<div class="src">API 中转站安全检测对比 · 2026-05-05</div>
+</div>
+</body>
+</html>

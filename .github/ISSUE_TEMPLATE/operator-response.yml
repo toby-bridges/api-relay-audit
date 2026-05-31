@@ -1,0 +1,45 @@
+name: Operator Response / 运营商申诉
+description: Respond to audit findings as the relay operator / 作为中转站运营商回应审计结果
+title: "[Operator] "
+labels: ["operator-response"]
+body:
+  - type: input
+    id: relay_domain
+    attributes:
+      label: Relay Domain / 中转站域名
+      description: "The domain of your relay service"
+      placeholder: "api.example.com"
+    validations:
+      required: true
+
+  - type: textarea
+    id: operator_proof
+    attributes:
+      label: Domain Ownership Proof / 域名控制权证明
+      description: |
+        Add a DNS TXT record: `_relay-audit-verify=<this-issue-number>`
+        We will verify via nslookup before marking you as verified-operator.
+
+        添加 DNS TXT 记录：`_relay-audit-verify=<本issue编号>`
+        我们会通过 nslookup 验证后标记为 verified-operator。
+      placeholder: "I have added the TXT record _relay-audit-verify=123"
+    validations:
+      required: true
+
+  - type: input
+    id: response_to
+    attributes:
+      label: Responding to Issue # / 回应的 Issue 编号
+      description: "Which audit submission issue are you responding to? (optional)"
+      placeholder: "#42"
+
+  - type: textarea
+    id: statement
+    attributes:
+      label: Statement / 回应内容
+      description: |
+        Your response to the audit findings. Explain any context, mitigations,
+        or corrections you'd like to make public.
+      placeholder: "We have addressed the token injection finding by..."
+    validations:
+      required: true

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;padding:24px;display:flex;justify-content:center}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);padding:28px;max-width:720px;width:100%}
+.badge{display:inline-block;background:#e53935;color:#fff;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;margin-bottom:8px}
+.title{font-size:20px;font-weight:700;color:#1a1a2e;margin-bottom:4px}
+.subtitle{font-size:13px;color:#888;margin-bottom:20px}
+.intro{background:#ffebee;border-left:3px solid #e53935;padding:12px 14px;border-radius:4px;font-size:12.5px;color:#c62828;margin-bottom:18px;line-height:1.55}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th{background:#1a1a2e;color:#fff;padding:10px 8px;text-align:left;font-weight:600;font-size:11px}
+th:first-child{width:26%}
+td{padding:10px 8px;border-bottom:1px solid #eee;vertical-align:top;line-height:1.5}
+tr:nth-child(even) td{background:#fafafa}
+td:first-child{font-weight:600;color:#1a1a2e}
+.y{color:#43a047;font-weight:700}
+.n{color:#bdbdbd;font-weight:600}
+.p{color:#fb8c00;font-weight:700}
+.src{font-size:11px;color:#aaa;margin-top:14px;text-align:right}
+</style>
+</head>
+<body>
+<div class="card">
+<span class="badge">§3.2.1 · 误判风险</span>
+<div class="title">三种判定哲学</div>
+<div class="subtitle">Black-box auditing 的根本限制 — 设计取舍直接影响误判率</div>
+<div class="intro">
+<b>独立用户报告</b>：他做了一个完整对齐 Anthropic 直连（响应格式 / 结构 / 签名）的 pass-through middleware。<b>CCTest 仍判定全部失败</b>。三个工具如何应对这种边界情况，取决于设计哲学。
+</div>
+<table>
+<thead><tr><th></th><th>api-relay-audit</th><th>hvoy.ai</th><th>cctest.ai</th></tr></thead>
+<tbody>
+<tr><td>判定模式</td><td><span class="y">三态</span><br/>clean / anomaly / inconclusive</td><td>0-100 分</td><td>二元 pass/fail</td></tr>
+<tr><td>单维度异常 → 整体判定</td><td>6D 矩阵分别记，<b>需多维度才到 HIGH</b></td><td>累加分</td><td>闭源不可知</td></tr>
+<tr><td>informational vs evidential</td><td>Step 12/13 显式 informational，<b>不进 6D 矩阵</b></td><td>全维度都进总分</td><td>闭源不可知</td></tr>
+<tr><td>误判时申诉路径</td><td><span class="y">✅</span> 读源码 + 提 GitHub issue / fork</td><td><span class="p">🟡</span> 部分开源</td><td><span class="n">❌</span> 闭源 SaaS</td></tr>
+<tr><td>已知 false-positive 风险</td><td>Step 9 error path 对良心中转件可能 noise; Step 10 依赖 Anthropic binary 字段稳定</td><td>知识截止题可被绕过</td><td>闭源不可知</td></tr>
+</tbody>
+</table>
+<div class="src">API 中转站安全检测对比 · 2026-05-05</div>
+</div>
+</body>
+</html>

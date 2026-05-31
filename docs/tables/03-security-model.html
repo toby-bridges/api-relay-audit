@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;padding:24px;display:flex;justify-content:center}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);padding:28px;max-width:680px;width:100%}
+.badge{display:inline-block;background:#1a1a2e;color:#fff;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;margin-bottom:8px}
+.title{font-size:20px;font-weight:700;color:#1a1a2e;margin-bottom:4px}
+.subtitle{font-size:13px;color:#888;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#1a1a2e;color:#fff;padding:10px 8px;text-align:left;font-weight:600;font-size:11.5px}
+th:first-child{width:24%}
+td{padding:10px 8px;border-bottom:1px solid #eee;vertical-align:top;line-height:1.5}
+tr:nth-child(even) td{background:#fafafa}
+td:first-child{font-weight:600;color:#1a1a2e}
+.y{color:#43a047;font-weight:700}
+.n{color:#bdbdbd;font-weight:600}
+.p{color:#fb8c00;font-weight:700}
+.q{color:#888;font-weight:600}
+.src{font-size:11px;color:#aaa;margin-top:16px;text-align:right}
+</style>
+</head>
+<body>
+<div class="card">
+<span class="badge">§3.2 · 安全模型</span>
+<div class="title">谁来审计审计工具？</div>
+<div class="subtitle">代码 / 请求 / 依赖的可审计性对比</div>
+<table>
+<thead><tr><th></th><th>api-relay-audit</th><th>hvoy.ai</th><th>cctest.ai</th></tr></thead>
+<tbody>
+<tr><td>API Key 去向</td><td><span class="y">✅</span> 本地 CLI<br/>不离开你的终端</td><td>声明"纯前端处理"</td><td>声明"不存储"</td></tr>
+<tr><td>代码可审计</td><td><span class="y">✅</span> 完全开源</td><td><span class="p">🟡</span> 部分开源</td><td><span class="n">❌</span> 闭源</td></tr>
+<tr><td>请求内容可审计</td><td><span class="y">✅</span> 抓包可看 + 可选 hash-only 取证日志</td><td><span class="q">❓</span> 前端代码可读但需验证</td><td><span class="n">❌</span> 无法确认</td></tr>
+<tr><td>第三方依赖</td><td>standalone: 零依赖<br/>(只用 curl)</td><td>React + Vite 生态</td><td>未知</td></tr>
+</tbody>
+</table>
+<div class="src">API 中转站安全检测对比 · 2026-05-05</div>
+</div>
+</body>
+</html>

@@ -229,6 +229,7 @@ footer a:hover{color:var(--text)}
       <span>API Relay Audit</span>
     </a>
     <div class="nav-links">
+      <a href="#community" class="hide-mobile" data-i18n="nav_community">Community</a>
       <a href="#demo" class="hide-mobile" data-i18n="nav_demo">Demo</a>
       <a href="#install" class="hide-mobile" data-i18n="nav_install">Quick Start</a>
       <a href="#faq" class="hide-mobile" data-i18n="nav_faq">FAQ</a>
@@ -258,6 +259,30 @@ footer a:hover{color:var(--text)}
   <div class="hero-cta">
     <a class="btn btn-primary" href="#install" data-i18n="cta_install">Start Audit</a>
     <a class="btn btn-secondary" href="#demo" data-i18n="cta_demo">See Demo Report</a>
+  </div>
+</section>
+
+<!-- ── Community Actions ── -->
+<section class="container" id="community" style="padding-top:40px;padding-bottom:20px">
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:28px">
+      <div style="font-size:.7rem;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px" data-i18n="community_user_label">FOR USERS / 用户</div>
+      <h3 style="font-size:1rem;font-weight:600;margin-bottom:8px" data-i18n="community_user_title">你在用中转站吗？</h3>
+      <p style="color:var(--text2);font-size:.85rem;line-height:1.6;margin-bottom:16px" data-i18n="community_user_desc">查看社区审计排行榜，或提交你的审计结果帮助其他人。</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <a class="btn btn-secondary" href="#leaderboard" style="font-size:.82rem;padding:8px 16px" data-i18n="community_user_cta1">查看排行榜</a>
+        <a class="btn btn-secondary" href="https://github.com/toby-bridges/api-relay-audit/issues/new?template=audit-report.yml" target="_blank" style="font-size:.82rem;padding:8px 16px" data-i18n="community_user_cta2">提交审计结果</a>
+      </div>
+    </div>
+    <div style="background:var(--card);border:1px solid rgba(245,158,11,.2);border-radius:var(--radius);padding:28px">
+      <div style="font-size:.7rem;font-weight:700;color:var(--yellow);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px" data-i18n="community_op_label">FOR OPERATORS / 运营商</div>
+      <h3 style="font-size:1rem;font-weight:600;margin-bottom:8px" data-i18n="community_op_title">证明你的站是安全的</h3>
+      <p style="color:var(--text2);font-size:.85rem;line-height:1.6;margin-bottom:16px" data-i18n="community_op_desc">申请官方审计，获取可验证的公开报告和 Verified badge。</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <a class="btn btn-primary" href="mailto:toby-bridges@proton.me?subject=Official%20Audit%20Request&body=Relay%20domain:%20%0AContact:" style="font-size:.82rem;padding:8px 16px" data-i18n="community_op_cta1">¥299 申请审计</a>
+        <a class="btn btn-secondary" href="https://github.com/toby-bridges/api-relay-audit/issues/new?template=operator-response.yml" target="_blank" style="font-size:.82rem;padding:8px 16px" data-i18n="community_op_cta2">运营商申诉</a>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -814,7 +839,7 @@ function copyCmdOutput(){
 let currentLang='zh';
 const i18n={
   zh:{
-    nav_demo:"Demo",nav_install:"快速开始",nav_faq:"FAQ",
+    nav_community:"社区",nav_demo:"Demo",nav_install:"快速开始",nav_faq:"FAQ",
     hero_badge:"本地运行 — API Key 不经过任何第三方服务器",
     hero_title:'<span class="gradient">AI API 中转站</span>安全审计',
     hero_sub:"开源 13 步审计工具。检测 Token 注入、Prompt 泄露、身份替换、工具调用改写、错误响应凭证回显、SSE 流完整性篡改。",
@@ -891,10 +916,12 @@ const i18n={
     faq_a6:'每个审计步骤返回三种状态之一：<strong>clean</strong>（未检测到异常）、<strong>anomaly</strong>（确认问题）、<strong>inconclusive</strong>（无法确定 — 例如中转站拦截了探针或返回错误）。这很重要，因为 "无法测试" 和 "确认安全" 是截然不同的。拦截所有探针的中转站得到 "inconclusive" 而非 "clean"。数字评分系统（0-100）模糊了这个区别 — 一个被拦截的测试可能得 50 分，看起来像 "还行"，但实际应该是 "可疑"。',
     faq_q7:"支持非 Claude 模型吗？",
     faq_a7:'大多数步骤 (1-9) 适用于任何模型和中转站。Step 10（流完整性）是 Anthropic 专属的，因为它验证 Anthropic 的 SSE 事件 schema、usage 字段和 thinking 签名。Step 11（Web3 注入）不限模型但需要 profile 开关。如果你的中转站使用 OpenAI 格式，工具会自动检测并适配请求格式。非 Anthropic 格式的流完整性检测会返回 "inconclusive"。',
+    community_user_label:"用户",community_user_title:"你在用中转站吗？",community_user_desc:"查看社区审计排行榜，或提交你的审计结果帮助其他人。",community_user_cta1:"查看排行榜",community_user_cta2:"提交审计结果",
+    community_op_label:"运营商",community_op_title:"证明你的站是安全的",community_op_desc:"申请官方审计，获取可验证的公开报告和 Verified badge。",community_op_cta1:"¥299 申请审计",community_op_cta2:"运营商申诉",
     footer_threat:"威胁模型: "
   },
   en:{
-    nav_demo:"Demo",nav_install:"Quick Start",nav_faq:"FAQ",
+    nav_community:"Community",nav_demo:"Demo",nav_install:"Quick Start",nav_faq:"FAQ",
     hero_badge:"Local execution — your API Key is never sent to a third-party server",
     hero_title:'<span class="gradient">AI API Relay</span> Security Audit',
     hero_sub:"Open-source 13-step audit tool. Detects token injection, prompt leakage, identity substitution, tool-call rewriting, credential leakage in error responses, and SSE stream tampering.",
@@ -970,6 +997,8 @@ const i18n={
     faq_a6:'Every audit step returns one of three states: <strong>clean</strong> (no anomaly detected), <strong>anomaly</strong> (issue confirmed), or <strong>inconclusive</strong> (the test couldn\'t determine a result — e.g., the relay blocked the probe or returned an error). This is important because "couldn\'t test" and "confirmed safe" are very different things. A relay that blocks all probes gets "inconclusive," not "clean." Numeric scoring systems (0-100) blur this distinction — a blocked test might score 50, which looks like "okay" when it should mean "suspicious."',
     faq_q7:"Does this work with non-Claude models?",
     faq_a7:'Most steps (1-9) work with any model through any relay. Step 10 (stream integrity) is Anthropic-specific because it validates Anthropic\'s SSE event schema, usage fields, and thinking signatures. Step 11 (Web3 injection) is model-agnostic but profile-gated. If your relay uses OpenAI format, the tool auto-detects and adapts the request format. Stream integrity will return "inconclusive" for non-Anthropic formats.',
+    community_user_label:"FOR USERS",community_user_title:"Using a relay?",community_user_desc:"Check the community audit leaderboard, or submit your own audit results to help others.",community_user_cta1:"Leaderboard",community_user_cta2:"Submit Audit",
+    community_op_label:"FOR OPERATORS",community_op_title:"Prove your relay is safe",community_op_desc:"Request an official audit and get a verifiable public report with a Verified badge.",community_op_cta1:"¥299 Request Audit",community_op_cta2:"Operator Response",
     footer_threat:"Threat model: "
   }
 };
