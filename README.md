@@ -16,10 +16,6 @@
 </p>
 
 <p align="center">
-  <a href="./ROADMAP.md"><strong>ROADMAP</strong></a>
-  ·
-  <a href="./FOR_JOHN.md"><strong>Engineering Diary</strong></a>
-  ·
   <a href="./SKILL.md"><strong>OpenClaw Skill</strong></a>
   ·
   <a href="./skills/api-relay-audit/SKILL.md"><strong>Hermes Skill</strong></a>
@@ -102,7 +98,8 @@ These probes are model-agnostic, but they are intentionally profile-gated so gen
   [Claude relay audit](https://toby-bridges.github.io/api-relay-audit/guides/audit-claude-api-relay-safely.html),
   [tool comparison](https://toby-bridges.github.io/api-relay-audit/guides/compare-api-relay-audit-hvoy-cctest.html),
   [prompt injection in proxies](https://toby-bridges.github.io/api-relay-audit/guides/detect-prompt-injection-llm-api-proxies.html),
-  [Web3 wallet prompt injection](https://toby-bridges.github.io/api-relay-audit/guides/web3-wallet-prompt-injection-ai-agents.html)
+  [Web3 wallet prompt injection](https://toby-bridges.github.io/api-relay-audit/guides/web3-wallet-prompt-injection-ai-agents.html),
+  [OpenClaw and Hermes skill](https://toby-bridges.github.io/api-relay-audit/guides/openclaw-hermes-skill-api-relay-audit.html)
 - Contributors / Credits: [CONTRIBUTORS.md](./CONTRIBUTORS.md)
 - Security policy: [SECURITY.md](./SECURITY.md)
 - Contributing guide: [CONTRIBUTING.md](./CONTRIBUTING.md)
@@ -196,6 +193,15 @@ python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report
 - 模型身份: 非 Claude 身份泄漏、模型替换、Claude / OpenAI 兼容中转行为
 - Web3 风险: 转账指引、签名拒绝、私钥泄漏拒绝
 
+## Agent Skill 支持
+
+API Relay Audit 也可以作为 agent skill 使用。
+
+- **OpenClaw Skill:** 在 OpenClaw agent 把 coding、tool 或钱包相关流量交给第三方 relay 前，先运行本地审计。
+- **Hermes Skill:** 作为 Hermes Agent skill 安装，在 agent workflow 中运行同一套本地 14 步审计。
+
+这些 skill 不给中转站颁发安全认证，只帮助 agent 在信任 relay 前生成本地、可复查的 Markdown 报告。
+
 ## 什么时候使用
 
 - 你正在使用第三方 AI API 中转站、镜像、网关或 LLM proxy。
@@ -213,8 +219,6 @@ python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report
 
 - 在线页 / GitHub Pages: [toby-bridges.github.io/api-relay-audit](https://toby-bridges.github.io/api-relay-audit/)
 - 中文独立页: [toby-bridges.github.io/api-relay-audit/zh/](https://toby-bridges.github.io/api-relay-audit/zh/)
-- 路线图与明确不做: [ROADMAP.md](./ROADMAP.md)
-- 工程记录: [FOR_JOHN.md](./FOR_JOHN.md)
 - 贡献者 / Credits: [CONTRIBUTORS.md](./CONTRIBUTORS.md)
 - 安全政策: [SECURITY.md](./SECURITY.md)
 - 贡献指南: [CONTRIBUTING.md](./CONTRIBUTING.md)

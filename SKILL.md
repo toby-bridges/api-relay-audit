@@ -1,13 +1,30 @@
 ---
 name: api-relay-audit
-description: "Audit third-party AI API relay/proxy services for security risks. Detects hidden prompt injection, prompt leakage, instruction override, identity hijacking (Chinese-market substitutes), jailbreak vulnerabilities, context truncation, tool-call package substitution (AC-1.a), error response header leakage (AC-2 adjacent), SSE-level stream integrity anomalies (AC-1 streaming), Web3 prompt injection (SlowMist signature isolation), infrastructure fingerprinting, and latency variance anomalies. Use when: test relay, audit API, audit relay, detect injection, relay security, API relay audit, is this relay safe, does it inject prompts, test proxy API, check API key, 中转站安全, 测试中转站, 中转站审计."
+description: "OpenClaw skill for local AI API relay and LLM proxy security audits. Use when an OpenClaw agent must test a relay for prompt injection, model substitution, tool-call rewriting, SSE anomalies, upstream channel mismatch, error leakage, and Web3 wallet risks before trusting API traffic."
 version: 2.3.0
-metadata: {"openclaw":{"requires":{"anyBins":["curl","python3","python"],"env":[]},"emoji":"🛡️","homepage":"https://github.com/toby-bridges/api-relay-audit"}}
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - curl
+      anyBins:
+        - python3
+        - python
+    envVars:
+      - name: API_RELAY_AUDIT_KEY
+        required: false
+        description: Optional relay API key. The agent may also ask the user directly instead of reading an environment variable.
+      - name: API_RELAY_AUDIT_URL
+        required: false
+        description: Optional relay base URL, for example https://relay.example.com/v1.
+    skillKey: api-relay-audit
+    emoji: "🛡️"
+    homepage: https://github.com/toby-bridges/api-relay-audit
 ---
 
 # API Relay Security Audit (API 中转站安全审计)
 
-A self-contained 13-step security audit for third-party AI API relay/proxy services (中转站). One script, zero config, full report. Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407. Infrastructure fingerprinting and latency variance are sourced from Zhang et al., *Real Money, Fake Models*, arXiv:2603.01919.
+A self-contained 14-step security audit for third-party AI API relay/proxy services (中转站). One script, zero config, full report. Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407. Infrastructure fingerprinting, latency variance, and upstream channel classification are sourced from Zhang et al., *Real Money, Fake Models*, arXiv:2603.01919.
 
 ## Quick Start (快速开始)
 
@@ -23,7 +40,7 @@ The script has zero dependencies beyond Python 3 + `curl`. All HTTP calls go thr
 
 ## What This Skill Does (功能概述)
 
-Runs a 13-step automated audit against any OpenAI-compatible or Anthropic-compatible API relay:
+Runs a 14-step automated audit against any OpenAI-compatible or Anthropic-compatible API relay:
 
 | Step | Test | What It Detects |
 |------|------|-----------------|
@@ -40,6 +57,7 @@ Runs a 13-step automated audit against any OpenAI-compatible or Anthropic-compat
 | 11 | Web3 prompt injection (Web3 注入, `--profile web3` only) | 3 SlowMist signature-isolation probes targeting wallet safety: ETH transfer guidance, sign-transaction refusal, private-key leak refusal. Safe-priority classifier with hard-injection override for contradictory responses. |
 | 12 | Infrastructure fingerprint (基础设施指纹) | Unauthenticated `GET /`, `/v1/models`, and nonexistent-endpoint probes classify known relay frameworks such as One API / New API, LobeChat, FastGPT, Cloudflare, nginx, and Caddy. Informational only. |
 | 13 | Latency variance (延迟方差指纹) | Repeated identical low-token requests measure latency distribution and flag variable or bimodal routing patterns that may suggest queue multiplexing or silent model/provider substitution. Informational only. |
+| 14 | Upstream channel classifier (上游通道分类) | Classifies known upstream channels such as Bedrock, Vertex, OpenRouter, Cloudflare AI Gateway, or transparent Anthropic relays from response headers, message IDs, and body signals. Informational unless corroborated by other findings. |
 
 Output: a structured Markdown report with risk ratings per section and an overall verdict.
 
@@ -74,6 +92,12 @@ Optional flags to ask about:
 - `--skip-error-leakage` -- skip Step 9 AC-2 adjacent error response scan (only use if you cannot tolerate intentionally-broken test requests)
 - `--aggressive-error-probes` -- enable the 256 KB oversized-context error probe in Step 9. Warning: may incur metered billing on pay-as-you-go relays
 - `--skip-stream-integrity` -- skip Step 10 stream integrity test (use if the relay does not support Anthropic streaming or if thinking is not available on the target model)
+- `--skip-web3-injection` -- skip Step 11 Web3 prompt injection probes
+- `--skip-infra-fingerprint` -- skip Step 12 infrastructure fingerprinting
+- `--skip-latency-variance` -- skip Step 13 latency variance checks
+- `--skip-channel-classifier` -- skip Step 14 upstream channel classification
+- `--latency-probe-count N` -- number of identical probes for Step 13 latency variance
+- `--profile general|web3|full` -- choose the audit profile for general relay, Web3, or full coverage
 - `--warmup N` -- send N benign requests before the audit to mitigate AC-1.b request-count-gated backdoors. Recommended `N=5-20` when auditing a suspicious free relay.
 
 ### Step 2: Download the Standalone Script (下载脚本)

@@ -1,6 +1,6 @@
 ---
 name: api-relay-audit
-description: Use when auditing third-party AI API relays, proxy APIs, or API-key resale services for hidden prompt injection, prompt leakage, instruction override, context truncation, tool-call substitution, error leakage, SSE stream anomalies, Web3 wallet-safety prompt injection, infrastructure fingerprints, and latency variance.
+description: Use when auditing third-party AI API relays, proxy APIs, or API-key resale services for hidden prompt injection, prompt leakage, instruction override, context truncation, tool-call substitution, error leakage, SSE stream anomalies, Web3 wallet-safety prompt injection, infrastructure fingerprints, latency variance, and upstream channel mismatches.
 version: 2.3.0
 author: Toby Bridges
 license: AGPL-3.0-only
@@ -20,7 +20,7 @@ required_environment_variables:
 
 ## Overview
 
-This skill runs `api-relay-audit`, a zero-dependency security audit for third-party AI API relays and proxy services. It checks whether the relay tampers with prompts, truncates context, rewrites package-install instructions, leaks upstream credentials or internal headers, corrupts Anthropic SSE streams, or injects unsafe Web3 wallet behavior.
+This skill runs `api-relay-audit`, a zero-dependency security audit for third-party AI API relays and proxy services. It checks whether the relay tampers with prompts, truncates context, rewrites package-install instructions, leaks upstream credentials or internal headers, corrupts Anthropic SSE streams, changes the upstream channel, or injects unsafe Web3 wallet behavior.
 
 Use the standalone `audit.py` path by default. It only needs Python 3 and `curl`, which makes it suitable for local Hermes terminal sessions and sandboxed execution.
 
@@ -118,10 +118,11 @@ python3 audit.py \
 | Suspicious relay with request-count gating | `--warmup 5` to `--warmup 20` |
 | Avoid intentionally broken requests | `--skip-error-leakage` |
 | Avoid streaming checks | `--skip-stream-integrity` |
+| Avoid upstream channel classification | `--skip-channel-classifier` |
 
 Warn the user before enabling `--aggressive-error-probes` because oversized probes can create metered usage on pay-as-you-go relays.
 
-## What the 13 Steps Cover
+## What the 14 Steps Cover
 
 | Step | Area | Purpose |
 |---|---|---|
@@ -138,6 +139,7 @@ Warn the user before enabling `--aggressive-error-probes` because oversized prob
 | 11 | Web3 prompt injection | Wallet-safety refusal probes, profile-gated. |
 | 12 | Infrastructure fingerprint | Known relay framework signatures, informational only. |
 | 13 | Latency variance | Bimodal or unstable routing hints, informational only. |
+| 14 | Upstream channel classifier | Bedrock, Vertex, OpenRouter, Cloudflare AI Gateway, or transparent Anthropic relay hints from headers, message IDs, and body signals. |
 
 ## Report Summary Template
 
@@ -155,6 +157,7 @@ Overall risk: LOW / MEDIUM / HIGH
 - Tool-call substitution: <clean/substituted/inconclusive>
 - Error leakage: <none/medium/high/critical/inconclusive>
 - Stream integrity: <clean/anomaly/inconclusive>
+- Upstream channel: <direct/known channel/transparent/inconclusive>
 - Web3 profile: <not run/clean/injected/inconclusive>
 - Informational: <infra fingerprint and latency variance highlights>
 
