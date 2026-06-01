@@ -102,6 +102,7 @@ python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report
 ### Key links
 
 - GitHub Pages: [toby-bridges.github.io/api-relay-audit](https://toby-bridges.github.io/api-relay-audit/)
+- Sanitized example report: [docs/example-audit-report.md](./docs/example-audit-report.md)
 - Shipped / deferred / explicitly not doing: [ROADMAP.md](./ROADMAP.md)
 - Engineering diary: [FOR_JOHN.md](./FOR_JOHN.md)
 - Contributors / Credits: [CONTRIBUTORS.md](./CONTRIBUTORS.md)
