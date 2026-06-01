@@ -1,3 +1,7 @@
+<p align="center">
+  <img alt="API Relay Audit - AI API Relay Security Audit. Prompt Injection, Model Substitution, Tool Rewriting, SSE Anomalies. Runs Locally, Your API Key Stays Local." src="./assets/readme-banner.png">
+</p>
+
 # API Relay Audit
 
 <p align="center">
