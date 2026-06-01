@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>API Relay Audit — AI 中转站安全审计</title>
-<meta name="description" content="开源 14 步安全审计工具，检测 AI API 中转站的 Token 注入、Prompt 泄露、身份替换、工具调用改写等安全风险。本地运行，Key 不离开你的机器。">
+<title>API Relay Audit - AI API Relay Security Audit for LLM Proxies</title>
+<meta name="description" content="Audit AI API relays and LLM proxies for prompt injection, model substitution, tool rewriting, SSE anomalies, error leakage, and Web3 wallet risks. Runs locally; your API key stays local.">
 <link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="API Relay Audit">
@@ -19,6 +19,101 @@
 <meta name="twitter:title" content="API Relay Audit - AI API Relay Security Audit">
 <meta name="twitter:description" content="Local security audit for AI API relays and LLM proxies: prompt injection, model substitution, tool rewriting, SSE anomalies, and Web3 wallet risks.">
 <meta name="twitter:image" content="https://toby-bridges.github.io/api-relay-audit/assets/social-preview.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://toby-bridges.github.io/api-relay-audit/#website",
+      "name": "API Relay Audit",
+      "url": "https://toby-bridges.github.io/api-relay-audit/",
+      "description": "Local security audit for AI API relays and LLM proxies."
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://toby-bridges.github.io/api-relay-audit/#software",
+      "name": "API Relay Audit",
+      "applicationCategory": "SecurityApplication",
+      "operatingSystem": "macOS, Windows, Linux",
+      "url": "https://github.com/toby-bridges/api-relay-audit",
+      "codeRepository": "https://github.com/toby-bridges/api-relay-audit",
+      "license": "https://github.com/toby-bridges/api-relay-audit/blob/master/LICENSE",
+      "description": "Local security audit tool for AI API relays and LLM proxies. It detects prompt injection, model substitution, tool rewriting, SSE anomalies, error leakage, and Web3 wallet risks while keeping your API key local."
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://toby-bridges.github.io/api-relay-audit/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is an API relay or LLM proxy?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "An API relay or LLM proxy is a third-party service between you and an AI provider such as Anthropic or OpenAI. It forwards your requests upstream, but it can also inject hidden instructions, swap models, truncate context, rewrite tool output, or leak credentials in error responses."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is it safe to enter my API key?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "API Relay Audit runs locally, so your API key is sent only to the relay URL you specify. No data is sent to API Relay Audit servers, and the standalone version has zero Python package dependencies."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does prompt injection mean here?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Prompt injection means the relay may prepend or insert hidden instructions into your request. API Relay Audit compares token usage, runs extraction probes, and records evidence when hidden prompt content appears."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is model substitution?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Model substitution means the relay claims to provide one model but routes you to another model or leaks a different model identity. API Relay Audit checks identity patterns and stream model identity where available."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is tool-call rewriting?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Tool-call rewriting means the relay modifies package-install commands or tool-like output in the model response. API Relay Audit compares pinned package commands against returned text to detect proxy-layer supply-chain tampering."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What are SSE anomalies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "SSE anomalies are stream-level integrity issues in Anthropic-style streaming responses. API Relay Audit checks event types, usage monotonicity, thinking signatures, and stream model identity when supported."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What Web3 wallet risks does it check?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "With the web3 or full profile, API Relay Audit checks transfer guidance, signed-transaction refusal, and private-key refusal behavior before wallet-related traffic is trusted."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does inconclusive mean?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Inconclusive means the tool could not determine a clean or anomalous result for that step. Blocked probes, unsupported formats, and ambiguous responses are not treated as clean."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -64,6 +159,14 @@ section:first-of-type{padding-top:100px}
 .btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:#2563eb}
 .btn-secondary{background:transparent;border:1px solid var(--border2);color:var(--text2)}.btn-secondary:hover{border-color:var(--accent);color:var(--text)}
 .security-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);color:var(--green);padding:8px 16px;border-radius:20px;font-size:.8rem;margin-bottom:8px}
+
+/* ── Search summary ── */
+.summary-section{padding-top:28px}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:24px}
+.summary-block{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px 24px}
+.summary-block h2,.summary-block h3{font-size:1rem;font-weight:700;margin-bottom:8px}
+.summary-block p,.summary-block li{color:var(--text2);font-size:.86rem;line-height:1.65}
+.summary-block ul{padding-left:18px;margin-top:8px}
 
 /* ── Demo Report ── */
 .demo-section h2{font-size:1.4rem;font-weight:700;margin-bottom:8px;text-align:center}
@@ -249,8 +352,8 @@ footer a:hover{color:var(--text)}
       <a href="https://github.com/toby-bridges/api-relay-audit" target="_blank" rel="noopener noreferrer">GitHub</a>
       <a href="https://x.com/li9292" target="_blank" rel="noopener noreferrer">X</a>
       <div class="lang-switch">
-        <button class="lang-btn active" onclick="setLang('zh')">中</button>
-        <button class="lang-btn" onclick="setLang('en')">EN</button>
+        <button class="lang-btn" onclick="setLang('zh')">中</button>
+        <button class="lang-btn active" onclick="setLang('en')">EN</button>
       </div>
     </div>
   </div>
@@ -263,6 +366,7 @@ footer a:hover{color:var(--text)}
     <span data-i18n="hero_badge">Local execution — your API Key is never sent to a third-party server</span>
   </div>
   <h1 data-i18n="hero_title"><span class="gradient">AI API Relay</span> Security Audit</h1>
+  <p class="hero-sub" data-i18n="hero_sub">API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It detects prompt injection, model substitution, tool rewriting, SSE anomalies, error leakage, and Web3 wallet risks while keeping your API key local.</p>
   <div class="hero-stats">
     <div class="stat"><div class="stat-num">14</div><div class="stat-label" data-i18n="stat_steps">Audit Steps</div></div>
     <div class="stat"><div class="stat-num">6D</div><div class="stat-label" data-i18n="stat_matrix">Risk Matrix</div></div>
@@ -272,6 +376,32 @@ footer a:hover{color:var(--text)}
   <div class="hero-cta">
     <a class="btn btn-primary" href="#install" data-i18n="cta_install">Start Audit</a>
     <a class="btn btn-secondary" href="#demo" data-i18n="cta_demo">See Demo Report</a>
+  </div>
+</section>
+
+<!-- ── Search / AI Summary ── -->
+<section class="summary-section container" id="overview">
+  <div class="summary-grid">
+    <div class="summary-block">
+      <h2 data-i18n="what_title">What is API Relay Audit?</h2>
+      <p data-i18n="what_desc">API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It checks whether a third-party relay injects prompts, substitutes models, rewrites tool output, leaks credentials in error responses, or produces stream integrity anomalies.</p>
+    </div>
+    <div class="summary-block">
+      <h3 data-i18n="use_title">When to use it</h3>
+      <ul>
+        <li data-i18n="use_1">Audit third-party AI API relays, mirrors, gateways, and LLM proxies.</li>
+        <li data-i18n="use_2">Check Claude-compatible or OpenAI-compatible proxies before production traffic.</li>
+        <li data-i18n="use_3">Test relay behavior before coding-agent automation or wallet-related actions.</li>
+      </ul>
+    </div>
+    <div class="summary-block">
+      <h3 data-i18n="claim_title">What it does not claim</h3>
+      <ul>
+        <li data-i18n="claim_1">It does not certify that a relay is safe.</li>
+        <li data-i18n="claim_2">It does not replace manual security review.</li>
+        <li data-i18n="claim_3">It does not treat inconclusive as clean.</li>
+      </ul>
+    </div>
   </div>
 </section>
 
@@ -447,7 +577,7 @@ footer a:hover{color:var(--text)}
 
 <!-- ── How It Works ── -->
 <section class="container">
-  <h2 style="font-size:1.4rem;font-weight:700;text-align:center" data-i18n="how_title">What Does It Detect?</h2>
+  <h2 style="font-size:1.4rem;font-weight:700;text-align:center" data-i18n="how_title">Detect Prompt Injection and Model Substitution</h2>
   <p style="text-align:center;color:var(--text2);font-size:.9rem;margin-bottom:8px" data-i18n="how_sub">Threat taxonomy based on Liu et al., "Your Agent Is Mine" (arXiv:2604.08407)</p>
   <div class="steps">
     <div class="step">
@@ -532,32 +662,36 @@ footer a:hover{color:var(--text)}
   <h2 data-i18n="faq_title">FAQ</h2>
 
   <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q1">What is an API relay / proxy?</div>
-    <div class="faq-a" data-i18n="faq_a1">An API relay (also called "中转站" in Chinese) is a third-party service that sits between you and an AI provider like Anthropic or OpenAI. You send your requests to the relay, and it forwards them to the upstream provider. Relays exist because some users can't access AI APIs directly (geo restrictions, payment issues), or because relays offer cheaper per-token pricing by pooling API keys. The problem: a malicious relay can inject hidden instructions, swap the model, truncate your context, or even steal your credentials from error responses.</div>
+    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q1">What is an API relay or LLM proxy?</div>
+    <div class="faq-a" data-i18n="faq_a1">An API relay or LLM proxy is a third-party service between you and an AI provider such as Anthropic or OpenAI. It forwards your requests upstream, but it can also inject hidden instructions, swap models, truncate context, rewrite tool output, or leak credentials in error responses.</div>
   </div>
   <div class="faq-item">
     <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q2">Is it safe to enter my API Key?</div>
-    <div class="faq-a" data-i18n="faq_a2">api-relay-audit runs entirely on your machine. Your API Key is only sent to the relay URL you specify — the same relay you're already using. No data is sent to us, no telemetry, no analytics. The standalone version is a single Python file with zero dependencies (just stdlib + curl) — you can read every line of code before running it. This is fundamentally different from web-based tools that ask you to enter your key into a webpage.</div>
+    <div class="faq-a" data-i18n="faq_a2">API Relay Audit runs locally, so your API key is sent only to the relay URL you specify. No data is sent to API Relay Audit servers, and the standalone version has zero Python package dependencies.</div>
   </div>
   <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q3">What's the difference between this and hvoy.ai / cctest.ai?</div>
-    <div class="faq-a" data-i18n="faq_a3">Three tools, three approaches. <strong>hvoy.ai</strong> excels at information aggregation — its public leaderboard of 40+ relays is the fastest way to check a relay's reputation. <strong>cctest.ai</strong> offers one-click convenience and a unique channel fingerprint (protobuf signature parsing). <strong>api-relay-audit</strong> covers 13 audit dimensions (vs ~5 for hvoy, 5 for cctest), runs locally, and is fully open-source. Only api-relay-audit detects tool-call rewriting (AC-1.a), error response credential leakage (AC-2), context truncation, and Web3 injection. Pick based on your needs: quick lookup → hvoy; one-click check → cctest; full security audit → api-relay-audit. <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/comparison-api-relay-audit-vs-hvoy-vs-cctest.md" target="_blank" rel="noopener noreferrer">Full comparison →</a></div>
+    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q3">What does prompt injection mean here?</div>
+    <div class="faq-a" data-i18n="faq_a3">Prompt injection means the relay may prepend or insert hidden instructions into your request. API Relay Audit compares token usage, runs extraction probes, and records evidence when hidden prompt content appears.</div>
   </div>
   <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q4">What does "token injection" mean?</div>
-    <div class="faq-a" data-i18n="faq_a4">When you send a message to an AI API, the relay may secretly prepend a hidden system prompt. This injects extra tokens into your request — for example, 3200 tokens of instructions telling the model to behave as "Kiro" instead of Claude. You pay for these hidden tokens, and worse, they can override your own instructions. api-relay-audit detects this by comparing actual token counts against expected values: if you sent 100 tokens but the model reports using 3300, there are ~3200 tokens of injection. Similar to the "掺水率" (dilution rate) concept from hvoy.ai, but measured as an absolute token delta for precision.</div>
+    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q4">What is model substitution?</div>
+    <div class="faq-a" data-i18n="faq_a4">Model substitution means the relay claims to provide one model but routes you to another model or leaks a different model identity. API Relay Audit checks identity patterns and stream model identity where available.</div>
   </div>
   <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q5">What is AC-1.a tool-call rewriting?</div>
-    <div class="faq-a" data-i18n="faq_a5">AC-1.a (from the threat taxonomy in arXiv:2604.08407) is a supply-chain attack where the relay modifies package names in the model's response. For example, the model says <code>pip install requests==2.31.0</code>, but the relay changes it to a typosquatted package. If you're using Claude Code or an AI coding agent that automatically installs packages, this is a real attack vector. api-relay-audit sends pinned package-install commands and compares received text character-by-character to detect any modification.</div>
+    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q5">What is tool-call rewriting?</div>
+    <div class="faq-a" data-i18n="faq_a5">Tool-call rewriting means the relay modifies package-install commands or tool-like output in the model response. API Relay Audit compares pinned package commands against returned text to detect proxy-layer supply-chain tampering.</div>
   </div>
   <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q6">What does "inconclusive" mean in the tri-state verdict?</div>
-    <div class="faq-a" data-i18n="faq_a6">Every audit step returns one of three states: <strong>clean</strong> (no anomaly detected), <strong>anomaly</strong> (issue confirmed), or <strong>inconclusive</strong> (the test couldn't determine a result — e.g., the relay blocked the probe or returned an error). This is important because "couldn't test" and "confirmed safe" are very different things. A relay that blocks all probes gets "inconclusive," not "clean." Numeric scoring systems (0-100) blur this distinction — a blocked test might score 50, which looks like "okay" when it should mean "suspicious."</div>
+    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q6">What are SSE anomalies?</div>
+    <div class="faq-a" data-i18n="faq_a6">SSE anomalies are stream-level integrity issues in Anthropic-style streaming responses. API Relay Audit checks event types, usage monotonicity, thinking signatures, and stream model identity when supported.</div>
   </div>
   <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q7">Does this work with non-Claude models?</div>
-    <div class="faq-a" data-i18n="faq_a7">Most steps (1-9) work with any model through any relay. Step 10 (stream integrity) is Anthropic-specific because it validates Anthropic's SSE event schema, usage fields, and thinking signatures. Step 11 (Web3 injection) is model-agnostic but profile-gated. If your relay uses OpenAI format, the tool auto-detects and adapts the request format. Stream integrity will return "inconclusive" for non-Anthropic formats.</div>
+    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q7">What Web3 wallet risks does it check?</div>
+    <div class="faq-a" data-i18n="faq_a7">With the web3 or full profile, API Relay Audit checks transfer guidance, signed-transaction refusal, and private-key refusal behavior before wallet-related traffic is trusted.</div>
+  </div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q8">What does inconclusive mean?</div>
+    <div class="faq-a" data-i18n="faq_a8">Inconclusive means the tool could not determine a clean or anomalous result for that step. Blocked probes, unsupported formats, and ambiguous responses are not treated as clean.</div>
   </div>
 </section>
 
@@ -825,13 +959,23 @@ function copyCmdOutput(){
 }
 
 // ── i18n ──
-let currentLang='zh';
+let currentLang='en';
 const i18n={
   zh:{
     nav_demo:"Demo",nav_install:"快速开始",nav_faq:"FAQ",
     hero_badge:"本地运行 — API Key 不经过任何第三方服务器",
     hero_title:'<span class="gradient">AI API 中转站</span>安全审计',
-    hero_sub:"开源 14 步审计工具。检测 Token 注入、Prompt 泄露、身份替换、工具调用改写、错误响应凭证回显、SSE 流完整性篡改。",
+    hero_sub:"API Relay Audit 是一个本地运行的 AI API 中转站 / LLM proxy 安全审计工具。它检测 prompt injection、模型替换、工具调用改写、SSE 异常、错误响应泄漏和 Web3 钱包风险，同时让你的 API Key 保持在本地。",
+    what_title:"API Relay Audit 是什么？",
+    what_desc:"API Relay Audit 是一个本地安全审计工具，用来检查第三方 AI API 中转站和 LLM proxy 是否注入 prompt、替换模型、改写工具输出、在错误响应中泄漏凭证，或产生流完整性异常。",
+    use_title:"什么时候使用",
+    use_1:"审计第三方 AI API 中转站、镜像、网关和 LLM proxy。",
+    use_2:"在生产流量前检查 Claude / OpenAI 兼容代理。",
+    use_3:"在 coding agent 自动化或钱包相关操作前测试中转站行为。",
+    claim_title:"它不声称什么",
+    claim_1:"它不为任何中转站颁发安全认证。",
+    claim_2:"它不替代人工安全审查。",
+    claim_3:"它不会把 inconclusive 当作 clean。",
     stat_steps:"审计步骤",stat_matrix:"风险矩阵",stat_tests:"单元测试",stat_deps:"依赖项 (standalone)",
     cta_demo:"查看 Demo 报告",cta_install:"开始审计",
     demo_title:"审计报告 Demo",
@@ -840,7 +984,7 @@ const i18n={
     demo_note:"域名已脱敏。数据来自 api-relay-audit 的实际审计。",
     demo_date:"测试日期",demo_no_inject:"无注入",demo_extracted:"提取成功",demo_risk_items:"风险项",
     demo_th_step:"检测项",demo_th_result:"结果",demo_th_detail:"详情",
-    how_title:"检测什么？",
+    how_title:"检测 Prompt 注入和模型替换",
     how_sub:'威胁分类基于 Liu et al., "Your Agent Is Mine" (arXiv:2604.08407)',
     step_infra_label:"Step 1-2",step_infra_title:"基础设施侦察",step_infra_desc:"DNS、CDN、SSL 证书、管理面板指纹、模型列表枚举 — 了解中转站背后的技术栈。",
     step_inject_label:"Step 3",step_inject_title:"Token 注入 (AC-1)",step_inject_desc:"对比实际 token 用量与预期值。隐藏 system prompt 注入会增加额外 token — 差值揭示注入量。",
@@ -891,27 +1035,39 @@ const i18n={
     cost_note:"每次审计消耗约 $0.2-0.5 API 费用（由你的 provider 计费）",
     install_security:"你的 API Key 仅发送到你指定的中转站地址。无遥测、无第三方服务器。",
     faq_title:"常见问题",
-    faq_q1:"什么是 API 中转站？",
-    faq_a1:'API 中转站是介于你和 AI 提供商（如 Anthropic、OpenAI）之间的第三方服务。你的请求发送到中转站，由它转发给上游。中转站存在的原因：部分用户无法直接访问 AI API（地理限制、支付问题），或者中转站通过共享 API Key 提供更便宜的价格。问题是：恶意中转站可以注入隐藏指令、替换模型、截断上下文、甚至从错误响应中窃取你的凭证。',
+    faq_q1:"什么是 API 中转站或 LLM proxy？",
+    faq_a1:'API 中转站或 LLM proxy 是介于你和 Anthropic、OpenAI 等 AI provider 之间的第三方服务。它会转发你的请求，但也可能注入隐藏指令、替换模型、截断上下文、改写工具输出，或在错误响应中泄漏凭证。',
     faq_q2:"输入 API Key 安全吗？",
-    faq_a2:'api-relay-audit 完全在你的机器上运行。你的 API Key 仅发送到你指定的中转站地址 — 也就是你本来就在使用的那个中转站。没有数据发送给我们，没有遥测，没有分析。Standalone 版本是一个单 Python 文件，零依赖（只用 stdlib + curl）— 你可以在运行前阅读每一行代码。这与要求你在网页上输入 Key 的工具有本质区别。',
-    faq_q3:"和 hvoy.ai / cctest.ai 有什么区别？",
-    faq_a3:'三个工具，三种思路。<strong>hvoy.ai</strong> 擅长信息聚合 — 40+ 中转站的公开排行榜是最快的查看方式。<strong>cctest.ai</strong> 提供一键便利和独特的通道指纹（protobuf 签名解析）。<strong>api-relay-audit</strong> 覆盖 14 个审计步骤（vs hvoy ~5 个，cctest 5 个），本地运行，完全开源。只有 api-relay-audit 能检测工具调用改写 (AC-1.a)、错误响应凭证泄漏 (AC-2)、上下文截断和 Web3 注入。按需选择：快速查看 → hvoy；一键检查 → cctest；完整安全审计 → api-relay-audit。<a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/comparison-api-relay-audit-vs-hvoy-vs-cctest.md" target="_blank" rel="noopener noreferrer">完整评测 →</a>',
-    faq_q4:"什么是 Token 注入？",
-    faq_a4:'当你向 AI API 发送消息时，中转站可能暗中在前面插入一段隐藏 system prompt。这注入了额外的 token — 例如 3200 tokens 的指令让模型表现为 "Kiro" 而非 Claude。你为这些隐藏 token 付费，更严重的是它们可以覆盖你的指令。api-relay-audit 通过对比实际 token 数与预期值来检测：如果你发送了 100 tokens 但模型报告使用了 3300，说明有 ~3200 tokens 的注入。类似于 hvoy.ai 的 "掺水率" 概念，但以绝对 token 差值衡量，更精确。',
-    faq_q5:"什么是 AC-1.a 工具调用改写？",
-    faq_a5:'AC-1.a（来自 arXiv:2604.08407 的威胁分类）是一种供应链攻击：中转站修改模型回复中的包名。例如模型说 <code>pip install requests==2.31.0</code>，但中转站把它改成一个拼写投毒的包名。如果你使用 Claude Code 或 AI 编码 agent 自动安装包，这是一个真实的攻击向量。api-relay-audit 发送固定版本的包安装命令，逐字符比对返回内容来检测任何修改。',
-    faq_q6:'"inconclusive" 三态判定是什么意思？',
-    faq_a6:'每个审计步骤返回三种状态之一：<strong>clean</strong>（未检测到异常）、<strong>anomaly</strong>（确认问题）、<strong>inconclusive</strong>（无法确定 — 例如中转站拦截了探针或返回错误）。这很重要，因为 "无法测试" 和 "确认安全" 是截然不同的。拦截所有探针的中转站得到 "inconclusive" 而非 "clean"。数字评分系统（0-100）模糊了这个区别 — 一个被拦截的测试可能得 50 分，看起来像 "还行"，但实际应该是 "可疑"。',
-    faq_q7:"支持非 Claude 模型吗？",
-    faq_a7:'大多数步骤 (1-9) 适用于任何模型和中转站。Step 10（流完整性）是 Anthropic 专属的，因为它验证 Anthropic 的 SSE 事件 schema、usage 字段和 thinking 签名。Step 11（Web3 注入）不限模型但需要 profile 开关。如果你的中转站使用 OpenAI 格式，工具会自动检测并适配请求格式。非 Anthropic 格式的流完整性检测会返回 "inconclusive"。',
+    faq_a2:'API Relay Audit 在本地运行，所以你的 API Key 只会发送到你指定的中转站 URL。不会发送到 API Relay Audit 的服务器，standalone 版本也没有 Python 包依赖。',
+    faq_q3:"这里的 prompt injection 是什么意思？",
+    faq_a3:'Prompt injection 指中转站可能在你的请求中插入隐藏指令。API Relay Audit 会比较 token 用量、运行 prompt 提取探针，并在出现隐藏 prompt 内容时记录证据。',
+    faq_q4:"什么是模型替换？",
+    faq_a4:'模型替换指中转站声称提供某个模型，但实际路由到另一个模型，或泄漏了不同的模型身份。API Relay Audit 会检查身份关键词，并在可用时检查 stream 里的模型身份。',
+    faq_q5:"什么是工具调用改写？",
+    faq_a5:'工具调用改写指中转站修改模型回复中的包安装命令或工具输出。API Relay Audit 会比对固定 package 命令和返回文本，用来检测代理层供应链篡改。',
+    faq_q6:"什么是 SSE 异常？",
+    faq_a6:'SSE 异常是 Anthropic 风格流式响应中的完整性问题。API Relay Audit 会检查事件类型、usage 单调性、thinking 签名，以及可用时的 stream 模型身份。',
+    faq_q7:"它检查哪些 Web3 钱包风险？",
+    faq_a7:'在 web3 或 full profile 下，API Relay Audit 会检查转账指引、签名交易拒绝和私钥拒绝行为，帮助你在信任钱包相关流量前测试中转站行为。',
+    faq_q8:"inconclusive 是什么意思？",
+    faq_a8:'Inconclusive 表示该步骤无法判断 clean 或 anomaly。被拦截的探针、不支持的格式和模糊响应不会被当成 clean。',
     footer_threat:"威胁模型: "
   },
   en:{
     nav_demo:"Demo",nav_install:"Quick Start",nav_faq:"FAQ",
     hero_badge:"Local execution — your API Key is never sent to a third-party server",
     hero_title:'<span class="gradient">AI API Relay</span> Security Audit',
-    hero_sub:"Open-source 14-step audit tool. Detects token injection, prompt leakage, identity substitution, tool-call rewriting, credential leakage in error responses, and SSE stream tampering.",
+    hero_sub:"API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It detects prompt injection, model substitution, tool rewriting, SSE anomalies, error leakage, and Web3 wallet risks while keeping your API key local.",
+    what_title:"What is API Relay Audit?",
+    what_desc:"API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It checks whether a third-party relay injects prompts, substitutes models, rewrites tool output, leaks credentials in error responses, or produces stream integrity anomalies.",
+    use_title:"When to use it",
+    use_1:"Audit third-party AI API relays, mirrors, gateways, and LLM proxies.",
+    use_2:"Check Claude-compatible or OpenAI-compatible proxies before production traffic.",
+    use_3:"Test relay behavior before coding-agent automation or wallet-related actions.",
+    claim_title:"What it does not claim",
+    claim_1:"It does not certify that a relay is safe.",
+    claim_2:"It does not replace manual security review.",
+    claim_3:"It does not treat inconclusive as clean.",
     stat_steps:"Audit Steps",stat_matrix:"Risk Matrix",stat_tests:"Unit Tests",stat_deps:"Dependencies (standalone)",
     cta_demo:"See Demo Report",cta_install:"Start Audit",
     demo_title:"Audit Report Demo",demo_sub:"Real audit results from three relay services — click tabs to compare",
@@ -919,7 +1075,7 @@ const i18n={
     demo_note:"Domain names redacted. Data from actual audits run with api-relay-audit.",
     demo_date:"Test date",demo_no_inject:"No injection",demo_extracted:"extracted",demo_risk_items:"Risk Items",
     demo_th_step:"Test",demo_th_result:"Result",demo_th_detail:"Detail",
-    how_title:"What Does It Detect?",
+    how_title:"Detect Prompt Injection and Model Substitution",
     how_sub:'Threat taxonomy based on Liu et al., "Your Agent Is Mine" (arXiv:2604.08407)',
     step_infra_label:"Step 1-2",step_infra_title:"Infrastructure Recon",step_infra_desc:"DNS, CDN, SSL certificate, management panel fingerprint, model list enumeration — understand what's behind the relay.",
     step_inject_label:"Step 3",step_inject_title:"Token Injection (AC-1)",step_inject_desc:"Compares actual token usage against expected values. Hidden system prompt injection adds extra tokens — the delta reveals it.",
@@ -970,20 +1126,22 @@ const i18n={
     cost_note:"Each audit costs ~$0.2-0.5 in API usage (billed by your provider)",
     install_security:"Your API Key is only sent to the relay URL you specify. No telemetry, no third-party servers.",
     faq_title:"FAQ",
-    faq_q1:"What is an API relay / proxy?",
-    faq_a1:'An API relay (also called "中转站" in Chinese) is a third-party service that sits between you and an AI provider like Anthropic or OpenAI. You send your requests to the relay, and it forwards them to the upstream provider. Relays exist because some users can\'t access AI APIs directly (geo restrictions, payment issues), or because relays offer cheaper per-token pricing by pooling API keys. The problem: a malicious relay can inject hidden instructions, swap the model, truncate your context, or even steal your credentials from error responses.',
-    faq_a2:'api-relay-audit runs entirely on your machine. Your API Key is only sent to the relay URL you specify — the same relay you\'re already using. No data is sent to us, no telemetry, no analytics. The standalone version is a single Python file with zero dependencies (just stdlib + curl) — you can read every line of code before running it. This is fundamentally different from web-based tools that ask you to enter your key into a webpage.',
+    faq_q1:"What is an API relay or LLM proxy?",
+    faq_a1:'An API relay or LLM proxy is a third-party service between you and an AI provider such as Anthropic or OpenAI. It forwards your requests upstream, but it can also inject hidden instructions, swap models, truncate context, rewrite tool output, or leak credentials in error responses.',
+    faq_a2:'API Relay Audit runs locally, so your API key is sent only to the relay URL you specify. No data is sent to API Relay Audit servers, and the standalone version has zero Python package dependencies.',
     faq_q2:"Is it safe to enter my API Key?",
-    faq_q3:"What's the difference between this and hvoy.ai / cctest.ai?",
-    faq_a3:'Three tools, three approaches. <strong>hvoy.ai</strong> excels at information aggregation — its public leaderboard of 40+ relays is the fastest way to check a relay\'s reputation. <strong>cctest.ai</strong> offers one-click convenience and a unique channel fingerprint (protobuf signature parsing). <strong>api-relay-audit</strong> covers 13 audit dimensions (vs ~5 for hvoy, 5 for cctest), runs locally, and is fully open-source. Only api-relay-audit detects tool-call rewriting (AC-1.a), error response credential leakage (AC-2), context truncation, and Web3 injection. Pick based on your needs: quick lookup → hvoy; one-click check → cctest; full security audit → api-relay-audit. <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/comparison-api-relay-audit-vs-hvoy-vs-cctest.md" target="_blank" rel="noopener noreferrer">Full comparison →</a>',
-    faq_q4:'What does "token injection" mean?',
-    faq_a4:'When you send a message to an AI API, the relay may secretly prepend a hidden system prompt. This injects extra tokens into your request — for example, 3200 tokens of instructions telling the model to behave as "Kiro" instead of Claude. You pay for these hidden tokens, and worse, they can override your own instructions. api-relay-audit detects this by comparing actual token counts against expected values: if you sent 100 tokens but the model reports using 3300, there are ~3200 tokens of injection. Similar to hvoy.ai\'s "掺水率" (dilution rate) concept, but measured as an absolute token delta for precision.',
-    faq_q5:"What is AC-1.a tool-call rewriting?",
-    faq_a5:'AC-1.a (from the threat taxonomy in arXiv:2604.08407) is a supply-chain attack where the relay modifies package names in the model\'s response. For example, the model says <code>pip install requests==2.31.0</code>, but the relay changes it to a typosquatted package. If you\'re using Claude Code or an AI coding agent that automatically installs packages, this is a real attack vector. api-relay-audit sends pinned package-install commands and compares received text character-by-character to detect any modification.',
-    faq_q6:'What does "inconclusive" mean in the tri-state verdict?',
-    faq_a6:'Every audit step returns one of three states: <strong>clean</strong> (no anomaly detected), <strong>anomaly</strong> (issue confirmed), or <strong>inconclusive</strong> (the test couldn\'t determine a result — e.g., the relay blocked the probe or returned an error). This is important because "couldn\'t test" and "confirmed safe" are very different things. A relay that blocks all probes gets "inconclusive," not "clean." Numeric scoring systems (0-100) blur this distinction — a blocked test might score 50, which looks like "okay" when it should mean "suspicious."',
-    faq_q7:"Does this work with non-Claude models?",
-    faq_a7:'Most steps (1-9) work with any model through any relay. Step 10 (stream integrity) is Anthropic-specific because it validates Anthropic\'s SSE event schema, usage fields, and thinking signatures. Step 11 (Web3 injection) is model-agnostic but profile-gated. If your relay uses OpenAI format, the tool auto-detects and adapts the request format. Stream integrity will return "inconclusive" for non-Anthropic formats.',
+    faq_q3:"What does prompt injection mean here?",
+    faq_a3:'Prompt injection means the relay may prepend or insert hidden instructions into your request. API Relay Audit compares token usage, runs extraction probes, and records evidence when hidden prompt content appears.',
+    faq_q4:"What is model substitution?",
+    faq_a4:'Model substitution means the relay claims to provide one model but routes you to another model or leaks a different model identity. API Relay Audit checks identity patterns and stream model identity where available.',
+    faq_q5:"What is tool-call rewriting?",
+    faq_a5:'Tool-call rewriting means the relay modifies package-install commands or tool-like output in the model response. API Relay Audit compares pinned package commands against returned text to detect proxy-layer supply-chain tampering.',
+    faq_q6:"What are SSE anomalies?",
+    faq_a6:'SSE anomalies are stream-level integrity issues in Anthropic-style streaming responses. API Relay Audit checks event types, usage monotonicity, thinking signatures, and stream model identity when supported.',
+    faq_q7:"What Web3 wallet risks does it check?",
+    faq_a7:'With the web3 or full profile, API Relay Audit checks transfer guidance, signed-transaction refusal, and private-key refusal behavior before wallet-related traffic is trusted.',
+    faq_q8:"What does inconclusive mean?",
+    faq_a8:'Inconclusive means the tool could not determine a clean or anomalous result for that step. Blocked probes, unsupported formats, and ambiguous responses are not treated as clean.',
     footer_threat:"Threat model: "
   }
 };
@@ -1011,7 +1169,7 @@ function setLang(lang){
 
 // ── Init ──
 document.addEventListener('DOMContentLoaded',()=>{
-  setLang('zh');
+  setLang('en');
   showDemo(0);
 });
 </script>
