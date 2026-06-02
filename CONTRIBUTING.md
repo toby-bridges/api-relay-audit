@@ -16,6 +16,27 @@ Good first issues usually fit one of these shapes:
 Before opening a larger PR, please start with an issue that explains the
 real-world behavior you observed and the exact audit step it affects.
 
+## Non-Code Contributions
+
+Most useful early contributions do not require code. They should still be
+specific, reproducible, and safe to publish.
+
+| Contribution type | Good input | Avoid |
+| --- | --- | --- |
+| Detector gap | A sanitized prompt, profile, expected behavior, actual behavior, and affected step | Raw API keys, private relay traffic, or unverifiable claims |
+| Documentation example | A concrete command, flag combination, profile choice, or confusing report line | Broad rewrites that change project scope |
+| OpenClaw / Hermes feedback | Install command used, environment, error text, and what fixed it | Publishing secrets from shell history or logs |
+| Translation / i18n | Small README, guide, or Quick Start improvements | Machine-translated blocks that change technical meaning |
+
+Use the issue templates when possible:
+
+- Detector gap: `.github/ISSUE_TEMPLATE/detector-gap.yml`
+- Documentation example: `.github/ISSUE_TEMPLATE/documentation-example.yml`
+- Agent skill install feedback: `.github/ISSUE_TEMPLATE/agent-skill-feedback.yml`
+
+Do not submit a public example audit report with real relay domains, real API
+keys, wallet material, raw traffic captures, or private operational details.
+
 ## Development Setup
 
 ```bash

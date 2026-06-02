@@ -1,0 +1,67 @@
+name: Detector Gap / 检测缺口
+description: Report a reproducible detector gap without exposing secrets / 提交可复现且不暴露敏感信息的检测缺口
+title: "[Detector Gap] "
+labels: ["documentation", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for behavior that API Relay Audit should explain, detect, or classify more clearly.
+
+        Do not include API keys, private relay URLs, wallet secrets, raw traffic captures, or unredacted audit reports.
+
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Audit Profile
+      options:
+        - general
+        - web3
+        - full
+        - not sure
+    validations:
+      required: true
+
+  - type: input
+    id: affected_step
+    attributes:
+      label: Affected Step
+      description: "Example: Step 3 token injection, Step 8 tool-call rewriting, Step 10 SSE integrity"
+      placeholder: "Step 8 tool-call rewriting"
+    validations:
+      required: true
+
+  - type: textarea
+    id: sanitized_reproduction
+    attributes:
+      label: Sanitized Reproduction
+      description: Replace private domains with example.invalid and remove all credentials.
+      placeholder: |
+        Command shape:
+        python audit.py --url https://example.invalid/v1 --profile general --output report.md
+
+        Prompt or response excerpt, fully redacted:
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected vs Actual
+      description: Explain what you expected and what the tool reported.
+      placeholder: |
+        Expected:
+        Actual:
+        Why this seems like a detector gap:
+    validations:
+      required: true
+
+  - type: textarea
+    id: safety_notes
+    attributes:
+      label: Safety Notes
+      description: Confirm that no secrets or private traffic are included.
+      placeholder: "I replaced the relay domain with example.invalid and removed API keys / private traffic."
+    validations:
+      required: true
+

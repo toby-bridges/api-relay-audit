@@ -66,6 +66,19 @@ Runtime profiles:
 - `web3`: wallet-safety probes for Web3 agent flows
 - `full`: general plus Web3 checks
 
+## Agent Skills: OpenClaw and Hermes
+
+API Relay Audit can also run as an agent skill when an agent workflow needs to
+audit a relay before trusting it with coding, tool, or wallet-related traffic.
+
+- **OpenClaw Skill:** run a local AI API relay audit before an OpenClaw agent
+  depends on a third-party relay, proxy API, or resale key.
+- **Hermes Skill:** install API Relay Audit as a Hermes Agent skill and run the
+  same local 14-step LLM proxy security audit from an agent workflow.
+
+These skills do not certify that a relay is safe. They help agents generate a
+local, reviewable Markdown report before trusting a relay path.
+
 ## When to Use It
 
 - You use a third-party AI API relay, mirror, gateway, or LLM proxy.
@@ -151,9 +164,23 @@ This keeps modified network-service deployments accountable to the same public s
 
 ## How to Contribute
 
-Good first contributions are small, reproducible, and evidence-focused: documentation examples, deterministic detector tests, or clearer wording around `clean`, `anomaly`, and `inconclusive` results.
+You do not need to write code to help. Good first contributions are small,
+reproducible, and evidence-focused:
 
-Start with [CONTRIBUTING.md](./CONTRIBUTING.md), avoid publishing real API keys or private relay traffic, and keep changes scoped to one behavior or document.
+- Report a detector gap with a sanitized reproduction.
+- Add documentation examples for profiles, flags, or relay behavior.
+- Improve OpenClaw or Hermes install notes from a real local setup.
+- Translate Quick Start or clarify `clean`, `anomaly`, and `inconclusive`.
+
+Start with:
+
+- [Detector Gap](https://github.com/toby-bridges/api-relay-audit/issues/new?template=detector-gap.yml)
+- [Documentation Example](https://github.com/toby-bridges/api-relay-audit/issues/new?template=documentation-example.yml)
+- [Agent Skill Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=agent-skill-feedback.yml)
+- [CONTRIBUTING.md](./CONTRIBUTING.md)
+
+Avoid publishing real API keys or private relay traffic, and keep changes scoped
+to one behavior or document.
 
 ## Star History
 
@@ -214,6 +241,16 @@ API Relay Audit 也可以作为 agent skill 使用。
 - 它不为任何中转站颁发“安全认证”。
 - 它不替代人工安全审查或线上监控。
 - 它不会把 `inconclusive` 当成 `clean`；被拦截或无法判断的探针会保留在报告里。
+
+## 如何贡献
+
+你不需要写代码也能帮忙：可以提交检测缺口、文档示例、翻译改进，或 OpenClaw / Hermes 安装反馈。
+
+- [Detector Gap](https://github.com/toby-bridges/api-relay-audit/issues/new?template=detector-gap.yml)
+- [Documentation Example](https://github.com/toby-bridges/api-relay-audit/issues/new?template=documentation-example.yml)
+- [Agent Skill Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=agent-skill-feedback.yml)
+
+请不要提交真实 API Key、私有中转站流量、钱包材料或未脱敏审计报告。
 
 ## 主要入口
 

@@ -1,0 +1,47 @@
+name: Documentation Example / 文档示例
+description: Suggest a non-code documentation example / 提交非代码文档示例建议
+title: "[Docs Example] "
+labels: ["documentation", "good first issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for Quick Start examples, profile examples, flag combinations, FAQ improvements, or translation notes.
+
+        Do not include real API keys, private relay domains, private traffic, or raw audit reports.
+
+  - type: dropdown
+    id: doc_area
+    attributes:
+      label: Documentation Area
+      options:
+        - Quick Start
+        - general profile
+        - web3 profile
+        - full profile
+        - FAQ
+        - README Chinese section
+        - Pages guide
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_example
+    attributes:
+      label: Proposed Example
+      description: Keep it short, concrete, and safe to publish.
+      placeholder: |
+        Example command or wording:
+
+        Why this helps:
+    validations:
+      required: true
+
+  - type: textarea
+    id: source_context
+    attributes:
+      label: Source Context
+      description: What confused you or what user path does this improve?
+      placeholder: "I was trying to choose between --profile general and --profile web3..."
+

@@ -1,0 +1,53 @@
+name: Agent Skill Feedback / Agent Skill 反馈
+description: Report OpenClaw or Hermes install and usage feedback / 提交 OpenClaw 或 Hermes 安装使用反馈
+title: "[Agent Skill] "
+labels: ["documentation", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for OpenClaw / ClawHub or Hermes Agent skill feedback.
+
+        Do not paste API keys, shell history containing secrets, private relay URLs, wallet material, or raw traffic captures.
+
+  - type: dropdown
+    id: skill_target
+    attributes:
+      label: Skill Target
+      options:
+        - OpenClaw / ClawHub
+        - Hermes Agent direct install
+        - Hermes Agent tap install
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: command_used
+    attributes:
+      label: Command Used
+      description: Paste the install or run command after removing secrets.
+      placeholder: |
+        hermes skills install toby-bridges/api-relay-audit/skills/api-relay-audit
+    validations:
+      required: true
+
+  - type: textarea
+    id: result
+    attributes:
+      label: Result
+      description: What happened? Include sanitized error text when useful.
+      placeholder: |
+        Expected:
+        Actual:
+        Error text, if any:
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, shell, OpenClaw/Hermes version, and anything relevant.
+      placeholder: "macOS, zsh, Hermes version ..., OpenClaw version ..."
+
