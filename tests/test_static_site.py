@@ -1,6 +1,7 @@
 """Regression checks for the GitHub Pages static site."""
 
 import json
+import re
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -59,6 +60,29 @@ def _html_pages():
     return sorted(WEB_ROOT.glob("**/*.html"))
 
 
+def _guide_pages():
+    return sorted((WEB_ROOT / "guides").glob("*.html"))
+
+
+def _json_ld_graph(parser):
+    nodes = []
+    for item in parser.json_ld:
+        data = json.loads(item)
+        if isinstance(data, dict) and isinstance(data.get("@graph"), list):
+            nodes.extend(data["@graph"])
+        else:
+            nodes.append(data)
+    return nodes
+
+
+def _visible_word_count(path):
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r"<script\b.*?</script>", " ", text, flags=re.S)
+    text = re.sub(r"<style\b.*?</style>", " ", text, flags=re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return len(re.findall(r"\b[\w'-]+\b", text))
+
+
 def _local_path_for_url(url):
     parsed = urlparse(url)
     assert parsed.scheme == "https"
@@ -89,6 +113,26 @@ def test_all_pages_parse_and_json_ld_is_valid():
         parser = _parse_html(path)
         for item in parser.json_ld:
             json.loads(item)
+
+
+def test_guide_pages_have_breadcrumbs_and_techarticle_json_ld():
+    for path in _guide_pages():
+        html = path.read_text(encoding="utf-8")
+        parser = _parse_html(path)
+        nodes = _json_ld_graph(parser)
+        types = {node.get("@type") for node in nodes if isinstance(node, dict)}
+        assert 'class="breadcrumb"' in html, f"{path} is missing visible breadcrumb"
+        assert "BreadcrumbList" in types, f"{path} is missing BreadcrumbList JSON-LD"
+        assert "TechArticle" in types, f"{path} is missing TechArticle JSON-LD"
+        article = next(node for node in nodes if isinstance(node, dict) and node.get("@type") == "TechArticle")
+        assert article.get("headline"), f"{path} TechArticle missing headline"
+        assert article.get("dateModified"), f"{path} TechArticle missing dateModified"
+        assert article.get("author", {}).get("name") == "Toby Bridges"
+
+
+def test_guide_pages_are_substantial_enough_for_search_and_ai_summaries():
+    for path in _guide_pages():
+        assert _visible_word_count(path) >= 650, f"{path} is too thin"
 
 
 def test_relative_links_and_fragments_resolve():

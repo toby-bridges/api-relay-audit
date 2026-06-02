@@ -7,21 +7,53 @@
 <meta name="description" content="Install API Relay Audit as an OpenClaw or Hermes Agent skill to run local AI API relay and LLM proxy security audits before trusting relay traffic.">
 <link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/guides/openclaw-hermes-skill-api-relay-audit.html">
 <link rel="stylesheet" href="../assets/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "API Relay Audit", "item": "https://toby-bridges.github.io/api-relay-audit/"},
+        {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://toby-bridges.github.io/api-relay-audit/#guides"},
+        {"@type": "ListItem", "position": 3, "name": "OpenClaw and Hermes Skill for AI API Relay Audits", "item": "https://toby-bridges.github.io/api-relay-audit/guides/openclaw-hermes-skill-api-relay-audit.html"}
+      ]
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://toby-bridges.github.io/api-relay-audit/guides/openclaw-hermes-skill-api-relay-audit.html#article",
+      "headline": "OpenClaw and Hermes Skill for AI API Relay Audits",
+      "description": "How OpenClaw and Hermes Agent workflows can run API Relay Audit as a local skill before trusting AI API relay traffic.",
+      "datePublished": "2026-06-01",
+      "dateModified": "2026-06-02",
+      "author": {"@type": "Person", "name": "Toby Bridges", "url": "https://github.com/toby-bridges"},
+      "publisher": {"@type": "Organization", "name": "API Relay Audit", "url": "https://github.com/toby-bridges/api-relay-audit"},
+      "mainEntityOfPage": "https://toby-bridges.github.io/api-relay-audit/guides/openclaw-hermes-skill-api-relay-audit.html",
+      "about": ["OpenClaw skill", "Hermes Agent skill", "AI API relay audit", "agent safety", "LLM proxy security"]
+    }
+  ]
+}
+</script>
 </head>
 <body>
-<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">中文</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
+<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">Chinese</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
 <main class="wrap">
+  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../">Home</a><span>/</span><a href="../#guides">Guides</a><span>/</span><span>OpenClaw and Hermes</span></nav>
   <div class="eyebrow">Agent Skill</div>
   <h1>OpenClaw and Hermes skill for AI API relay audits</h1>
-  <p class="lead">API Relay Audit can run as an agent skill so OpenClaw or Hermes users can generate a local, reviewable Markdown report before an agent sends coding, tool, or wallet-related traffic through a third-party relay.</p>
+  <p class="lead">API Relay Audit can run as an agent skill so OpenClaw or Hermes users can generate a local, reviewable Markdown report before an agent sends coding, tool, or wallet-related traffic through a third-party relay. The skill does not replace manual review. It gives an agent a repeatable local workflow instead of asking it to improvise a security test from memory.</p>
 
-  <section class="note">The skill does not certify that a relay is safe. It helps an agent run the same local 14-step audit and keep API-key handling explicit.</section>
+  <section class="note">Short answer: OpenClaw and Hermes are distribution surfaces for the same local audit. They should make relay checks easier to run, not turn audit output into a safety certificate.</section>
+
+  <h2>Why agent skills matter here</h2>
+  <p>AI agents often sit close to tools: package managers, terminals, deploy scripts, wallets, browser automation, and API clients. If an agent routes its model calls through an untrusted relay, that relay may influence not only text, but tool choices and safety decisions. A skill gives the agent a fixed audit recipe: collect a base URL, use a scoped key, run the standalone script, write a Markdown report, and summarize only evidence from that report.</p>
+  <p>This is especially relevant for coding and wallet-adjacent workflows. Tool-call rewriting can modify package install commands. Web3 prompt injection can normalize unsafe private-key or signing behavior. Error leakage can reveal upstream framework details. A skill keeps those checks explicit before the agent trusts a relay path.</p>
 
   <h2>OpenClaw use case</h2>
-  <p>Use the OpenClaw skill when an OpenClaw agent is about to depend on an AI API relay, proxy API, or resale key. The skill is designed to check prompt injection, model substitution, tool-call rewriting, SSE anomalies, upstream channel mismatch, error leakage, and Web3 wallet risks.</p>
+  <p>Use the OpenClaw skill when an OpenClaw agent is about to depend on an AI API relay, proxy API, or resale key. The skill is designed to check prompt injection, model substitution, tool-call rewriting, SSE anomalies, upstream channel mismatch, error leakage, and Web3 wallet risks. For OpenClaw-style workflows, the most important behavior is pre-flight restraint: run the audit before giving a relay route sensitive coding, tool, or wallet-related work.</p>
 
   <h2>Hermes Agent use case</h2>
-  <p>Use the Hermes skill when a Hermes workflow needs a repeatable local audit recipe. The skill prefers `$API_RELAY_AUDIT_KEY` for secret handling and writes a Markdown report instead of asking the agent to summarize raw traffic from memory.</p>
+  <p>Use the Hermes skill when a Hermes workflow needs a repeatable local audit recipe. The skill prefers `$API_RELAY_AUDIT_KEY` for secret handling and writes a Markdown report instead of asking the agent to summarize raw traffic from memory. Hermes users can install directly from the repository skill folder or, after publication, through a tap or skills hub flow.</p>
 
   <h2>Install commands</h2>
   <pre class="code"><code># Hermes direct install
@@ -35,15 +67,38 @@ hermes skills install toby-bridges/api-relay-audit/api-relay-audit
 openclaw skills search "api relay audit"
 openclaw skills install api-relay-audit</code></pre>
 
-  <h2>Why this helps agent safety</h2>
-  <ul>
-    <li>The audit runs locally rather than through another web checker.</li>
-    <li>The report distinguishes `clean`, `anomaly`, and `inconclusive` results.</li>
-    <li>Tool-call rewriting and Web3 wallet probes are visible before the agent trusts a relay path.</li>
-    <li>The skill keeps OpenClaw and Hermes as distribution channels, not as replacements for manual security review.</li>
+  <h2>Skill behavior checklist</h2>
+  <table>
+    <tr><th>Requirement</th><th>Why it matters</th><th>Expected skill behavior</th></tr>
+    <tr><td>Scoped key</td><td>Relay audits spend tokens and test unusual paths.</td><td>Prefer environment variables and avoid echoing keys in summaries.</td></tr>
+    <tr><td>Local script</td><td>The audit should not add a separate web checker to the key path.</td><td>Download or use `audit.py` locally, then write a Markdown report.</td></tr>
+    <tr><td>Evidence-only summary</td><td>Agents can overstate confidence if left unconstrained.</td><td>Summarize only report findings and keep `inconclusive` visible.</td></tr>
+    <tr><td>No certification language</td><td>A single black-box run cannot prove permanent relay safety.</td><td>Say what was observed, not that a relay is globally safe.</td></tr>
+  </table>
+
+  <div class="report-example">
+    <strong>Anonymous skill run:</strong>
+    <p>A Hermes workflow received a relay base URL and a scoped key through local environment setup. The skill downloaded `audit.py`, ran the general profile, wrote `api-relay-audit-report.md`, and summarized that prompt extraction was clean, tool-call substitution was clean, but stream integrity was inconclusive. The agent recommended using the relay for low-risk text tasks only until the operator explained the stream behavior.</p>
+  </div>
+
+  <h2>What this does not prove</h2>
+  <p>Installing an OpenClaw or Hermes skill does not make the relay safe. It also does not make the agent immune to prompt injection. The skill only standardizes the audit workflow and reduces improvisation. Users still need to scope credentials, review reports, avoid publishing secrets, and decide whether inconclusive findings are acceptable for their risk level.</p>
+
+  <h2>References and follow-up</h2>
+  <ul class="reference-list">
+    <li><a href="what-is-ai-api-relay-proxy.html">What is an AI API relay?</a> explains the relay trust boundary.</li>
+    <li><a href="web3-wallet-prompt-injection-ai-agents.html">Web3 wallet prompt injection</a> explains why wallet-related agent traffic needs profile-gated checks.</li>
+    <li><a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/skill-distribution.md">Skill distribution notes</a> track OpenClaw and Hermes publishing details.</li>
   </ul>
+
+  <section class="mini-faq">
+    <h2>FAQ</h2>
+    <h3>Should OpenClaw or Hermes become the main project concept?</h3>
+    <p>No. The main concept stays API Relay Audit. OpenClaw and Hermes are agent-skill distribution channels for users who already work in those ecosystems.</p>
+    <h3>Can an agent run the audit without seeing my key?</h3>
+    <p>The agent needs access to a key in order to run requests, but the skill should prefer local environment variables and avoid repeating the raw key in chat, filenames, reports, or public comments.</p>
+  </section>
 </main>
 <footer><div class="wrap">Related: <a href="what-is-ai-api-relay-proxy.html">what is an AI API relay?</a> · <a href="detect-prompt-injection-llm-api-proxies.html">prompt injection in LLM proxies</a></div></footer>
 </body>
 </html>
-

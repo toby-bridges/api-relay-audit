@@ -7,29 +7,94 @@
 <meta name="description" content="How to detect prompt injection and hidden instruction changes in LLM API proxies with local probes and reviewable audit evidence.">
 <link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/guides/detect-prompt-injection-llm-api-proxies.html">
 <link rel="stylesheet" href="../assets/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "API Relay Audit", "item": "https://toby-bridges.github.io/api-relay-audit/"},
+        {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://toby-bridges.github.io/api-relay-audit/#guides"},
+        {"@type": "ListItem", "position": 3, "name": "Detecting Prompt Injection in LLM API Proxies", "item": "https://toby-bridges.github.io/api-relay-audit/guides/detect-prompt-injection-llm-api-proxies.html"}
+      ]
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://toby-bridges.github.io/api-relay-audit/guides/detect-prompt-injection-llm-api-proxies.html#article",
+      "headline": "Detecting Prompt Injection in LLM API Proxies",
+      "description": "A local evidence workflow for detecting hidden instruction changes in LLM API proxies using token deltas, prompt extraction probes, identity checks, and report review.",
+      "datePublished": "2026-06-01",
+      "dateModified": "2026-06-02",
+      "author": {"@type": "Person", "name": "Toby Bridges", "url": "https://github.com/toby-bridges"},
+      "publisher": {"@type": "Organization", "name": "API Relay Audit", "url": "https://github.com/toby-bridges/api-relay-audit"},
+      "mainEntityOfPage": "https://toby-bridges.github.io/api-relay-audit/guides/detect-prompt-injection-llm-api-proxies.html",
+      "about": ["prompt injection", "LLM API proxy", "hidden instructions", "model substitution", "security audit"]
+    }
+  ]
+}
+</script>
 </head>
 <body>
-<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">中文</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
+<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">Chinese</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
 <main class="wrap">
+  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../">Home</a><span>/</span><a href="../#guides">Guides</a><span>/</span><span>Prompt injection</span></nav>
   <div class="eyebrow">Guide</div>
   <h1>Detecting prompt injection in LLM API proxies</h1>
-  <p class="lead">Prompt injection in an LLM API proxy means the intermediary may add hidden instructions, identity text, or policy text to your request before it reaches the model. Local detection works by combining token-delta evidence, extraction probes, identity checks, and instruction-conflict tests.</p>
+  <p class="lead">Prompt injection in an LLM API proxy means the intermediary may add hidden instructions, identity text, filtering rules, or policy text to your request before it reaches the model. Local detection works by combining token-delta evidence, extraction probes, identity checks, instruction-conflict tests, and careful interpretation of inconclusive results.</p>
+
+  <section class="note">Short answer: do not trust a single signal. Prompt injection is best treated as an evidence bundle: token usage, leaked hidden text, instruction conflict, identity mismatch, and repeatable report artifacts.</section>
 
   <h2>Signals to look for</h2>
   <div class="grid">
-    <section class="card"><h3>Unexpected token delta</h3><p>If a small request produces a much larger prompt-token count than expected, the relay may be adding hidden context.</p></section>
+    <section class="card"><h3>Unexpected token delta</h3><p>If a small request produces a much larger prompt-token count than expected, the relay may be adding hidden context. Small deltas can be framework defaults; large deltas deserve review.</p></section>
     <section class="card"><h3>Prompt extraction</h3><p>If the model reveals hidden relay instructions under recall, translation, or continuation probes, the relay path is not transparent.</p></section>
-    <section class="card"><h3>Identity conflict</h3><p>If a Claude-compatible route leaks GPT, GLM, DeepSeek, Qwen, or other non-claimed identities, model substitution or prompt injection may be involved.</p></section>
+    <section class="card"><h3>Identity conflict</h3><p>If a Claude-compatible route leaks GPT, GLM, DeepSeek, Qwen, or other non-claimed identities, model substitution or relay-side instruction injection may be involved.</p></section>
   </div>
 
+  <h2>Prompt-injection evidence map</h2>
+  <table>
+    <tr><th>Probe family</th><th>What it asks</th><th>How to read it</th></tr>
+    <tr><td>Token injection</td><td>Does the input-token count exceed the expected prompt size?</td><td>A large repeatable delta is a strong hidden-context signal, but not a full proof on its own.</td></tr>
+    <tr><td>Prompt extraction</td><td>Can hidden system or relay instructions be recalled, translated, or continued?</td><td>Recovered hidden text is direct evidence. Refusals or blocked probes may be inconclusive.</td></tr>
+    <tr><td>Instruction conflict</td><td>Does a user-controlled system instruction still win?</td><td>If the relay's hidden instruction overrides user intent, the trust boundary is compromised.</td></tr>
+    <tr><td>Identity substitution</td><td>Does the assistant reveal a different model or vendor identity?</td><td>Identity mismatch can corroborate injection or upstream model substitution.</td></tr>
+    <tr><td>Warm-up behavior</td><td>Does behavior change after benign requests?</td><td>Conditional delivery is harder to prove, so repeated runs can matter.</td></tr>
+  </table>
+
   <h2>Run the local probe set</h2>
-  <pre class="code"><code>python audit.py --key &lt;YOUR_KEY&gt; --url &lt;BASE_URL&gt; --output prompt-injection-audit.md</code></pre>
+  <pre class="code"><code>curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py
+python audit.py --key &lt;YOUR_KEY&gt; --url &lt;BASE_URL&gt; --output prompt-injection-audit.md
+
+# For suspicious relays that may activate after request history:
+python audit.py --key &lt;YOUR_KEY&gt; --url &lt;BASE_URL&gt; --warmup 10 --output prompt-injection-audit.md</code></pre>
 
   <h2>Why one signal is not enough</h2>
-  <p>Token counts can be noisy, extraction probes can be refused, and identity wording can produce false positives. API Relay Audit records multiple probe families so a reviewer can see whether the evidence is consistent, contradictory, or inconclusive.</p>
+  <p>Token counts can be noisy, extraction probes can be refused, and identity wording can produce false positives. A relay may also sanitize obvious probes while leaving other attack paths open. API Relay Audit records multiple probe families so a reviewer can see whether the evidence is consistent, contradictory, or inconclusive.</p>
+  <p>The strongest cases usually combine more than one signal: a large token delta, extracted hidden text, and instruction-conflict failure. A weaker case might include a small token delta but no extracted text. A blocked case should remain visible as inconclusive rather than being converted into a clean result.</p>
 
-  <h2>Useful follow-up issue</h2>
-  <p>For reproducible examples and detector gaps, track <a href="https://github.com/toby-bridges/api-relay-audit/issues/31">issue #31: relay prompt injection examples and detection gaps</a>.</p>
+  <div class="report-example">
+    <strong>Anonymous report slice:</strong>
+    <p>Token injection: plus 380 tokens above baseline. Prompt extraction: one continuation probe revealed relay instructions to preserve a non-user identity. Instruction conflict: partial failure. Identity check: upstream model wording inconsistent with the requested route. Overall result: HIGH because multiple signals pointed to relay-side instruction control.</p>
+  </div>
+
+  <h2>What this does not prove</h2>
+  <p>Prompt-injection probes do not prove the exact source of every hidden token. Some providers add safety text, some proxy stacks normalize prompts, and some relays block diagnostic probes. The report should be read as local evidence from a specific time, profile, model, and relay URL. Do not use it as a permanent verdict for all future traffic.</p>
+
+  <h2>References and follow-up</h2>
+  <ul class="reference-list">
+    <li><a href="https://arxiv.org/abs/2604.08407">Your Agent Is Mine</a> provides the malicious intermediary threat taxonomy used by the audit model.</li>
+    <li><a href="https://github.com/toby-bridges/api-relay-audit/issues/31">Issue #31</a> tracks relay prompt injection examples and detection gaps.</li>
+    <li><a href="what-is-ai-api-relay-proxy.html">What is an AI API relay?</a> explains why this proxy position is powerful.</li>
+  </ul>
+
+  <section class="mini-faq">
+    <h2>FAQ</h2>
+    <h3>Can a relay hide from these probes?</h3>
+    <p>Yes. Conditional behavior is a real limitation. Warm-up runs, repeated audits, and manual traffic review can help, but no black-box probe set can certify permanent safety.</p>
+    <h3>Is a small token delta always bad?</h3>
+    <p>No. Some API frameworks add small defaults. Treat token delta as a signal to inspect, not as a standalone accusation.</p>
+  </section>
 </main>
 <footer><div class="wrap">Related: <a href="what-is-ai-api-relay-proxy.html">what is an LLM proxy?</a> · <a href="web3-wallet-prompt-injection-ai-agents.html">Web3 wallet prompt injection</a></div></footer>
 </body>

@@ -7,20 +7,51 @@
 <meta name="description" content="Audit a Claude-compatible API relay locally for prompt injection, model substitution, context truncation, tool rewriting, error leakage, and SSE anomalies.">
 <link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/guides/audit-claude-api-relay-safely.html">
 <link rel="stylesheet" href="../assets/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "API Relay Audit", "item": "https://toby-bridges.github.io/api-relay-audit/"},
+        {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://toby-bridges.github.io/api-relay-audit/#guides"},
+        {"@type": "ListItem", "position": 3, "name": "How to Audit a Claude API Relay Safely", "item": "https://toby-bridges.github.io/api-relay-audit/guides/audit-claude-api-relay-safely.html"}
+      ]
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://toby-bridges.github.io/api-relay-audit/guides/audit-claude-api-relay-safely.html#article",
+      "headline": "How to Audit a Claude API Relay Safely",
+      "description": "A local audit workflow for Claude-compatible relays that checks prompt injection, model identity, SSE integrity, tool rewriting, and error leakage without adding another web checker to the API-key path.",
+      "datePublished": "2026-06-01",
+      "dateModified": "2026-06-02",
+      "author": {"@type": "Person", "name": "Toby Bridges", "url": "https://github.com/toby-bridges"},
+      "publisher": {"@type": "Organization", "name": "API Relay Audit", "url": "https://github.com/toby-bridges/api-relay-audit"},
+      "mainEntityOfPage": "https://toby-bridges.github.io/api-relay-audit/guides/audit-claude-api-relay-safely.html",
+      "about": ["Claude API relay", "Anthropic-compatible proxy", "SSE stream integrity", "model substitution", "prompt injection"]
+    }
+  ]
+}
+</script>
 </head>
 <body>
-<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">中文</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
+<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">Chinese</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
 <main class="wrap">
+  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../">Home</a><span>/</span><a href="../#guides">Guides</a><span>/</span><span>Claude relay audit</span></nav>
   <div class="eyebrow">Guide</div>
   <h1>How to audit a Claude API relay safely</h1>
-  <p class="lead">To audit a Claude-compatible relay safely, run the audit locally, point it only at the relay URL you intend to test, and review each finding as evidence rather than as a safety certificate.</p>
+  <p class="lead">To audit a Claude-compatible API relay safely, run the audit locally, point it only at the relay URL you intend to test, and review each finding as evidence rather than as a safety certificate. The goal is not to prove a relay is good forever. The goal is to collect reproducible signals before a relay handles production, coding-agent, or wallet-related traffic.</p>
+
+  <section class="note">Short answer: use a scoped key, run `audit.py` locally, save the Markdown report, and treat red, yellow, and inconclusive findings as review inputs.</section>
 
   <h2>Safe audit checklist</h2>
   <ol>
-    <li>Use a scoped API key with limited budget when possible.</li>
-    <li>Run the standalone `audit.py` locally so the key does not pass through a separate web checker.</li>
-    <li>Save the Markdown report and review red, yellow, and inconclusive items.</li>
-    <li>Do not publish real relay credentials, private domains, wallet addresses tied to private use, or raw traffic captures.</li>
+    <li>Use a temporary or low-budget key when possible. Relay audits intentionally send unusual prompts and malformed requests.</li>
+    <li>Confirm the base URL. A typo in the URL changes the target of the whole audit.</li>
+    <li>Run the standalone script locally so the key is not passed through a separate web checker.</li>
+    <li>Use the model name you actually plan to rely on. Model substitution and stream identity checks are only meaningful against the claimed route.</li>
+    <li>Save the Markdown report. Do not publish raw credentials, private relay domains, wallet material, or unredacted traffic captures.</li>
   </ol>
 
   <h2>Command</h2>
@@ -33,15 +64,40 @@ python audit.py \
 
   <h2>Claude-specific checks</h2>
   <table>
-    <tr><th>Area</th><th>What API Relay Audit checks</th></tr>
-    <tr><td>Identity</td><td>Non-Claude identity leaks, model substitution wording, and stream model identity where available.</td></tr>
-    <tr><td>Streaming</td><td>Anthropic-style SSE event types, usage monotonicity, thinking signature presence, and stream model consistency.</td></tr>
-    <tr><td>Prompt path</td><td>Token injection, prompt extraction, instruction conflict, and jailbreak behavior.</td></tr>
-    <tr><td>Tool path</td><td>Text-echo package command integrity for tool-call rewriting risks.</td></tr>
+    <tr><th>Area</th><th>What API Relay Audit checks</th><th>Why it matters</th></tr>
+    <tr><td>Identity</td><td>Non-Claude identity leaks, anchor phrases, and model identity signals where available.</td><td>A relay may claim one model while routing to another or injecting a different assistant identity.</td></tr>
+    <tr><td>Streaming</td><td>Anthropic-style SSE event whitelist, usage monotonicity, thinking signature presence, and stream model consistency.</td><td>Stream-level anomalies can reveal unsupported event types, metadata rewriting, or model mismatch.</td></tr>
+    <tr><td>Prompt path</td><td>Token injection, prompt extraction, instruction conflict, and jailbreak resistance.</td><td>Hidden relay instructions can override user intent or make the user pay for injected context.</td></tr>
+    <tr><td>Tool path</td><td>Text-echo package command integrity for tool-call rewriting risks.</td><td>Coding agents often copy package commands. A relay that changes them can create supply-chain exposure.</td></tr>
+    <tr><td>Error path</td><td>Deterministic malformed requests and leak scanning.</td><td>Some proxy stacks leak upstream hosts, internal fields, or credential-like strings only on errors.</td></tr>
   </table>
 
-  <h2>Interpreting inconclusive results</h2>
-  <p>Inconclusive means the probe could not establish a clean or anomalous result. It may happen because the relay blocks a request, does not support a format, truncates an answer, or returns an ambiguous response. Do not treat inconclusive as clean.</p>
+  <h2>Interpreting the result</h2>
+  <p>Read the overall verdict first, then inspect why it was assigned. A HIGH result can come from severe prompt injection, instruction override, tool-call substitution, error leakage, stream anomaly, Web3 prompt injection, or upstream channel mismatch. A MEDIUM result can include weaker signals or inconclusive checks. A LOW result means these probes did not catch a material issue in that run; it does not certify that the relay is safe.</p>
+  <p>Inconclusive is especially important for Claude-compatible relays. Some relays block streaming, remove thinking metadata, reject malformed requests, or return ambiguous model identity text. Blocking a probe is not the same as passing it. The report keeps those cases visible so a reviewer can decide whether the uncertainty matters for their workflow.</p>
+
+  <div class="report-example">
+    <strong>Anonymous report slice:</strong>
+    <p>Target relay: redacted. Instruction conflict: clean. Identity check: Claude wording respected. Stream integrity: inconclusive because streaming was unsupported. Tool-call substitution: clean. Error leakage: medium because one broken request exposed framework internals. Overall result: MEDIUM, with a recommendation to avoid coding-agent automation until the relay operator explains the error path.</p>
+  </div>
+
+  <h2>What this does not prove</h2>
+  <p>This guide does not prove that a relay is direct Anthropic, honest under all conditions, or safe for every user. It gives you a repeatable local audit path. A relay can behave differently by account, model, time, route, or request count. For higher-risk deployments, combine this report with direct provider billing records, network logs, operator documentation, and strict spend limits.</p>
+
+  <h2>References and follow-up</h2>
+  <ul class="reference-list">
+    <li><a href="https://arxiv.org/abs/2604.08407">Your Agent Is Mine</a> describes malicious intermediary attacks on the LLM supply chain, including prompt and tool-path risks.</li>
+    <li><a href="https://github.com/toby-bridges/api-relay-audit/issues/35">Issue #35</a> tracks SSE stream anomaly patterns.</li>
+    <li><a href="compare-api-relay-audit-hvoy-cctest.html">Tool comparison</a> explains when a local audit differs from relay lookup or web-based checks.</li>
+  </ul>
+
+  <section class="mini-faq">
+    <h2>FAQ</h2>
+    <h3>Should I skip error-leakage probes?</h3>
+    <p>Only skip them if intentionally broken requests are unacceptable for the target relay. Error behavior is part of the trust boundary, so skipping it reduces evidence.</p>
+    <h3>Should I run Web3 checks for a normal Claude relay?</h3>
+    <p>Use `--profile web3` only when wallet-related traffic or agent transaction planning is in scope. General relay audits stay focused by default.</p>
+  </section>
 </main>
 <footer><div class="wrap">Related: <a href="what-is-ai-api-relay-proxy.html">what is an AI API relay?</a> · <a href="compare-api-relay-audit-hvoy-cctest.html">tool comparison</a></div></footer>
 </body>

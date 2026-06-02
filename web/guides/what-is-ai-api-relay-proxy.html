@@ -7,32 +7,91 @@
 <meta name="description" content="An AI API relay or LLM proxy sits between your app and an AI provider. Learn what it can change, why it matters, and how to audit it locally.">
 <link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/guides/what-is-ai-api-relay-proxy.html">
 <link rel="stylesheet" href="../assets/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "API Relay Audit", "item": "https://toby-bridges.github.io/api-relay-audit/"},
+        {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://toby-bridges.github.io/api-relay-audit/#guides"},
+        {"@type": "ListItem", "position": 3, "name": "What Is an AI API Relay or LLM Proxy?", "item": "https://toby-bridges.github.io/api-relay-audit/guides/what-is-ai-api-relay-proxy.html"}
+      ]
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://toby-bridges.github.io/api-relay-audit/guides/what-is-ai-api-relay-proxy.html#article",
+      "headline": "What Is an AI API Relay or LLM Proxy?",
+      "description": "A practical definition of AI API relays and LLM proxies, the trust boundary they create, and the local audit evidence to collect before relying on one.",
+      "datePublished": "2026-06-01",
+      "dateModified": "2026-06-02",
+      "author": {"@type": "Person", "name": "Toby Bridges", "url": "https://github.com/toby-bridges"},
+      "publisher": {"@type": "Organization", "name": "API Relay Audit", "url": "https://github.com/toby-bridges/api-relay-audit"},
+      "mainEntityOfPage": "https://toby-bridges.github.io/api-relay-audit/guides/what-is-ai-api-relay-proxy.html",
+      "about": ["AI API relay", "LLM proxy", "prompt injection", "model substitution", "security audit"]
+    }
+  ]
+}
+</script>
 </head>
 <body>
-<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">中文</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
+<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">Chinese</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
 <main class="wrap">
+  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../">Home</a><span>/</span><a href="../#guides">Guides</a><span>/</span><span>AI API relay</span></nav>
   <div class="eyebrow">Guide</div>
   <h1>What is an AI API relay or LLM proxy?</h1>
-  <p class="lead">An AI API relay or LLM proxy is a third-party service that sits between your application and an upstream AI provider such as Anthropic or OpenAI. It can forward requests, normalize APIs, meter usage, or route traffic, but it can also change the prompt, model, context, stream, or error response you receive.</p>
+  <p class="lead">An AI API relay or LLM proxy is a third-party service that sits between your application and an upstream AI provider such as Anthropic or OpenAI. It may forward requests, normalize API formats, meter usage, cache responses, or route traffic, but it can also change the prompt, model, context, stream, tool output, or error response you receive.</p>
 
-  <section class="note">Short answer: a relay is part of your model supply chain. If it can read and rewrite requests, it should be audited before production or wallet-related traffic depends on it.</section>
+  <section class="note">Short answer: a relay is part of your model supply chain. If it can read and rewrite requests or responses, it should be audited before production, coding-agent, or wallet-related traffic depends on it.</section>
+
+  <h2>Why the trust boundary matters</h2>
+  <p>A relay is not only a network hop. It is a position of control. It sees the API key you give it, the model name you request, the messages you send, and the answer that comes back. A benign relay can make access easier. A malicious or compromised relay can quietly add hidden instructions, route to a cheaper model, truncate context, rewrite package names, or leak implementation details through errors.</p>
+  <p>This is why local auditing is different from using a second web checker. A web checker can be convenient, but it adds another server to the key path. API Relay Audit keeps the audit local: the script runs on your machine, and the API key is sent only to the relay URL you specify.</p>
 
   <h2>What a relay can change</h2>
   <div class="grid">
-    <section class="card"><h3>Prompt path</h3><p>A relay can prepend hidden instructions, inject identity text, ask the model to ignore user instructions, or reveal hidden prompt content in later responses.</p></section>
-    <section class="card"><h3>Model path</h3><p>A relay can route a request to a different model than the one named in the API response, or leak an upstream model identity through wording or stream metadata.</p></section>
-    <section class="card"><h3>Tool path</h3><p>A relay can rewrite package-install commands or tool-like output before it reaches a coding agent, which turns proxy behavior into a supply-chain risk.</p></section>
+    <section class="card"><h3>Prompt path</h3><p>A relay can prepend hidden instructions, inject identity text, weaken user instructions, or reveal hidden prompt content in later responses.</p></section>
+    <section class="card"><h3>Model path</h3><p>A relay can route a request to a different model than the one named in the API response, or leak a different upstream identity through wording or stream metadata.</p></section>
+    <section class="card"><h3>Tool path</h3><p>A relay can rewrite package-install commands or tool-like output before it reaches a coding agent, turning proxy behavior into a supply-chain risk.</p></section>
   </div>
 
-  <h2>Why local auditing matters</h2>
-  <p>A web-based checker asks you to send a relay key to another service before you can test the relay. API Relay Audit avoids that extra trust hop: the script runs locally, and your API key is sent only to the relay URL you specify.</p>
+  <h2>Audit signals to collect</h2>
+  <table>
+    <tr><th>Signal</th><th>Why it matters</th><th>Example evidence</th></tr>
+    <tr><td>Token delta</td><td>Large unexpected prompt-token use may indicate hidden instructions.</td><td>Step 3 reports an input-token delta above the expected baseline.</td></tr>
+    <tr><td>Prompt extraction</td><td>If hidden relay text can be recalled or continued, the relay path is not transparent.</td><td>Step 4 records whether extraction probes reveal relay-side instructions.</td></tr>
+    <tr><td>Tool-call rewriting</td><td>Package-name edits can become code-execution risk for agents.</td><td>Step 8 compares pinned package commands character by character.</td></tr>
+    <tr><td>Error leakage</td><td>Broken requests can expose upstream hosts, stack traces, or credentials.</td><td>Step 9 scans deterministic error responses for sensitive markers.</td></tr>
+    <tr><td>Stream integrity</td><td>Streaming metadata can reveal unsupported events, usage anomalies, or model mismatch.</td><td>Step 10 checks Anthropic-style SSE invariants when supported.</td></tr>
+  </table>
 
-  <h2>How to audit one</h2>
+  <h2>How to audit one locally</h2>
   <pre class="code"><code>curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py
 python audit.py --key &lt;YOUR_KEY&gt; --url &lt;BASE_URL&gt; --output report.md</code></pre>
 
-  <h2>What the report does not prove</h2>
-  <p>A clean-looking run is not a certificate. Relays can behave conditionally, models can be ambiguous, and unsupported formats can make a step inconclusive. Treat the report as reproducible evidence, not a final safety label.</p>
+  <div class="report-example">
+    <strong>Anonymous report slice:</strong>
+    <p>Target relay: redacted. Token injection: minor delta. Prompt extraction: no hidden text recovered. Tool-call substitution: clean. Error leakage: inconclusive because several malformed requests were blocked. Overall result: MEDIUM, not because the relay was proven malicious, but because blocked probes should not be treated as clean evidence.</p>
+  </div>
+
+  <h2>What this does not prove</h2>
+  <p>A clean-looking run is not a certificate. Relays can behave conditionally, models can be ambiguous, and unsupported formats can make a step inconclusive. Treat the report as reproducible evidence, not a final safety label. If you plan to use a relay for production automation, package installation, or wallet-related actions, pair this report with manual review, provider logs, scoped keys, and spending limits.</p>
+
+  <h2>References and follow-up</h2>
+  <ul class="reference-list">
+    <li><a href="https://arxiv.org/abs/2604.08407">Your Agent Is Mine</a> frames malicious intermediary attacks on the LLM supply chain.</li>
+    <li><a href="https://arxiv.org/abs/2603.01919">Real Money, Fake Models</a> motivates infrastructure and latency signals for deceptive API claims.</li>
+    <li><a href="https://github.com/toby-bridges/api-relay-audit/issues/34">Issue #34</a> tracks reproducible LLM proxy security test cases.</li>
+  </ul>
+
+  <section class="mini-faq">
+    <h2>FAQ</h2>
+    <h3>Is an API relay always unsafe?</h3>
+    <p>No. A relay can be useful infrastructure. The point is that it has enough visibility and control to deserve verification before sensitive traffic depends on it.</p>
+    <h3>Is this the same as benchmarking model quality?</h3>
+    <p>No. API Relay Audit focuses on relay-path integrity and evidence. It does not rank model intelligence, price, or general answer quality.</p>
+  </section>
 </main>
 <footer><div class="wrap">Related: <a href="audit-claude-api-relay-safely.html">audit a Claude API relay safely</a> · <a href="detect-prompt-injection-llm-api-proxies.html">prompt injection in LLM proxies</a></div></footer>
 </body>

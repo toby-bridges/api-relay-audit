@@ -7,32 +7,94 @@
 <meta name="description" content="A restrained comparison of api-relay-audit, hvoy.ai, and cctest.ai for AI API relay and Claude proxy checking.">
 <link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/guides/compare-api-relay-audit-hvoy-cctest.html">
 <link rel="stylesheet" href="../assets/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "API Relay Audit", "item": "https://toby-bridges.github.io/api-relay-audit/"},
+        {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://toby-bridges.github.io/api-relay-audit/#guides"},
+        {"@type": "ListItem", "position": 3, "name": "api-relay-audit vs hvoy.ai vs cctest.ai", "item": "https://toby-bridges.github.io/api-relay-audit/guides/compare-api-relay-audit-hvoy-cctest.html"}
+      ]
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://toby-bridges.github.io/api-relay-audit/guides/compare-api-relay-audit-hvoy-cctest.html#article",
+      "headline": "api-relay-audit vs hvoy.ai vs cctest.ai",
+      "description": "A restrained comparison of local AI API relay audits, relay reputation lookup, and web-based Claude proxy checks.",
+      "datePublished": "2026-06-01",
+      "dateModified": "2026-06-02",
+      "author": {"@type": "Person", "name": "Toby Bridges", "url": "https://github.com/toby-bridges"},
+      "publisher": {"@type": "Organization", "name": "API Relay Audit", "url": "https://github.com/toby-bridges/api-relay-audit"},
+      "mainEntityOfPage": "https://toby-bridges.github.io/api-relay-audit/guides/compare-api-relay-audit-hvoy-cctest.html",
+      "about": ["AI API relay audit", "hvoy.ai", "cctest.ai", "Claude proxy", "security tooling"]
+    }
+  ]
+}
+</script>
 </head>
 <body>
-<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">中文</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
+<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">Chinese</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
 <main class="wrap">
+  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../">Home</a><span>/</span><a href="../#guides">Guides</a><span>/</span><span>Tool comparison</span></nav>
   <div class="eyebrow">Comparison</div>
   <h1>api-relay-audit vs hvoy.ai vs cctest.ai</h1>
-  <p class="lead">These tools answer related but different questions. API Relay Audit is a local, open-source, repeatable audit script. hvoy.ai is useful for relay reputation lookup and public relay observations. cctest.ai focuses on low-friction web checks and Claude channel fingerprinting.</p>
+  <p class="lead">These tools answer related but different questions. API Relay Audit is a local, open-source, repeatable audit script. hvoy.ai is useful for relay lookup and public relay observations. cctest.ai focuses on low-friction web checks and Claude-oriented channel fingerprinting claims. The right choice depends on whether you need discovery, convenience, or local evidence.</p>
+
+  <section class="note">Short answer: use API Relay Audit when you need a local Markdown report for your own relay route. Use relay lookup surfaces when you need public discovery. Use web checkers when convenience matters more than adding another service to the key path.</section>
 
   <h2>Positioning</h2>
   <table>
     <tr><th>Tool</th><th>Best fit</th><th>Trust tradeoff</th></tr>
-    <tr><td>API Relay Audit</td><td>Local audit reports, reproducible evidence, security review before production or wallet traffic.</td><td>You run the code locally and can inspect it; CLI use is less convenient than a web form.</td></tr>
-    <tr><td>hvoy.ai</td><td>Relay lookup, public observations, operator and user reputation signals.</td><td>Useful discovery surface; not a substitute for a local audit of your own route.</td></tr>
-    <tr><td>cctest.ai</td><td>Fast Claude-oriented web checks and channel fingerprinting claims.</td><td>Lower friction; users still need to decide whether to trust the web checker with sensitive inputs.</td></tr>
+    <tr><td>API Relay Audit</td><td>Local audit reports, reproducible evidence, security review before production, coding-agent, or wallet traffic.</td><td>You run the code locally and can inspect it; CLI use is less convenient than a web form.</td></tr>
+    <tr><td>hvoy.ai</td><td>Relay lookup, public observations, operator and user reputation signals.</td><td>Useful discovery surface; not a substitute for a local audit of your own key, model, and route.</td></tr>
+    <tr><td>cctest.ai</td><td>Fast Claude-oriented web checks and channel-fingerprint style signals.</td><td>Lower friction; users still need to decide whether to trust the web checker with sensitive inputs.</td></tr>
+  </table>
+
+  <h2>Capability comparison</h2>
+  <table>
+    <tr><th>Question</th><th>API Relay Audit</th><th>hvoy.ai</th><th>cctest.ai</th></tr>
+    <tr><td>Can I run the audit locally?</td><td>Yes. Standalone `audit.py` uses Python stdlib plus curl.</td><td>Primarily a web/reputation surface.</td><td>Primarily a web checker.</td></tr>
+    <tr><td>Does it produce a reviewable report?</td><td>Yes. Markdown report with per-step findings and final verdict.</td><td>Public observations and lookup-style output.</td><td>Web result output, depending on the service flow.</td></tr>
+    <tr><td>Does it check tool-call rewriting?</td><td>Yes. Pinned package commands are compared for substitution.</td><td>Not the primary positioning.</td><td>Not the primary positioning.</td></tr>
+    <tr><td>Does it separate inconclusive from clean?</td><td>Yes. Inconclusive remains visible in the report.</td><td>Different scoring/reporting model.</td><td>Different scoring/reporting model.</td></tr>
+    <tr><td>Does it help pick a relay from public options?</td><td>No. It audits a target relay you choose.</td><td>Yes, public discovery is part of the value.</td><td>More focused on testing a supplied route.</td></tr>
   </table>
 
   <h2>Where API Relay Audit is intentionally different</h2>
   <ul>
-    <li>It runs locally, so the extra checker server is removed from the API-key path.</li>
-    <li>It produces a Markdown report that can be reviewed, redacted, and attached to issues.</li>
-    <li>It keeps `inconclusive` separate from `clean`.</li>
+    <li>It runs locally, so a separate checker server is removed from the audit path.</li>
+    <li>It produces a Markdown report that can be reviewed, redacted, attached to issues, or archived with a test case.</li>
+    <li>It keeps `inconclusive` separate from `clean`, which matters when relays block probes or do not support a protocol.</li>
     <li>It maps important probes to relay supply-chain risks such as AC-1, AC-1.a, and AC-2.</li>
+    <li>It avoids relay recommendation language. The output is evidence under one run, not a public safe/unsafe ranking.</li>
   </ul>
 
+  <div class="report-example">
+    <strong>Anonymous report slice:</strong>
+    <p>A user first found a relay through a public lookup surface, then ran API Relay Audit locally against the exact base URL and model they planned to use. The local report found no tool-call substitution but marked stream integrity inconclusive because the route did not support the expected Anthropic streaming shape. That is a useful result: public reputation and local route evidence answered different questions.</p>
+  </div>
+
   <h2>Not a winner-takes-all claim</h2>
-  <p>Use the tool that matches the question. If you want public relay discovery, a reputation surface may be useful. If you want a local report for your own key, route, and workflow, run API Relay Audit. If you need channel-fingerprint research, track the design memo before treating it as implemented here.</p>
+  <p>Use the tool that matches the question. If you want public relay discovery, a reputation surface may be useful. If you want a local report for your own key, route, and workflow, run API Relay Audit. If you need channel-fingerprint research, track the design memo and implemented channel-classifier work before treating a claim as a production detector.</p>
+  <p>The comparison should stay current. External tools change, and public launch copy should not freeze old claims about their coverage, pricing, or internals. When in doubt, describe API Relay Audit's current scope rather than over-describing another tool.</p>
+
+  <h2>References and follow-up</h2>
+  <ul class="reference-list">
+    <li><a href="what-is-ai-api-relay-proxy.html">What is an AI API relay?</a> explains the shared trust boundary these tools care about.</li>
+    <li><a href="audit-claude-api-relay-safely.html">How to audit a Claude API relay safely</a> gives the local workflow.</li>
+    <li><a href="https://arxiv.org/abs/2604.08407">Your Agent Is Mine</a> anchors the malicious intermediary threat model used by API Relay Audit.</li>
+  </ul>
+
+  <section class="mini-faq">
+    <h2>FAQ</h2>
+    <h3>Should API Relay Audit replace relay reputation lookup?</h3>
+    <p>No. Lookup surfaces help discovery. API Relay Audit helps verify a specific route locally.</p>
+    <h3>Should a web checker replace a local audit?</h3>
+    <p>Only if the convenience tradeoff is acceptable for your threat model. For sensitive keys, local evidence is usually easier to reason about.</p>
+  </section>
 
   <div class="cta"><a class="button primary" href="../#install">Generate a local audit command</a></div>
 </main>
