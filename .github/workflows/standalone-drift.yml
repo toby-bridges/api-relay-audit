@@ -30,5 +30,10 @@ jobs:
           python3 scripts/build-standalone.py --check
           python3 scripts/collect-metrics.py --check
 
-      - name: Check dual-distribution parity
-        run: python3 -m pytest tests/test_dual_distribution_parity.py -v
+      - name: Check dual-distribution parity and public surface contracts
+        run: |
+          python3 -m pytest \
+            tests/test_dual_distribution_parity.py \
+            tests/test_skill_distribution.py \
+            tests/test_static_site.py \
+            -q
