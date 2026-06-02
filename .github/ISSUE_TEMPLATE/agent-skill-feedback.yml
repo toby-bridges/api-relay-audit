@@ -50,4 +50,3 @@ body:
       label: Environment
       description: OS, shell, OpenClaw/Hermes version, and anything relevant.
       placeholder: "macOS, zsh, Hermes version ..., OpenClaw version ..."
-

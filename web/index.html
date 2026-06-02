@@ -383,7 +383,7 @@ footer a:hover{color:var(--text)}
   <div class="hero-stats">
     <div class="stat"><div class="stat-num">14</div><div class="stat-label" data-i18n="stat_steps">Audit Steps</div></div>
     <div class="stat"><div class="stat-num">6D</div><div class="stat-label" data-i18n="stat_matrix">Risk Matrix</div></div>
-    <div class="stat"><div class="stat-num">694</div><div class="stat-label" data-i18n="stat_tests">Unit Tests</div></div>
+    <div class="stat"><div class="stat-num">700</div><div class="stat-label" data-i18n="stat_tests">Unit Tests</div></div>
     <div class="stat"><div class="stat-num">0</div><div class="stat-label" data-i18n="stat_deps">Dependencies (standalone)</div></div>
   </div>
   <div class="hero-cta">
@@ -521,7 +521,7 @@ footer a:hover{color:var(--text)}
 
   <!-- Tab: Agent -->
   <div class="tab-panel" id="tab-agent">
-    <p class="agent-pitch" data-i18n="agent_pitch">Install as a Claude Code Skill — say one sentence, the agent runs the full 14-step audit for you.</p>
+    <p class="agent-pitch" data-i18n="agent_pitch">Install as an OpenClaw or Hermes skill — let an agent run the local 14-step audit from a secure environment.</p>
 
     <div class="agent-steps">
       <div class="agent-step">
@@ -529,10 +529,10 @@ footer a:hover{color:var(--text)}
           <div class="agent-step-num">1</div>
           <div class="agent-step-title" data-i18n="agent_step1_title">Install the Skill</div>
         </div>
-        <p data-i18n="agent_step1_desc">Run this once in your terminal to add the audit skill to Claude Code:</p>
-        <div class="agent-cmd" data-cmd="mkdir -p ~/.claude/commands && curl -sL https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/SKILL.md -o ~/.claude/commands/api-relay-audit.md">
+        <p data-i18n="agent_step1_desc">Use Hermes direct install now, or OpenClaw after ClawHub publication:</p>
+        <div class="agent-cmd" data-cmd="hermes skills install toby-bridges/api-relay-audit/skills/api-relay-audit">
           <button class="copy-btn" onclick="copyAgentCmd(this)" data-i18n="copy_btn">Copy</button>
-          mkdir -p ~/.claude/commands && curl -sL https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/SKILL.md -o ~/.claude/commands/api-relay-audit.md
+          hermes skills install toby-bridges/api-relay-audit/skills/api-relay-audit
         </div>
       </div>
 
@@ -541,8 +541,8 @@ footer a:hover{color:var(--text)}
           <div class="agent-step-num">2</div>
           <div class="agent-step-title" data-i18n="agent_step2_title">Trigger with one sentence</div>
         </div>
-        <p data-i18n="agent_step2_desc">Open Claude Code and say:</p>
-        <div class="agent-trigger" data-i18n="agent_trigger">"Audit this relay: https://your-relay.com/v1, my key is sk-xxx"</div>
+        <p data-i18n="agent_step2_desc">Set the key through the agent's secure environment, then say:</p>
+        <div class="agent-trigger" data-i18n="agent_trigger">"Audit this relay: https://your-relay.com/v1 using API_RELAY_AUDIT_KEY"</div>
       </div>
 
       <div class="agent-step">
@@ -550,7 +550,7 @@ footer a:hover{color:var(--text)}
           <div class="agent-step-num">3</div>
           <div class="agent-step-title" data-i18n="agent_step3_title">Agent does everything</div>
         </div>
-        <p data-i18n="agent_step3_desc">Claude Code automatically downloads the script, runs all 14 steps, and presents the findings — you just read the result.</p>
+        <p data-i18n="agent_step3_desc">The agent downloads the pinned script, runs the 14-step audit locally, and presents the findings — you read the report.</p>
       </div>
     </div>
 
@@ -660,7 +660,7 @@ footer a:hover{color:var(--text)}
       <tr><td data-i18n="cmp_error">Error Response Leakage (AC-2)</td><td class="check">&#10003;</td><td class="cross">&#10005;</td><td class="cross">&#10005;</td></tr>
       <tr><td data-i18n="cmp_stream">Stream Integrity (SSE)</td><td class="check">&#10003;</td><td class="check">&#10003;</td><td class="cross">&#10005;</td></tr>
       <tr><td data-i18n="cmp_web3">Web3 Injection</td><td class="check">&#10003;</td><td class="cross">&#10005;</td><td class="cross">&#10005;</td></tr>
-      <tr><td data-i18n="cmp_channel">Channel Fingerprint</td><td class="soon">Soon</td><td class="cross">&#10005;</td><td class="check">&#10003;</td></tr>
+      <tr><td data-i18n="cmp_channel">Upstream Channel Classifier</td><td class="check">&#10003;</td><td class="cross">&#10005;</td><td class="check">&#10003;</td></tr>
       <tr><td data-i18n="cmp_local">Local Execution (No extra checker server)</td><td class="check">&#10003;</td><td class="cross">&#10005;</td><td class="cross">&#10005;</td></tr>
       <tr><td data-i18n="cmp_oss">Fully Open Source</td><td class="check">&#10003;</td><td class="cross">Partial</td><td class="cross">&#10005;</td></tr>
       <tr><td data-i18n="cmp_leaderboard">Public Leaderboard</td><td class="cross">&#10005;</td><td class="check">&#10003;</td><td class="cross">&#10005;</td></tr>
@@ -1045,7 +1045,7 @@ const i18n={
     cmp_col_dim:"维度",
     cmp_inject:"Token 注入",cmp_prompt:"Prompt 提取",cmp_identity:"身份替换",cmp_jailbreak:"越狱防护",
     cmp_context:"上下文截断",cmp_tool:"工具调用改写 (AC-1.a)",cmp_error:"错误响应泄漏 (AC-2)",
-    cmp_stream:"流完整性 (SSE)",cmp_web3:"Web3 注入",cmp_channel:"通道指纹",
+    cmp_stream:"流完整性 (SSE)",cmp_web3:"Web3 注入",cmp_channel:"上游通道分类",
     cmp_local:"本地运行 (无额外检测服务器)",cmp_oss:"完全开源",cmp_leaderboard:"公开排行榜",cmp_report:"结构化审计报告",
     install_title:"开始审计",install_sub:"填写你的中转站信息 — 我们生成命令，你在本地运行。",
     flow_title:"你的 Key 如何流转 — 关键区别",
@@ -1061,11 +1061,11 @@ const i18n={
     cmd_comment:"下载审计脚本并运行 14 步审计",
     cmd_history_hint:"Tip: 命令中的 Key 会留在 shell history 中。如需更安全，可改用环境变量: export KEY=sk-... 然后 --key $KEY",
     tab_human:"手动运行",tab_agent:"Agent 自动运行",
-    agent_pitch:"安装为 Claude Code Skill — 说一句话，agent 替你跑完 14 步审计。",
-    agent_step1_title:"安装 Skill",agent_step1_desc:"在终端运行一次，将审计技能添加到 Claude Code：",
-    agent_step2_title:"一句话触发",agent_step2_desc:"打开 Claude Code，说：",
-    agent_trigger:'\u201c帮我审计这个中转站：https://your-relay.com/v1，key 是 sk-xxx\u201d',
-    agent_step3_title:"Agent 全自动执行",agent_step3_desc:"Claude Code 自动下载脚本、运行 14 步检测、呈现结果 — 你只需要看报告。",
+    agent_pitch:"安装为 OpenClaw 或 Hermes skill — 让 agent 从安全环境中运行本地 14 步审计。",
+    agent_step1_title:"安装 Skill",agent_step1_desc:"现在可用 Hermes 直接安装；OpenClaw 在 ClawHub 发布后安装：",
+    agent_step2_title:"一句话触发",agent_step2_desc:"先通过 agent 的安全环境配置 Key，然后说：",
+    agent_trigger:'\u201c帮我审计这个中转站：https://your-relay.com/v1，使用 API_RELAY_AUDIT_KEY\u201d',
+    agent_step3_title:"Agent 全自动执行",agent_step3_desc:"Agent 下载固定版本脚本、在本地运行 14 步审计、呈现结果 — 你只需要看报告。",
     agent_security:"同样的安全模型 — agent 在你的本地机器上运行，Key 只会发送到你指定的中转站 URL。",
     term_downloading:"audit.py 已下载 (零 Python 包依赖)",
     term_step1:"[Step 1/14] 基础设施侦察...",
@@ -1136,7 +1136,7 @@ const i18n={
     cmp_col_dim:"Dimension",
     cmp_inject:"Token Injection",cmp_prompt:"Prompt Extraction",cmp_identity:"Identity Substitution",cmp_jailbreak:"Jailbreak Resistance",
     cmp_context:"Context Truncation",cmp_tool:"Tool-Call Rewriting (AC-1.a)",cmp_error:"Error Response Leakage (AC-2)",
-    cmp_stream:"Stream Integrity (SSE)",cmp_web3:"Web3 Injection",cmp_channel:"Channel Fingerprint",
+    cmp_stream:"Stream Integrity (SSE)",cmp_web3:"Web3 Injection",cmp_channel:"Upstream Channel Classifier",
     cmp_local:"Local Execution (No extra checker server)",cmp_oss:"Fully Open Source",cmp_leaderboard:"Public Leaderboard",cmp_report:"Structured Audit Report",
     install_title:"Start Your Audit",install_sub:"Fill in your relay info — we generate the command, you run it locally.",
     flow_title:"How your Key flows — the critical difference",
@@ -1152,11 +1152,11 @@ const i18n={
     cmd_comment:"Download audit script and run full 14-step audit",
     cmd_history_hint:"Tip: The Key in this command will persist in shell history. For better hygiene: export KEY=sk-... then use --key $KEY",
     tab_human:"Run Manually",tab_agent:"Agent Auto-Run",
-    agent_pitch:"Install as a Claude Code Skill — say one sentence, the agent runs the full 14-step audit for you.",
-    agent_step1_title:"Install the Skill",agent_step1_desc:"Run this once in your terminal to add the audit skill to Claude Code:",
-    agent_step2_title:"Trigger with one sentence",agent_step2_desc:"Open Claude Code and say:",
-    agent_trigger:'"Audit this relay: https://your-relay.com/v1, my key is sk-xxx"',
-    agent_step3_title:"Agent does everything",agent_step3_desc:"Claude Code automatically downloads the script, runs all 14 steps, and presents the findings — you just read the result.",
+    agent_pitch:"Install as an OpenClaw or Hermes skill — let an agent run the local 14-step audit from a secure environment.",
+    agent_step1_title:"Install the Skill",agent_step1_desc:"Use Hermes direct install now, or OpenClaw after ClawHub publication:",
+    agent_step2_title:"Trigger with one sentence",agent_step2_desc:"Set the key through the agent's secure environment, then say:",
+    agent_trigger:'"Audit this relay: https://your-relay.com/v1 using API_RELAY_AUDIT_KEY"',
+    agent_step3_title:"Agent does everything",agent_step3_desc:"The agent downloads the pinned script, runs the 14-step audit locally, and presents the findings — you read the report.",
     agent_security:"Same security model — the agent runs locally on your machine, and the key is sent only to your chosen relay URL.",
     term_downloading:"audit.py downloaded (zero Python package dependencies)",
     term_step1:"[Step 1/14] Infrastructure recon...",

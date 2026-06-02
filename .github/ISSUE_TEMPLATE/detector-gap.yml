@@ -64,4 +64,3 @@ body:
       placeholder: "I replaced the relay domain with example.invalid and removed API keys / private traffic."
     validations:
       required: true
-
