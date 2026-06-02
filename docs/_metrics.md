@@ -16,8 +16,8 @@
 | 单文件版版本 | `v2.3` | `audit.py` docstring |
 | 步骤数 (Step N) | **14** | grep `Step N` in `scripts/audit.py` |
 | 步骤数 (单文件版) | 14 | grep `Step N` in `audit.py` |
-| 测试数 (pytest) | **694** | `pytest --collect-only` |
-| 测试数 (static) | 675 | grep `def test_*` in tests/ |
+| 测试数 (pytest) | **699** | `pytest --collect-only` |
+| 测试数 (static) | 680 | grep `def test_*` in tests/ |
 | CLI flag 数 | 20 | grep `add_argument("--*")` |
 | profile 选项 | general, web3, full | argparse choices |
 | ROADMAP 上次更新 | 2026-06-01 | `ROADMAP.md` 头部 |
@@ -25,13 +25,14 @@
 | Codex review 已编号轮次（最大） | 6 | grep `Nth Codex review round` |
 | Codex bug 累计（最新声称） | 18 | grep `cumulative N real bug` |
 | 测试数演进 (ROADMAP) | [546, 560, 562, 586, 642, 694] | grep `Final test count: N/N passing` |
-| Recorded commit SHA | `484cc52` | recent reachable commit; `--check` allows follow-up metrics commits |
+| Recorded commit SHA | `fa12ae8` | recent reachable commit; `--check` allows follow-up metrics commits |
 | Recorded commit date | 2026-06-02 | recent reachable commit; `--check` allows follow-up metrics commits |
 
 ## 一致性自检
 
 - ✅ 版本一致：两份都是 `v2.3`。
 - ✅ 步骤数一致：14。
+- ⚠️ ROADMAP 最新记录 694 个测试，但当前 pytest 是 699。要么 ROADMAP 漏更新，要么有未记录的新测试。
 
 ## 人工 review 边界（脚本抓不到，每次发布要人工核对）
 

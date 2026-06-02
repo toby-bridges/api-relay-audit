@@ -44,6 +44,8 @@ python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report.md
 ```
 
+See a public-safe fixture report: [sanitized audit report](./docs/examples/sanitized-audit-report.md).
+
 ## Detect Prompt Injection and Model Substitution
 
 API Relay Audit checks whether a relay modifies the request or response path between you and the model:
@@ -106,6 +108,7 @@ These probes are model-agnostic, but they are intentionally profile-gated so gen
 
 - GitHub Pages: [toby-bridges.github.io/api-relay-audit](https://toby-bridges.github.io/api-relay-audit/)
 - Chinese landing page: [toby-bridges.github.io/api-relay-audit/zh/](https://toby-bridges.github.io/api-relay-audit/zh/)
+- Example report: [sanitized fixture report](./docs/examples/sanitized-audit-report.md)
 - Guides:
   [AI API relay / LLM proxy](https://toby-bridges.github.io/api-relay-audit/guides/what-is-ai-api-relay-proxy.html),
   [Claude relay audit](https://toby-bridges.github.io/api-relay-audit/guides/audit-claude-api-relay-safely.html),

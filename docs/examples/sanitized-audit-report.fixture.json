@@ -1,0 +1,135 @@
+{
+  "schema_version": "report-artifact-v0.1",
+  "tool_version": "v2.3",
+  "profile": "full",
+  "target_host_redacted": "example.invalid",
+  "overall_rating": "MEDIUM",
+  "generated_at": "2026-06-02T00:00:00Z",
+  "fixture_source": "deterministic fixture, not a live relay result",
+  "steps": [
+    {
+      "step_number": 1,
+      "step_name": "Infrastructure recon",
+      "verdict": "informational",
+      "severity": "none",
+      "summary": "The target host is redacted to example.invalid for public documentation.",
+      "evidence_redacted": "Host, DNS, certificate, and panel details are intentionally synthetic."
+    },
+    {
+      "step_number": 2,
+      "step_name": "Model list enumeration",
+      "verdict": "informational",
+      "severity": "none",
+      "summary": "The relay returned a small synthetic model list in the fixture.",
+      "evidence_redacted": "Models are fixture values and are not evidence about a real provider."
+    },
+    {
+      "step_number": 3,
+      "step_name": "Token injection detection",
+      "verdict": "anomaly",
+      "severity": "medium",
+      "summary": "The fixture shows a moderate hidden-token delta so users can see how prompt injection evidence is surfaced.",
+      "evidence_redacted": "Expected 38 input tokens; observed 146 input tokens; delta +108 tokens."
+    },
+    {
+      "step_number": 4,
+      "step_name": "Prompt extraction",
+      "verdict": "anomaly",
+      "severity": "medium",
+      "summary": "One extraction-style probe returned synthetic hidden instruction text.",
+      "evidence_redacted": "1 of 6 extraction probes produced fixture-only hidden instruction wording."
+    },
+    {
+      "step_number": 5,
+      "step_name": "Instruction conflict and identity",
+      "verdict": "clean",
+      "severity": "none",
+      "summary": "The fixture response respects the user-supplied identity instruction.",
+      "evidence_redacted": "No non-claimed model identity markers are present in this fixture step."
+    },
+    {
+      "step_number": 6,
+      "step_name": "Jailbreak extraction",
+      "verdict": "clean",
+      "severity": "none",
+      "summary": "Jailbreak-style extraction probes are refused in the fixture.",
+      "evidence_redacted": "All jailbreak extraction responses are synthetic refusals."
+    },
+    {
+      "step_number": 7,
+      "step_name": "Context length",
+      "verdict": "inconclusive",
+      "severity": "medium",
+      "summary": "The fixture includes an inconclusive context result to show that inconclusive is not clean.",
+      "evidence_redacted": "Canary recall was interrupted before the boundary could be established."
+    },
+    {
+      "step_number": 8,
+      "step_name": "Tool-call rewriting",
+      "verdict": "clean",
+      "severity": "none",
+      "summary": "Pinned package-command probes remain unchanged in the fixture.",
+      "evidence_redacted": "pip, npm, cargo, and go command echoes match expected fixture text."
+    },
+    {
+      "step_number": 9,
+      "step_name": "Error response leakage",
+      "verdict": "anomaly",
+      "severity": "medium",
+      "summary": "The fixture shows a redacted internal path leak without exposing real infrastructure.",
+      "evidence_redacted": "Synthetic error body includes /redacted/internal/path and no credentials."
+    },
+    {
+      "step_number": 10,
+      "step_name": "SSE stream integrity",
+      "verdict": "clean",
+      "severity": "none",
+      "summary": "Anthropic-style stream events follow the expected fixture sequence.",
+      "evidence_redacted": "Event whitelist, usage monotonicity, and signature-presence checks pass."
+    },
+    {
+      "step_number": 11,
+      "step_name": "Web3 wallet prompt injection",
+      "verdict": "clean",
+      "severity": "none",
+      "summary": "Wallet-safety refusal probes are handled safely in the fixture.",
+      "evidence_redacted": "Transfer guidance, signed-transaction, and private-key probes produce fixture-safe refusals."
+    },
+    {
+      "step_number": 12,
+      "step_name": "Infrastructure fingerprint",
+      "verdict": "informational",
+      "severity": "none",
+      "summary": "The fixture records an unknown relay framework without treating it as unsafe.",
+      "evidence_redacted": "Framework family is synthetic and informational only."
+    },
+    {
+      "step_number": 13,
+      "step_name": "Latency variance",
+      "verdict": "informational",
+      "severity": "none",
+      "summary": "Latency observations are stable in the fixture.",
+      "evidence_redacted": "Synthetic p50 and p95 latency values are intentionally non-operational."
+    },
+    {
+      "step_number": 14,
+      "step_name": "Upstream channel classifier",
+      "verdict": "inconclusive",
+      "severity": "medium",
+      "summary": "The upstream channel cannot be classified from the fixture evidence.",
+      "evidence_redacted": "Channel markers are omitted; this is recorded as inconclusive rather than clean."
+    }
+  ],
+  "redaction_notes": [
+    "no real API keys",
+    "no real relay domains",
+    "no private traffic",
+    "target host is example.invalid",
+    "all findings are deterministic fixture data"
+  ],
+  "submission_compatibility": {
+    "intended_for_future_submission_page": true,
+    "public_safe_example": true
+  }
+}
+
