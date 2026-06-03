@@ -51,6 +51,16 @@ def _mock_client(text: str):
     return client
 
 
+def _error_client(error_text: str):
+    """Build a client whose .call() always returns an error dict."""
+    client = MagicMock()
+    client.call.return_value = {
+        "error": error_text,
+        "time": 0.05,
+    }
+    return client
+
+
 def _summary_levels(reporter):
     """Extract the (level, message) tuples from the reporter summary."""
     return list(reporter.summary)
@@ -183,6 +193,81 @@ class TestJailbreakGreenOnClean:
         assert any("Jailbreak tests passed" in g for g in greens), (
             f"Step 6 clean run in standalone did not emit a green flag. Summary: {levels}"
         )
+
+    def test_modular_all_errors_is_inconclusive_not_green(self, modular, monkeypatch):
+        from api_relay_audit.reporter import Reporter
+        self._time_sleep_patched(monkeypatch, modular)
+        reporter = Reporter()
+        client = _error_client(
+            'HTTP 503: {"error":{"message":"No available accounts: this group only allows Claude Code clients"}}'
+        )
+        modular.test_jailbreak(client, reporter)
+        levels = _summary_levels(reporter)
+        assert any(level == "yellow" and "INCONCLUSIVE" in msg for level, msg in levels), (
+            f"All-error Step 6 run must be inconclusive. Summary: {levels}"
+        )
+        greens = [m for level, m in levels if level == "green" and "Jailbreak tests" in m]
+        assert not greens
+
+    def test_standalone_all_errors_is_inconclusive_not_green(self, standalone, monkeypatch):
+        self._time_sleep_patched(monkeypatch, standalone)
+        reporter = standalone.Reporter()
+        client = _error_client(
+            'HTTP 503: {"error":{"message":"No available accounts: this group only allows Claude Code clients"}}'
+        )
+        standalone.test_jailbreak(client, reporter)
+        levels = list(reporter.summary)
+        assert any(level == "yellow" and "INCONCLUSIVE" in msg for level, msg in levels), (
+            f"All-error Step 6 run in standalone must be inconclusive. Summary: {levels}"
+        )
+        greens = [m for level, m in levels if level == "green" and "Jailbreak tests" in m]
+        assert not greens
+
+
+class TestCompletionGatedRelayInconclusive:
+    GATE_ERROR = (
+        'HTTP 503: {"error":{"message":"No available accounts: '
+        'this group only allows Claude Code clients"}}'
+    )
+
+    def _time_sleep_patched(self, monkeypatch, mod):
+        monkeypatch.setattr(mod, "time", MagicMock(sleep=MagicMock()))
+
+    def test_modular_token_injection_all_errors_returns_none_and_yellow(self, modular, monkeypatch):
+        from api_relay_audit.reporter import Reporter
+        self._time_sleep_patched(monkeypatch, modular)
+        reporter = Reporter()
+        result = modular.test_token_injection(_error_client(self.GATE_ERROR), reporter)
+        assert result is None
+        levels = _summary_levels(reporter)
+        assert any(level == "yellow" and "Token injection test INCONCLUSIVE" in msg for level, msg in levels)
+        assert not any(level == "green" and "No token injection detected" in msg for level, msg in levels)
+
+    def test_standalone_token_injection_all_errors_returns_none_and_yellow(self, standalone, monkeypatch):
+        self._time_sleep_patched(monkeypatch, standalone)
+        reporter = standalone.Reporter()
+        result = standalone.test_token_injection(_error_client(self.GATE_ERROR), reporter)
+        assert result is None
+        levels = list(reporter.summary)
+        assert any(level == "yellow" and "Token injection test INCONCLUSIVE" in msg for level, msg in levels)
+        assert not any(level == "green" and "No token injection detected" in msg for level, msg in levels)
+
+    def test_modular_instruction_override_all_errors_returns_none_and_yellow(self, modular, monkeypatch):
+        from api_relay_audit.reporter import Reporter
+        self._time_sleep_patched(monkeypatch, modular)
+        reporter = Reporter()
+        result = modular.test_instruction_conflict(_error_client(self.GATE_ERROR), reporter)
+        assert result is None
+        levels = _summary_levels(reporter)
+        assert any(level == "yellow" and "Instruction override test INCONCLUSIVE" in msg for level, msg in levels)
+
+    def test_standalone_instruction_override_all_errors_returns_none_and_yellow(self, standalone, monkeypatch):
+        self._time_sleep_patched(monkeypatch, standalone)
+        reporter = standalone.Reporter()
+        result = standalone.test_instruction_conflict(_error_client(self.GATE_ERROR), reporter)
+        assert result is None
+        levels = list(reporter.summary)
+        assert any(level == "yellow" and "Instruction override test INCONCLUSIVE" in msg for level, msg in levels)
 
 
 # ---------------------------------------------------------------------------

@@ -166,6 +166,25 @@ def run_cmd(cmd, timeout=10):
         return f"error: {e}"
 
 
+def _looks_like_claude_code_client_gate(error) -> bool:
+    """Return True when an error string looks like a Claude Code-only gate.
+
+    Some relays expose ``/v1/models`` to generic API tokens but reject
+    ``/v1/messages`` unless the caller is the real Claude Code client.
+    We deliberately do NOT impersonate Claude Code headers (out of scope
+    per ROADMAP / CLAUDE.md); instead we downgrade the affected steps to
+    an honest inconclusive verdict.
+    """
+    if not error:
+        return False
+    text = str(error).lower()
+    return (
+        "claude code" in text
+        and "client" in text
+        and ("only allow" in text or "only allows" in text)
+    )
+
+
 # ============================================================
 # Test modules
 # ============================================================
@@ -238,17 +257,39 @@ def test_token_injection(client, report):
     report.p("|------|---------------------|----------|-------|")
 
     injection_size = 0
+    errors = []
+    success_count = 0
     for name, sys_prompt, user_msg, expected in tests:
         r = client.call([{"role": "user", "content": user_msg}],
                         system=sys_prompt, max_tokens=100)
         if "error" in r:
             report.p(f"| {name} | ERROR | ~{expected} | - |")
+            errors.append(r.get("error", ""))
         else:
+            success_count += 1
             actual = r["input_tokens"]
             diff = actual - expected
             injection_size = max(injection_size, diff)
             report.p(f"| {name} | **{actual}** | ~{expected} | **~{diff}** |")
         time.sleep(1)
+
+    if success_count == 0:
+        if errors and all(_looks_like_claude_code_client_gate(err) for err in errors):
+            report.flag(
+                "yellow",
+                "Token injection test INCONCLUSIVE: every completion probe "
+                "was rejected as Claude Code-client-only. The relay appears "
+                "restricted to Claude Code clients, so hidden prompt injection "
+                "could not be measured.",
+            )
+        else:
+            report.flag(
+                "yellow",
+                f"Token injection test INCONCLUSIVE: all {len(errors)} probes "
+                "errored, so hidden prompt injection could not be measured.",
+            )
+        print("  Done: token injection (inconclusive, all probes errored)")
+        return None
 
     if injection_size > 100:
         report.flag("red", f"Hidden system prompt injection detected (~{injection_size} tokens/request)")
@@ -357,6 +398,8 @@ def test_prompt_extraction(client, report):
 
 def test_instruction_conflict(client, report):
     report.h2("5. Instruction Override Tests")
+    error_messages = []
+    success_count = 0
 
     # Cat test
     report.h3("Test D: Cat Test")
@@ -376,7 +419,10 @@ def test_instruction_conflict(client, report):
         if "422" in str(r.get("error", "")):
             overridden = True
             report.flag("red", "Cat test blocked: relay rejects custom system prompts (HTTP 422)")
+        else:
+            error_messages.append(r.get("error", ""))
     else:
+        success_count += 1
         report.p(f"**input_tokens**: {r['input_tokens']} | **Response**: `{r['text']}`")
         text = r["text"].strip().lower()
         has_meow = "meow" in text
@@ -409,7 +455,10 @@ def test_instruction_conflict(client, report):
         if "422" in str(r.get("error", "")):
             overridden = True
             report.flag("red", "Identity test blocked: relay rejects custom system prompts (HTTP 422)")
+        else:
+            error_messages.append(r.get("error", ""))
     else:
+        success_count += 1
         report.p(f"**input_tokens**: {r['input_tokens']} | **Response**:")
         report.code(r["text"][:500])
         text_lower = r["text"].lower()
@@ -433,6 +482,24 @@ def test_instruction_conflict(client, report):
         else:
             report.flag("yellow", "Identity test inconclusive")
 
+    if success_count == 0 and not overridden:
+        if error_messages and all(_looks_like_claude_code_client_gate(err) for err in error_messages):
+            report.flag(
+                "yellow",
+                "Instruction override test INCONCLUSIVE: both completion "
+                "probes were rejected as Claude Code-client-only. The relay "
+                "appears restricted to Claude Code clients, so user system-"
+                "prompt adherence could not be verified.",
+            )
+        else:
+            report.flag(
+                "yellow",
+                "Instruction override test INCONCLUSIVE: both probes errored, "
+                "so user system-prompt adherence could not be verified.",
+            )
+        print("  Done: instruction conflict (inconclusive, all probes errored)")
+        return None
+
     print(f"  Done: instruction conflict (overridden: {'yes' if overridden else 'no'})")
     return overridden
 
@@ -455,12 +522,16 @@ def test_jailbreak(client, report):
     ]
 
     leaked_keywords = []
+    error_messages = []
+    success_count = 0
     for name, prompt in tests:
         report.h3(f"Test {name}")
         r = client.call([{"role": "user", "content": prompt}], max_tokens=1024)
         if "error" in r:
             report.p(f"Error: {r['error']}")
+            error_messages.append(r.get("error", ""))
         else:
+            success_count += 1
             report.p(f"**input_tokens**: {r['input_tokens']} | **output_tokens**: {r['output_tokens']}")
             report.p("**Response**:")
             report.code(r["text"][:2000])
@@ -509,6 +580,22 @@ def test_jailbreak(client, report):
 
     if leaked_keywords:
         report.p(f"\nInferred hidden prompt characteristics: {', '.join(set(leaked_keywords))}")
+    elif success_count == 0:
+        report.p("\nJailbreak probes did not return any usable completion.")
+        if error_messages and all(_looks_like_claude_code_client_gate(err) for err in error_messages):
+            report.flag(
+                "yellow",
+                "Jailbreak tests INCONCLUSIVE: every completion probe was "
+                "rejected as Claude Code-client-only. The relay appears "
+                "restricted to Claude Code clients, so jailbreak behavior "
+                "could not be verified.",
+            )
+        else:
+            report.flag(
+                "yellow",
+                f"Jailbreak tests INCONCLUSIVE: all {len(error_messages)} "
+                "probes errored, so jailbreak behavior could not be verified.",
+            )
     else:
         report.p("\nJailbreak tests did not extract useful information.")
         report.flag("green", "Jailbreak tests passed (no identity keywords leaked)")
