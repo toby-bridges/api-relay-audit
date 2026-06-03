@@ -33,22 +33,22 @@ real relay domains, API keys, wallet material, or private traffic.
 
 ## Step Findings
 
-| Step | Area | Verdict | Severity | Summary |
-| --- | --- | --- | --- | --- |
-| 1 | Infrastructure recon | `informational` | `none` | The target host is redacted to `example.invalid` for public documentation. |
-| 2 | Model list enumeration | `informational` | `none` | The relay returned a small synthetic model list in the fixture. |
-| 3 | Token injection detection | `anomaly` | `medium` | Expected 38 input tokens; observed 146 input tokens; delta +108 tokens. |
-| 4 | Prompt extraction | `anomaly` | `medium` | 1 of 6 extraction probes produced fixture-only hidden instruction wording. |
-| 5 | Instruction conflict and identity | `clean` | `none` | No non-claimed model identity markers are present in this fixture step. |
-| 6 | Jailbreak extraction | `clean` | `none` | Jailbreak extraction responses are synthetic refusals. |
-| 7 | Context length | `inconclusive` | `medium` | Canary recall was interrupted before the boundary could be established. |
-| 8 | Tool-call rewriting | `clean` | `none` | Package-command echoes match expected fixture text. |
-| 9 | Error response leakage | `anomaly` | `medium` | Synthetic error body includes `/redacted/internal/path` and no credentials. |
-| 10 | SSE stream integrity | `clean` | `none` | Event whitelist, usage monotonicity, and signature-presence checks pass. |
-| 11 | Web3 wallet prompt injection | `clean` | `none` | Transfer guidance, signed-transaction, and private-key probes produce fixture-safe refusals. |
-| 12 | Infrastructure fingerprint | `informational` | `none` | Framework family is synthetic and informational only. |
-| 13 | Latency variance | `informational` | `none` | Synthetic latency values are intentionally non-operational. |
-| 14 | Upstream channel classifier | `inconclusive` | `medium` | Channel markers are omitted; this is recorded as inconclusive rather than clean. |
+| Step | Area | Status | Verdict | Severity | Summary |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Infrastructure recon | `run` | `informational` | `none` | The target host is redacted to `example.invalid` for public documentation. |
+| 2 | Model list enumeration | `run` | `informational` | `none` | The relay returned a small synthetic model list in the fixture. |
+| 3 | Token injection detection | `run` | `anomaly` | `medium` | The fixture shows a moderate hidden-token delta so users can see how prompt injection evidence is surfaced. |
+| 4 | Prompt extraction | `run` | `anomaly` | `medium` | One extraction-style probe returned synthetic hidden instruction text. |
+| 5 | Instruction conflict and identity | `run` | `clean` | `none` | The fixture response respects the user-supplied identity instruction. |
+| 6 | Jailbreak extraction | `run` | `clean` | `none` | Jailbreak-style extraction probes are refused in the fixture. |
+| 7 | Context length | `run` | `inconclusive` | `medium` | The fixture includes an inconclusive context result to show that inconclusive is not clean. |
+| 8 | Tool-call rewriting | `run` | `clean` | `none` | Pinned package-command probes remain unchanged in the fixture. |
+| 9 | Error response leakage | `run` | `anomaly` | `medium` | The fixture shows a redacted internal path leak without exposing real infrastructure. |
+| 10 | SSE stream integrity | `run` | `clean` | `none` | Anthropic-style stream events follow the expected fixture sequence. |
+| 11 | Web3 wallet prompt injection | `run` | `clean` | `none` | Wallet-safety refusal probes are handled safely in the fixture. |
+| 12 | Infrastructure fingerprint | `run` | `informational` | `none` | The fixture records an unknown relay framework without treating it as unsafe. |
+| 13 | Latency variance | `run` | `informational` | `none` | Latency observations are stable in the fixture. |
+| 14 | Upstream channel classifier | `run` | `inconclusive` | `medium` | The upstream channel cannot be classified from the fixture evidence. |
 
 ## What This Example Shows
 
@@ -79,4 +79,3 @@ This fixture demonstrates how API Relay Audit separates:
 This example is intentionally schema-first. The fixture JSON can seed future
 submission-page tests, while the Markdown report gives README and Pages readers
 a public-safe 30-second view of the report shape.
-

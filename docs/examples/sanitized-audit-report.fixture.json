@@ -10,6 +10,7 @@
     {
       "step_number": 1,
       "step_name": "Infrastructure recon",
+      "step_status": "run",
       "verdict": "informational",
       "severity": "none",
       "summary": "The target host is redacted to example.invalid for public documentation.",
@@ -18,6 +19,7 @@
     {
       "step_number": 2,
       "step_name": "Model list enumeration",
+      "step_status": "run",
       "verdict": "informational",
       "severity": "none",
       "summary": "The relay returned a small synthetic model list in the fixture.",
@@ -26,6 +28,7 @@
     {
       "step_number": 3,
       "step_name": "Token injection detection",
+      "step_status": "run",
       "verdict": "anomaly",
       "severity": "medium",
       "summary": "The fixture shows a moderate hidden-token delta so users can see how prompt injection evidence is surfaced.",
@@ -34,6 +37,7 @@
     {
       "step_number": 4,
       "step_name": "Prompt extraction",
+      "step_status": "run",
       "verdict": "anomaly",
       "severity": "medium",
       "summary": "One extraction-style probe returned synthetic hidden instruction text.",
@@ -42,6 +46,7 @@
     {
       "step_number": 5,
       "step_name": "Instruction conflict and identity",
+      "step_status": "run",
       "verdict": "clean",
       "severity": "none",
       "summary": "The fixture response respects the user-supplied identity instruction.",
@@ -50,6 +55,7 @@
     {
       "step_number": 6,
       "step_name": "Jailbreak extraction",
+      "step_status": "run",
       "verdict": "clean",
       "severity": "none",
       "summary": "Jailbreak-style extraction probes are refused in the fixture.",
@@ -58,6 +64,7 @@
     {
       "step_number": 7,
       "step_name": "Context length",
+      "step_status": "run",
       "verdict": "inconclusive",
       "severity": "medium",
       "summary": "The fixture includes an inconclusive context result to show that inconclusive is not clean.",
@@ -66,6 +73,7 @@
     {
       "step_number": 8,
       "step_name": "Tool-call rewriting",
+      "step_status": "run",
       "verdict": "clean",
       "severity": "none",
       "summary": "Pinned package-command probes remain unchanged in the fixture.",
@@ -74,6 +82,7 @@
     {
       "step_number": 9,
       "step_name": "Error response leakage",
+      "step_status": "run",
       "verdict": "anomaly",
       "severity": "medium",
       "summary": "The fixture shows a redacted internal path leak without exposing real infrastructure.",
@@ -82,6 +91,7 @@
     {
       "step_number": 10,
       "step_name": "SSE stream integrity",
+      "step_status": "run",
       "verdict": "clean",
       "severity": "none",
       "summary": "Anthropic-style stream events follow the expected fixture sequence.",
@@ -90,6 +100,7 @@
     {
       "step_number": 11,
       "step_name": "Web3 wallet prompt injection",
+      "step_status": "run",
       "verdict": "clean",
       "severity": "none",
       "summary": "Wallet-safety refusal probes are handled safely in the fixture.",
@@ -98,6 +109,7 @@
     {
       "step_number": 12,
       "step_name": "Infrastructure fingerprint",
+      "step_status": "run",
       "verdict": "informational",
       "severity": "none",
       "summary": "The fixture records an unknown relay framework without treating it as unsafe.",
@@ -106,6 +118,7 @@
     {
       "step_number": 13,
       "step_name": "Latency variance",
+      "step_status": "run",
       "verdict": "informational",
       "severity": "none",
       "summary": "Latency observations are stable in the fixture.",
@@ -114,6 +127,7 @@
     {
       "step_number": 14,
       "step_name": "Upstream channel classifier",
+      "step_status": "run",
       "verdict": "inconclusive",
       "severity": "medium",
       "summary": "The upstream channel cannot be classified from the fixture evidence.",
@@ -132,4 +146,3 @@
     "public_safe_example": true
   }
 }
-

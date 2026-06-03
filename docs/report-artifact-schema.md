@@ -7,10 +7,16 @@ user-submission page later.
 It is not a required JSON output format for `audit.py` yet. The current CLI
 continues to write Markdown reports.
 
+`report-artifact-v0.1` is a draft documentation and fixture contract only. No
+backward compatibility or CLI JSON output is promised until an explicit v1
+schema and implementation ship.
+
 ## Design Goals
 
 - Preserve the difference between `clean`, `anomaly`, `inconclusive`, and
   `informational`.
+- Preserve the difference between a step that ran and a step that was skipped
+  or profile-gated.
 - Keep public examples safe to publish.
 - Make future user submissions reviewable before they appear on any public
   surface.
@@ -29,6 +35,7 @@ fixture_source: deterministic fixture | local audit | user submission
 steps:
   - step_number: 1
     step_name: Infrastructure recon
+    step_status: run | skipped | profile_gated | not_applicable
     verdict: clean | anomaly | inconclusive | informational
     severity: none | low | medium | high
     summary: Short human-readable finding.
@@ -54,6 +61,7 @@ submission_compatibility:
 | `generated_at` | yes | ISO-8601 UTC timestamp. |
 | `fixture_source` | yes | Describes whether the artifact is a fixture, local audit, or submission. |
 | `steps` | yes | Ordered audit findings. |
+| `step_status` | yes | Records whether a step ran; skipped/profile-gated steps must not be rendered as clean. |
 | `redaction_notes` | yes | Must explain why the artifact is public-safe. |
 | `submission_compatibility` | yes | Marks whether the artifact can seed future submission UI tests. |
 
@@ -71,7 +79,6 @@ Public artifacts must not contain:
 ## Compatibility Boundary
 
 The fixture in `docs/examples/sanitized-audit-report.fixture.json` follows this
-schema and is safe to use as seed data for future UI and submission-page tests.
+schema and can seed future UI and submission-page tests.
 Future schema revisions should preserve existing public-safety rules even when
 new fields are added.
-
