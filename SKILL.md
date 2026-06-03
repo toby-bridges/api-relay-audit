@@ -13,7 +13,7 @@ metadata:
     envVars:
       - name: API_RELAY_AUDIT_KEY
         required: false
-        description: Optional relay API key. The agent may also ask the user directly instead of reading an environment variable.
+        description: Optional relay API key. Prefer a secure environment or secret store; avoid repeating keys in chat or logs.
       - name: API_RELAY_AUDIT_URL
         required: false
         description: Optional relay base URL, for example https://relay.example.com/v1.
@@ -31,10 +31,12 @@ A self-contained 14-step security audit for third-party AI API relay/proxy servi
 One command to download and run:
 
 ```bash
-curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py && python audit.py --key <KEY> --url <URL>
+AUDIT_SCRIPT_REF=fa12ae8513ef77c13c4cd8227a47e9121a257504
+curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
+python3 audit.py --key "$API_RELAY_AUDIT_KEY" --url "$API_RELAY_AUDIT_URL"
 ```
 
-Replace `<KEY>` with the relay API key and `<URL>` with the relay base URL (e.g. `https://relay.example.com/v1`).
+Set `API_RELAY_AUDIT_KEY` through the agent's secure environment or local shell first. Set `API_RELAY_AUDIT_URL` to the relay base URL (e.g. `https://relay.example.com/v1`).
 
 The script has zero dependencies beyond Python 3 + `curl`. All HTTP calls go through `curl` subprocess.
 
@@ -75,15 +77,15 @@ Trigger this skill when the user:
 
 Follow these steps in order. This is the complete workflow -- an agent reading only this file can perform a full audit.
 
-### Step 1: Get API Key and URL from User (收集输入)
+### Step 1: Confirm API Key and URL Inputs (确认输入)
 
-Ask the user for:
+Prefer secure environment variables or the platform's secret store. If the platform cannot provide secrets securely, ask the user to set them locally and avoid repeating the raw key in chat, logs, filenames, reports, or public comments.
 
-| Parameter | Required | Default | Example |
-|-----------|----------|---------|---------|
-| API Key (密钥) | Yes | -- | `sk-xxxxx` |
-| Base URL (基础地址) | Yes | -- | `https://relay.example.com/v1` |
-| Model (模型) | No | `claude-opus-4-6` | `claude-sonnet-4-20250514` |
+| Parameter | Required | Preferred source | Example |
+|-----------|----------|------------------|---------|
+| API Key (密钥) | Yes | `$API_RELAY_AUDIT_KEY` or secure secret setup | `sk-xxxxx` |
+| Base URL (基础地址) | Yes | `$API_RELAY_AUDIT_URL` or user-provided relay URL | `https://relay.example.com/v1` |
+| Model (模型) | No | `$API_RELAY_AUDIT_MODEL` or default | `claude-sonnet-4-20250514` |
 
 Optional flags to ask about:
 - `--skip-infra` -- skip DNS/WHOIS/SSL checks (saves time if user only wants injection tests)
@@ -105,7 +107,8 @@ Optional flags to ask about:
 Check if `audit.py` already exists in the working directory. If not, download it:
 
 ```bash
-curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py
+AUDIT_SCRIPT_REF=fa12ae8513ef77c13c4cd8227a47e9121a257504
+curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 ```
 
 Verify the download succeeded:
@@ -273,7 +276,11 @@ python audit.py [OPTIONS]
 | `--aggressive-error-probes` | No | false | Enable 256 KB oversized-context error probe in Step 9 (启用激进错误探测，可能产生计费) |
 | `--skip-stream-integrity` | No | false | Skip Step 10 SSE-level stream integrity test (跳过流完整性检测) |
 | `--skip-web3-injection` | No | false | Skip Step 11 Web3 prompt injection probes (跳过 Web3 注入检测) |
-| `--profile` | No | `general` | Audience selector: `general` (Steps 1-10), `web3` (+ Step 11), `full` (all) |
+| `--skip-infra-fingerprint` | No | false | Skip Step 12 infrastructure fingerprinting (跳过基础设施指纹) |
+| `--skip-latency-variance` | No | false | Skip Step 13 latency variance checks (跳过延迟方差) |
+| `--skip-channel-classifier` | No | false | Skip Step 14 upstream channel classification (跳过上游通道分类) |
+| `--latency-probe-count` | No | 10 | Number of Step 13 latency probes (延迟探测次数) |
+| `--profile` | No | `general` | Audience selector: `general`, `web3`, or `full`; Web3 probes run only under `web3` or `full` |
 | `--transparent-log` | No | -- | Path to append-only JSONL forensic log (arXiv §7.3 取证日志) |
 | `--warmup` | No | 0 | Send N benign requests before the audit to mitigate AC-1.b request-count gates (审计前预热次数) |
 | `--timeout` | No | 120 | Request timeout in seconds (请求超时秒数) |
@@ -315,5 +322,5 @@ The relay's injected prompt conflicts with the user's system prompt. This is its
 If `curl` is unavailable, try:
 
 ```bash
-python3 -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py', 'audit.py')"
+python3 -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/toby-bridges/api-relay-audit/fa12ae8513ef77c13c4cd8227a47e9121a257504/audit.py', 'audit.py')"
 ```

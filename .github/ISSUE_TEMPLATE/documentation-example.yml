@@ -44,4 +44,3 @@ body:
       label: Source Context
       description: What confused you or what user path does this improve?
       placeholder: "I was trying to choose between --profile general and --profile web3..."
-

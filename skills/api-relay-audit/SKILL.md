@@ -81,9 +81,10 @@ MODEL="${API_RELAY_AUDIT_MODEL:-claude-opus-4-6}"
 PROFILE="${API_RELAY_AUDIT_PROFILE:-general}"
 WORKDIR="$(mktemp -d)"
 REPORT="$PWD/api-relay-audit-report.md"
+AUDIT_SCRIPT_REF=fa12ae8513ef77c13c4cd8227a47e9121a257504
 
 curl -fsSL \
-  https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py \
+  "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" \
   -o "$WORKDIR/audit.py"
 
 python3 "$WORKDIR/audit.py" \
@@ -174,7 +175,7 @@ Recommendation: <use / use with caution / do not use>, based only on the report 
 
 ## Verification Checklist
 
-- [ ] `SKILL.md` frontmatter has `name`, `description`, `version`, `author`, `license`, and `metadata.hermes.tags`.
+- [ ] `skills/api-relay-audit/SKILL.md` frontmatter has `name`, `description`, `version`, `author`, `license`, and `metadata.hermes.tags`.
 - [ ] Description is under 1024 characters and starts with "Use when".
 - [ ] The audit command uses `$API_RELAY_AUDIT_KEY`, not a literal key.
 - [ ] The report was generated as Markdown and the key was not echoed.
