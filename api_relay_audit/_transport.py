@@ -9,8 +9,19 @@ import json
 import os
 import subprocess
 import tempfile
+from urllib.parse import urlparse
 
 import httpx
+
+LOOPBACK_NO_PROXY = "localhost,127.0.0.1,::1"
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def curl_loopback_no_proxy_args(url: str) -> list:
+    """Return curl args that keep loopback URLs out of proxy env routing."""
+    if urlparse(url).hostname in LOOPBACK_HOSTS:
+        return ["--noproxy", LOOPBACK_NO_PROXY]
+    return []
 
 
 def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
@@ -30,8 +41,8 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
             json.dump(body, tmp)
             body_path = tmp.name
 
-        cmd = ["curl", "-sk", "-X", "POST", url, "--max-time", str(timeout),
-               "--config", "-", "--data-binary", f"@{body_path}"]
+        cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-X", "POST", url,
+               "--max-time", str(timeout), "--config", "-", "--data-binary", f"@{body_path}"]
         config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
         r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
                                   timeout=timeout + 10)
@@ -59,7 +70,8 @@ def httpx_post_json(url: str, headers: dict, body: dict, timeout: int,
 def curl_get_json_data(url: str, headers: dict, timeout: int = 15,
                        subprocess_module=subprocess) -> list:
     """GET JSON through curl and return the top-level ``data`` list."""
-    cmd = ["curl", "-sk", url, "--max-time", str(timeout), "--config", "-"]
+    cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), url,
+           "--max-time", str(timeout), "--config", "-"]
     config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
     r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
                               timeout=timeout + 10)
@@ -104,7 +116,7 @@ def curl_raw_request(method: str, url: str, headers: dict, body: bytes,
                      subprocess_module=subprocess) -> dict:
     """Raw request through curl and parse ``curl -i`` output with ``parser``."""
     all_headers = {**headers, "content-type": content_type}
-    cmd = ["curl", "-sk", "-i", "-X", method, url,
+    cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-i", "-X", method, url,
            "--max-time", str(timeout), "--data-binary", "@-"]
     for k, v in all_headers.items():
         cmd.extend(["-H", f"{k}: {v}"])

@@ -320,12 +320,31 @@ class TestCurlFallback:
         assert "https://relay.example.com/v1/messages" in cmd
         assert "--config" in cmd
         assert "-" in cmd
+        assert "--noproxy" not in cmd
         assert "--data-binary" in cmd
         body_arg = cmd[cmd.index("--data-binary") + 1]
         assert body_arg.startswith("@")
         assert '{"model": "test"}' not in cmd
         config_input = mock_run.call_args[1].get("input", "")
         assert "x-api-key: sk-test" in config_input
+
+    @patch("api_relay_audit.client.subprocess.run")
+    def test_curl_post_bypasses_proxy_for_loopback(self, mock_run, client):
+        client._use_curl = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"ok": true}',
+        )
+
+        client._curl_post(
+            "http://127.0.0.1:8765/v1/messages",
+            {"content-type": "application/json"},
+            {"model": "test"},
+        )
+
+        cmd = mock_run.call_args[0][0]
+        assert "--noproxy" in cmd
+        assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
 
 
 # ---------------------------------------------------------------------------

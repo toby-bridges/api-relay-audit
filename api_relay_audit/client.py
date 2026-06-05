@@ -845,7 +845,8 @@ class APIClient:
         incremental stream.
         """
         cmd = [
-            "curl", "-sk", "-N", "--no-buffer", "-X", "POST", url,
+            "curl", "-sk", *_transport.curl_loopback_no_proxy_args(url),
+            "-N", "--no-buffer", "-X", "POST", url,
             "--max-time", str(timeout),
             "-w", f"\n{CURL_STATUS_SENTINEL}%{{http_code}}\n",
             "--data-binary", "@-",

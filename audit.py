@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 49447d8ba16907a029aaf44fb92364e00eabbef083cfd68efedef200dbf24767
-# standalone_body_sha256: 7f03317771b8483a30f169ad76de55086660d4106fe43984f8a9c1d9f09a152c
+# source_sha256: 213c1893304b908d9beec00f7b0d48a465fc6aefe0510a102f5f1969fa4baf1f
+# standalone_body_sha256: 0418bf14fcedf7a7d3308f8a045c6ec1b4d1ec0a7eb0d9c3e141b4cda2febded
 # END GENERATED STANDALONE HEADER
 
 """
@@ -550,7 +550,18 @@ import json
 import os
 import subprocess
 import tempfile
+from urllib.parse import urlparse
 
+
+LOOPBACK_NO_PROXY = "localhost,127.0.0.1,::1"
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def curl_loopback_no_proxy_args(url: str) -> list:
+    """Return curl args that keep loopback URLs out of proxy env routing."""
+    if urlparse(url).hostname in LOOPBACK_HOSTS:
+        return ["--noproxy", LOOPBACK_NO_PROXY]
+    return []
 
 
 def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
@@ -570,8 +581,8 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
             json.dump(body, tmp)
             body_path = tmp.name
 
-        cmd = ["curl", "-sk", "-X", "POST", url, "--max-time", str(timeout),
-               "--config", "-", "--data-binary", f"@{body_path}"]
+        cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-X", "POST", url,
+               "--max-time", str(timeout), "--config", "-", "--data-binary", f"@{body_path}"]
         config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
         r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
                                   timeout=timeout + 10)
@@ -592,7 +603,8 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
 def curl_get_json_data(url: str, headers: dict, timeout: int = 15,
                        subprocess_module=subprocess) -> list:
     """GET JSON through curl and return the top-level ``data`` list."""
-    cmd = ["curl", "-sk", url, "--max-time", str(timeout), "--config", "-"]
+    cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), url,
+           "--max-time", str(timeout), "--config", "-"]
     config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
     r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
                               timeout=timeout + 10)
@@ -610,7 +622,7 @@ def curl_raw_request(method: str, url: str, headers: dict, body: bytes,
                      subprocess_module=subprocess) -> dict:
     """Raw request through curl and parse ``curl -i`` output with ``parser``."""
     all_headers = {**headers, "content-type": content_type}
-    cmd = ["curl", "-sk", "-i", "-X", method, url,
+    cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-i", "-X", method, url,
            "--max-time", str(timeout), "--data-binary", "@-"]
     for k, v in all_headers.items():
         cmd.extend(["-H", f"{k}: {v}"])
@@ -1507,7 +1519,8 @@ class APIClient:
         incremental stream.
         """
         cmd = [
-            "curl", "-sk", "-N", "--no-buffer", "-X", "POST", url,
+            "curl", "-sk", *_transport.curl_loopback_no_proxy_args(url),
+            "-N", "--no-buffer", "-X", "POST", url,
             "--max-time", str(timeout),
             "-w", f"\n{CURL_STATUS_SENTINEL}%{{http_code}}\n",
             "--data-binary", "@-",
