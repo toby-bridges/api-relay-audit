@@ -74,7 +74,7 @@ Public artifacts must not contain:
 - Private relay domains or private URLs.
 - Wallet seed phrases, private keys, signed transactions, or raw wallet traffic.
 - Raw request or response captures containing user traffic.
-- Relay rankings, recommendations, or safety certifications.
+- Relay rankings, vendor-selection advice, or safety certifications.
 
 ## Compatibility Boundary
 
