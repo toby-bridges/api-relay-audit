@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 7093e3f6beef3fa742fa52a9b4e3223bd0534661fd2f90acb90974eb913a87d7
-# standalone_body_sha256: 664a23e101a5b0f598a3273e97911cc3a3b13da975c105afb7882cd6ff177640
+# source_sha256: c5524b38b5a8c4c95a9fdd68a30b520363edbd358c95cab79b65f71cc6ab703d
+# standalone_body_sha256: dfaaa0011b2a80dd7909d97facd534def6704b323c4a20c10ff78f6a63705cbd
 # END GENERATED STANDALONE HEADER
 
 """
@@ -5922,7 +5922,7 @@ def test_context_length(client, report, fast_mode=False):
         report.p(
             "_Fast context mode enabled: Step 7 only tests 10K/50K/100K/200K "
             "chars before the normal boundary refinement. Default full scan "
-            "remains recommended for publication-grade audits._\n"
+            "remains the preferred path for publication-grade audit evidence._\n"
         )
 
     print("  Context scan: ", end="", flush=True)
@@ -6625,7 +6625,7 @@ def main():
     elif d1:
         report.p("### MEDIUM RISK\n")
         report.p("Hidden injection detected but instructions may partially work. "
-                 "OK for simple Q&A, not recommended for complex applications.")
+                 "Needs review before complex or sensitive applications.")
     elif d2:
         report.p("### MEDIUM RISK\n")
         report.p("No significant injection but instruction override detected.")

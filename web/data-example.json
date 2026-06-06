@@ -156,7 +156,7 @@
       "轻微注入 ~25 tokens（疑似 New API 系统默认行为）"
     ],
     "models": 5,
-    "summary": "自建中转站，轻微注入约 25 tokens（可能是 New API 默认行为）。猫叫和身份测试通过，上下文 ~197K tokens 完整。整体安全可靠。",
+    "summary": "自建中转站，轻微注入约 25 tokens（可能是 New API 默认行为）。猫叫和身份测试通过，上下文 ~197K tokens 完整。已覆盖探针未显示高风险异常；不是安全认证。",
     "fullReport": "audit-example3.md",
     "promptTests": [
       {

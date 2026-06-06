@@ -123,7 +123,7 @@ python3 audit.py \
 
 ## Profiles and Cost Controls
 
-| Scenario | Recommended flags |
+| Scenario | Suggested flags |
 |---|---|
 | Fast first pass | `--skip-infra --skip-context --skip-latency-variance` |
 | Normal relay audit | `--profile general` |
@@ -175,7 +175,7 @@ Overall risk: LOW / MEDIUM / HIGH
 - Web3 profile: <not run/clean/injected/inconclusive>
 - Informational: <infra fingerprint and latency variance highlights>
 
-Recommendation: <use / use with caution / do not use>, based only on the report evidence.
+Evidence status: <covered probes show no anomaly / needs review / anomaly evidence observed>, based only on the report evidence.
 ```
 
 ## Common Pitfalls

@@ -800,14 +800,14 @@ valuable after the audit corpus reaches ≥100 distinct relay endpoints.
 We currently have 0 in our corpus (users run the tool ad-hoc). Revisit
 after ~6 months of field use and corpus growth.
 
-### 9. Structured audit corpus from hvoy.ai leaderboard
+### 9. Structured audit corpus from hvoy.ai public relay index
 **Status**: hvoy.ai `/APIreview.html` lists 40+ real Chinese relay
-endpoints with CNY pricing and推荐/中性/不推荐 ratings
+endpoints with CNY pricing and operator-facing status language
 **Scope**: ops + data pipeline: scrape or manually collect the list,
 request consent from relay operators, run api-relay-audit against each,
 compile a `reports/corpus-2026-Qx.md` document
 **Why**: independent validation — our tool's findings should be compared
-against hvoy.ai's recommendations and any divergence explained. Also
+against hvoy.ai's published relay-status signals and any divergence explained. Also
 gives us JA3 data (see item 8) if we collect client-side TLS fingerprints
 during the audit runs.
 **Legal consideration**: some of the listed relays may have ToS that

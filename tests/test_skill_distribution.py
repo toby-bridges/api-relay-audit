@@ -170,6 +170,32 @@ def test_model_substitution_copy_requires_corroboration():
         assert "provider proof" in text.lower() or "provider-level proof" in text.lower() or "provider 替换" in text
 
 
+def test_public_surfaces_use_evidence_registry_language():
+    surfaces = [
+        HOMEPAGE,
+        ROOT_SKILL,
+        HERMES_SKILL,
+        REPO_ROOT / "web" / "data-example.json",
+        REPO_ROOT / "docs" / "comparison-api-relay-audit-vs-hvoy-vs-cctest.md",
+    ]
+    forbidden = [
+        "public leaderboard",
+        "cmp_leaderboard",
+        "safe and reliable",
+        "overall safe",
+        "use freely",
+        "safe for general use",
+        "整体安全可靠",
+        "公开排行榜",
+        "中转站推荐页",
+        "推荐工具",
+    ]
+    for path in surfaces:
+        text = _read(path).lower()
+        for phrase in forbidden:
+            assert phrase.lower() not in text, f"{path} contains stale phrase {phrase!r}"
+
+
 def test_root_skill_secret_handling_prefers_secure_environment():
     text = _read(ROOT_SKILL)
     assert "secure environment" in text

@@ -1153,7 +1153,7 @@ def test_context_length(client, report, fast_mode=False):
         report.p(
             "_Fast context mode enabled: Step 7 only tests 10K/50K/100K/200K "
             "chars before the normal boundary refinement. Default full scan "
-            "remains recommended for publication-grade audits._\n"
+            "remains the preferred path for publication-grade audit evidence._\n"
         )
 
     print("  Context scan: ", end="", flush=True)
@@ -1857,7 +1857,7 @@ def main():
     elif d1:
         report.p("### MEDIUM RISK\n")
         report.p("Hidden injection detected but instructions may partially work. "
-                 "OK for simple Q&A, not recommended for complex applications.")
+                 "Needs review before complex or sensitive applications.")
     elif d2:
         report.p("### MEDIUM RISK\n")
         report.p("No significant injection but instruction override detected.")

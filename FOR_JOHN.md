@@ -693,7 +693,7 @@ Session 前期我写过一份 `project_competitive_landscape.md` memory,结论�
 - **hvoy.ai 的 `"null"` text block request body 指纹** — 不清楚他们为什么这么写,port 会让我们的请求和他们的工具 indistinguishable,不 port
 - **Knowledge cutoff 探测**(hvoy.ai 4 个维度之一)— 作者自己说易被 system prompt hard-code 欺骗,不值得
 - **识别 "I am Claude, not GPT" 型残余 FP** — 需要 identity-phrase anchor regex(`"I am X"` / `"made by X"`),scope creep,留给 v1.7+
-- **hvoy.ai leaderboard 40+ 真实中转站**作为自动化验证语料库 — 需要 consent + rate limiting 工程,留到工具 v2 或 v3
+- **hvoy.ai 公开中转站索引里的 40+ 真实中转站**作为自动化验证语料库 — 需要 consent + rate limiting 工程,留到工具 v2 或 v3
 - **`--transparent-log <path>` flag**(arXiv §7.3)— 正交独立,下次 session 单独做
 
 ### 给下次 session 的你

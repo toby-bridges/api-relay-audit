@@ -383,7 +383,7 @@ footer a:hover{color:var(--text)}
   <div class="hero-stats">
     <div class="stat"><div class="stat-num">14</div><div class="stat-label" data-i18n="stat_steps">Audit Steps</div></div>
     <div class="stat"><div class="stat-num">6D</div><div class="stat-label" data-i18n="stat_matrix">Risk Matrix</div></div>
-    <div class="stat"><div class="stat-num">775</div><div class="stat-label" data-i18n="stat_tests">Unit Tests</div></div>
+    <div class="stat"><div class="stat-num">776</div><div class="stat-label" data-i18n="stat_tests">Unit Tests</div></div>
     <div class="stat"><div class="stat-num">0</div><div class="stat-label" data-i18n="stat_deps">Dependencies (standalone)</div></div>
   </div>
   <div class="hero-cta">
@@ -687,7 +687,7 @@ footer a:hover{color:var(--text)}
       <tr><td data-i18n="cmp_channel">Upstream Channel Classifier</td><td class="check">&#10003;</td><td class="cross">&#10005;</td><td class="check">&#10003;</td></tr>
       <tr><td data-i18n="cmp_local">Local Execution (No extra checker server)</td><td class="check">&#10003;</td><td class="cross">&#10005;</td><td class="cross">&#10005;</td></tr>
       <tr><td data-i18n="cmp_oss">Fully Open Source</td><td class="check">&#10003;</td><td class="cross">Partial</td><td class="cross">&#10005;</td></tr>
-      <tr><td data-i18n="cmp_leaderboard">Public Leaderboard</td><td class="cross">&#10005;</td><td class="check">&#10003;</td><td class="cross">&#10005;</td></tr>
+      <tr><td data-i18n="cmp_registry">Review-Gated Evidence Registry</td><td class="check">&#10003;</td><td class="cross">&#10005;</td><td class="cross">&#10005;</td></tr>
       <tr><td data-i18n="cmp_report">Structured Audit Report</td><td class="check">&#10003;</td><td class="cross">&#10005;</td><td class="cross">&#10005;</td></tr>
     </tbody>
   </table>
@@ -828,8 +828,8 @@ const demos = [
     contextLength:{maxTokens:"~197K"},
     redFlags:["Minor ~25 tokens (likely New API default behavior)"],
     redFlags_zh:["轻微注入 ~25 tokens（疑似 New API 系统默认行为）"],
-    summary:"Self-hosted relay, minor ~25 token injection (likely New API default). Cat-test and identity test passed. Context ~197K tokens intact. Overall safe and reliable.",
-    summary_zh:"自建中转站，轻微注入约 25 tokens（可能是 New API 默认行为）。猫叫和身份测试通过，上下文 ~197K tokens 完整。整体安全可靠。",
+    summary:"Self-hosted relay, minor ~25 token injection (likely New API default). Cat-test and identity test passed. Context ~197K tokens intact. Covered probes show no high-risk anomaly; not a safety certificate.",
+    summary_zh:"自建中转站，轻微注入约 25 tokens（可能是 New API 默认行为）。猫叫和身份测试通过，上下文 ~197K tokens 完整。已覆盖探针未显示高风险异常；不是安全认证。",
     tests:[
       {step:"Token Injection",result:"pass",detail:"+25 (default)"},
       {step:"Prompt Extraction",result:"pass",detail:"1/6 (minor)"},
@@ -1080,7 +1080,7 @@ const i18n={
     cmp_inject:"Token 注入",cmp_prompt:"Prompt 提取",cmp_identity:"身份替换",cmp_jailbreak:"越狱防护",
     cmp_context:"上下文截断",cmp_tool:"工具调用改写 (AC-1.a)",cmp_error:"错误响应泄漏 (AC-2)",
     cmp_stream:"流完整性 (SSE)",cmp_web3:"Web3 注入",cmp_channel:"上游通道分类",
-    cmp_local:"本地运行 (无额外检测服务器)",cmp_oss:"完全开源",cmp_leaderboard:"公开排行榜",cmp_report:"结构化审计报告",
+    cmp_local:"本地运行 (无额外检测服务器)",cmp_oss:"完全开源",cmp_registry:"证据库（人工复核）",cmp_report:"结构化审计报告",
     install_title:"开始审计",install_sub:"填写你的中转站信息 — 我们生成命令，你在本地运行。",
     flow_title:"你的 Key 如何流转 — 关键区别",
     flow_you:"你",flow_local:"你的终端",flow_relay:"你的中转站",
@@ -1181,7 +1181,7 @@ const i18n={
     cmp_inject:"Token Injection",cmp_prompt:"Prompt Extraction",cmp_identity:"Identity Substitution",cmp_jailbreak:"Jailbreak Resistance",
     cmp_context:"Context Truncation",cmp_tool:"Tool-Call Rewriting (AC-1.a)",cmp_error:"Error Response Leakage (AC-2)",
     cmp_stream:"Stream Integrity (SSE)",cmp_web3:"Web3 Injection",cmp_channel:"Upstream Channel Classifier",
-    cmp_local:"Local Execution (No extra checker server)",cmp_oss:"Fully Open Source",cmp_leaderboard:"Public Leaderboard",cmp_report:"Structured Audit Report",
+    cmp_local:"Local Execution (No extra checker server)",cmp_oss:"Fully Open Source",cmp_registry:"Review-Gated Evidence Registry",cmp_report:"Structured Audit Report",
     install_title:"Start Your Audit",install_sub:"Fill in your relay info — we generate the command, you run it locally.",
     flow_title:"How your Key flows — the critical difference",
     flow_you:"You",flow_local:"Your Terminal",flow_relay:"Your Relay",

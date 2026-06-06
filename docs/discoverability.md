@@ -4,7 +4,7 @@ This document defines a repeatable benchmark for GitHub organic discovery:
 repository metadata, topics, public landing issues, contributor labels, and
 repository search queries.
 
-This benchmark is not a relay recommendation, safety ranking, or evidence
+This benchmark is not a relay ranking, safety claim, or submitted-report
 registry. It only checks whether users can find this local, transparent, and
 repeatable audit tool from GitHub search surfaces. Do not use stale observations
 as public launch claims without re-running the protocol below.

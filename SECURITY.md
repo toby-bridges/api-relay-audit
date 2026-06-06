@@ -73,7 +73,7 @@ In scope:
 Out of scope:
 
 - A relay operator's behavior unless it demonstrates a bug in this tool.
-- Requests for relay recommendations or rankings.
+- Requests to choose, rank, or endorse relay vendors.
 - Vulnerabilities in upstream AI providers.
 - Results from modified forks that do not match this repository.
 
