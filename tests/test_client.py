@@ -346,6 +346,52 @@ class TestCurlFallback:
         assert "--noproxy" in cmd
         assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
 
+    @patch("api_relay_audit.client.subprocess.run")
+    def test_curl_get_models_bypasses_proxy_for_loopback(self, mock_run):
+        client = APIClient(
+            base_url="http://localhost:8765/v1",
+            api_key="sk-test-key",
+            model="claude-3-haiku",
+            timeout=30,
+            verbose=False,
+        )
+        client._use_curl = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps({"data": [{"id": "claude-opus-4-6"}]}),
+        )
+
+        assert client.get_models() == [{"id": "claude-opus-4-6"}]
+
+        cmd = mock_run.call_args[0][0]
+        assert "--noproxy" in cmd
+        assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+
+    @patch("api_relay_audit.client.subprocess.run")
+    def test_curl_raw_request_bypasses_proxy_for_loopback(self, mock_run):
+        client = APIClient(
+            base_url="http://127.0.0.1:8765/v1",
+            api_key="sk-test-key",
+            model="claude-3-haiku",
+            timeout=30,
+            verbose=False,
+        )
+        client._use_curl = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=b"HTTP/1.1 400 Bad Request\r\nX-Test: yes\r\n\r\nbad",
+            stderr=b"",
+        )
+
+        result = client.raw_request(
+            "POST", "/v1/messages", {}, b"{}", timeout=3,
+        )
+
+        assert result["status"] == 400
+        cmd = mock_run.call_args[0][0]
+        assert "--noproxy" in cmd
+        assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+
 
 # ---------------------------------------------------------------------------
 # Auto-detection flow

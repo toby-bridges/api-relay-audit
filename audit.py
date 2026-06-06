@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 213c1893304b908d9beec00f7b0d48a465fc6aefe0510a102f5f1969fa4baf1f
-# standalone_body_sha256: 0418bf14fcedf7a7d3308f8a045c6ec1b4d1ec0a7eb0d9c3e141b4cda2febded
+# source_sha256: 04b7aa16a85d6094d6b0d5f1fd16e110bc1db1d84c33b59231776ffd2e7da60c
+# standalone_body_sha256: 30cecedb64e88021d8876affa1104de2dfbe431913e19c37ad524e2edb38a614
 # END GENERATED STANDALONE HEADER
 
 """
@@ -645,7 +645,10 @@ def httpx_post_json(url: str, headers: dict, body: dict, timeout: int) -> dict:
 
 def httpx_get_json_data(url: str, headers: dict, timeout: int = 15):
     """Standalone compatibility wrapper: GET JSON through curl -i."""
-    cmd = ["curl", "-sk", "-i", url, "--max-time", str(timeout), "--config", "-"]
+    cmd = [
+        "curl", "-sk", *curl_loopback_no_proxy_args(url),
+        "-i", url, "--max-time", str(timeout), "--config", "-"
+    ]
     config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
     r = subprocess.run(
         cmd,
@@ -683,6 +686,7 @@ def httpx_raw_request(method: str, url: str, headers: dict, body: bytes,
 
 
 class _StandaloneTransport:
+    curl_loopback_no_proxy_args = staticmethod(curl_loopback_no_proxy_args)
     curl_post_json = staticmethod(curl_post_json)
     httpx_post_json = staticmethod(httpx_post_json)
     curl_get_json_data = staticmethod(curl_get_json_data)

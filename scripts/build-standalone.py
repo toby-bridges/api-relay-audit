@@ -87,7 +87,10 @@ def httpx_post_json(url: str, headers: dict, body: dict, timeout: int) -> dict:
 
 def httpx_get_json_data(url: str, headers: dict, timeout: int = 15):
     """Standalone compatibility wrapper: GET JSON through curl -i."""
-    cmd = ["curl", "-sk", "-i", url, "--max-time", str(timeout), "--config", "-"]
+    cmd = [
+        "curl", "-sk", *curl_loopback_no_proxy_args(url),
+        "-i", url, "--max-time", str(timeout), "--config", "-"
+    ]
     config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
     r = subprocess.run(
         cmd,
@@ -125,6 +128,7 @@ def httpx_raw_request(method: str, url: str, headers: dict, body: bytes,
 
 
 class _StandaloneTransport:
+    curl_loopback_no_proxy_args = staticmethod(curl_loopback_no_proxy_args)
     curl_post_json = staticmethod(curl_post_json)
     httpx_post_json = staticmethod(httpx_post_json)
     curl_get_json_data = staticmethod(curl_get_json_data)

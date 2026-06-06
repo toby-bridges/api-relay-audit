@@ -600,6 +600,39 @@ class TestCurlNonzeroExitHandling:
         assert signals.has_message_start is True
         assert signals.raw_event_count == 1
 
+    def test_curl_stream_bypasses_proxy_for_loopback(self):
+        captured_cmds = []
+
+        def mock_popen_factory(cmd, *args, **kwargs):
+            captured_cmds.append(cmd)
+            proc = MagicMock()
+            proc.stdin = MagicMock()
+            proc.stdout = BytesIO(
+                b'data: {"type":"message_start","message":{"model":"claude-opus-4-6"}}\n'
+                b"\n"
+                b"data: [DONE]\n\n"
+            )
+            proc.stderr = BytesIO(b"")
+            proc.wait = MagicMock(return_value=None)
+            proc.returncode = 0
+            return proc
+
+        with patch("api_relay_audit.client.subprocess.Popen",
+                   side_effect=mock_popen_factory):
+            client = APIClient(
+                "http://localhost:8765/v1", "sk-test", "claude-opus-4-6",
+                verbose=False,
+            )
+            client._use_curl = True
+            signals = client.stream_call(
+                [{"role": "user", "content": "hi"}],
+            )
+
+        assert signals.transport_error is None
+        cmd = captured_cmds[0]
+        assert "--noproxy" in cmd
+        assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+
 
 # ---------------------------------------------------------------------------
 # APIClient.stream_call (integration tests with mocked httpx)

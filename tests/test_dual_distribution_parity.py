@@ -665,3 +665,77 @@ def test_standalone_curl_post_keeps_large_body_out_of_argv(monkeypatch):
     assert "x" * 100 not in cmd_text
     assert "sk-test" not in cmd_text
     assert "x-api-key: sk-test" in kwargs["input"]
+
+
+def test_standalone_get_models_bypasses_proxy_for_loopback(monkeypatch):
+    """Standalone model-list GET must keep loopback URLs out of proxy env routing."""
+    standalone = _load_standalone_audit()
+    calls = []
+
+    class FakeRunResult:
+        returncode = 0
+        stdout = (
+            'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n'
+            '{"data":[{"id":"claude-opus-4-6"}]}'
+        )
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return FakeRunResult()
+
+    monkeypatch.setattr(standalone.subprocess, "run", fake_run)
+
+    status, data, text, headers = standalone.httpx_get_json_data(
+        "http://localhost:8765/v1/models",
+        {"Authorization": "Bearer sk-test"},
+        timeout=3,
+    )
+
+    assert status == 200
+    assert data == [{"id": "claude-opus-4-6"}]
+    cmd, _kwargs = calls[0]
+    assert "--noproxy" in cmd
+    assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+    assert standalone._transport.curl_loopback_no_proxy_args(
+        "http://127.0.0.1:8765/v1/messages"
+    ) == ["--noproxy", "localhost,127.0.0.1,::1"]
+
+
+def test_standalone_stream_bypasses_proxy_for_loopback(monkeypatch):
+    """Standalone SSE curl path uses the same loopback proxy bypass facade."""
+    from io import BytesIO
+    from unittest.mock import MagicMock
+
+    standalone = _load_standalone_audit()
+    captured_cmds = []
+
+    def fake_popen(cmd, *args, **kwargs):
+        captured_cmds.append(cmd)
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.stdout = BytesIO(
+            b'data: {"type":"message_start","message":{"model":"claude-opus-4-6"}}\n'
+            b"\n"
+            b"data: [DONE]\n\n"
+        )
+        proc.stderr = BytesIO(b"")
+        proc.wait = MagicMock(return_value=None)
+        proc.returncode = 0
+        return proc
+
+    monkeypatch.setattr(standalone.subprocess, "Popen", fake_popen)
+
+    client = standalone.APIClient(
+        "http://localhost:8765/v1",
+        "sk-test",
+        "claude-opus-4-6",
+        verbose=False,
+    )
+    client._use_curl = True
+    signals = client.stream_call([{"role": "user", "content": "hi"}])
+
+    assert signals.transport_error is None
+    cmd = captured_cmds[0]
+    assert "--noproxy" in cmd
+    assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
