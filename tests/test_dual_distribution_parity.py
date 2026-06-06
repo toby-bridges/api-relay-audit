@@ -70,6 +70,24 @@ def _load_standalone_audit():
     return module
 
 
+def test_error_diagnosis_standalone_parity():
+    """Error diagnosis is part of the user-facing report contract."""
+    from api_relay_audit.error_diagnosis import diagnose_error as modular_diagnose
+
+    standalone = _load_standalone_audit()
+    cases = [
+        ("HTTP 401: invalid key", None),
+        ("HTTP 422: unsupported system prompt", None),
+        ("Both formats failed", None),
+        ("TypeError: Failed to fetch because of CORS", None),
+        ("upstream body did not include status", 403),
+    ]
+    for error, status in cases:
+        assert standalone.diagnose_error(error, status=status) == modular_diagnose(
+            error, status=status
+        )
+
+
 def test_identity_keywords_standalone_parity():
     """Regression (v1.7.6): the non-Claude identity keyword tuple and the
     strict-keyword frozenset in the standalone audit.py must match the

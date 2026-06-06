@@ -37,6 +37,7 @@ from api_relay_audit.channel_classifier import run_channel_classifier
 from api_relay_audit.client import APIClient
 from api_relay_audit.connectivity import run_connectivity_check
 from api_relay_audit.context import run_context_scan
+from api_relay_audit.error_diagnosis import diagnose_error, format_diagnosis
 from api_relay_audit.error_leakage import run_error_leakage_test
 from api_relay_audit.identity_patterns import find_non_claude_identities
 from api_relay_audit.infra_fingerprint import (
@@ -78,6 +79,21 @@ def _format_identity_inconsistency(non_claude_matches):
         "of the actual upstream model; preserve the full response JSON, "
         "request id, provider/model metadata, and platform logs for attribution."
     )
+
+
+def _diagnosis_for_error(error, status=None):
+    """Return the best available user-facing diagnosis for an error."""
+    return diagnose_error(error, status=status)
+
+
+def _report_error(report, error, status=None):
+    """Render a terse error plus an operational diagnosis.
+
+    The diagnosis is informational only: it helps the user fix auth, model,
+    endpoint, quota, or network problems but does not affect the risk matrix.
+    """
+    report.p(f"Error: {error}")
+    report.p(format_diagnosis(_diagnosis_for_error(error, status=status)))
 
 
 # ============================================================
@@ -418,12 +434,14 @@ def test_token_injection(client, report):
     injection_size = 0
     errors = []
     success_count = 0
+    error_diagnostics = []
     for name, sys_prompt, user_msg, expected in tests:
         r = client.call([{"role": "user", "content": user_msg}],
                         system=sys_prompt, max_tokens=100)
         if "error" in r:
             report.p(f"| {name} | ERROR | ~{expected} | - |")
             errors.append(r.get("error", ""))
+            error_diagnostics.append((name, r["error"]))
         else:
             success_count += 1
             actual = r["input_tokens"]
@@ -431,6 +449,11 @@ def test_token_injection(client, report):
             injection_size = max(injection_size, diff)
             report.p(f"| {name} | **{actual}** | ~{expected} | **~{diff}** |")
         time.sleep(1)
+
+    if error_diagnostics:
+        report.p("\n**Error diagnostics:**")
+        for name, error in error_diagnostics:
+            report.p(f"- {name}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     if success_count == 0:
         if errors and all(_looks_like_claude_code_client_gate(err) for err in errors):
@@ -480,7 +503,7 @@ def test_prompt_extraction(client, report):
         report.h3(f"Test {name}")
         r = client.call([{"role": "user", "content": prompt}], max_tokens=1024)
         if "error" in r:
-            report.p(f"Error: {r['error']}")
+            _report_error(report, r["error"])
             inconclusive = True
             inconclusive_names.append(name)
         else:
@@ -573,7 +596,7 @@ def test_instruction_conflict(client, report):
 
     overridden = False
     if "error" in r:
-        report.p(f"Error: {r['error']}")
+        _report_error(report, r["error"])
         # 422 typically means relay rejects custom system prompts — user has no control
         if "422" in str(r.get("error", "")):
             overridden = True
@@ -610,7 +633,7 @@ def test_instruction_conflict(client, report):
     )
 
     if "error" in r:
-        report.p(f"Error: {r['error']}")
+        _report_error(report, r["error"])
         if "422" in str(r.get("error", "")):
             overridden = True
             report.flag("red", "Identity test blocked: relay rejects custom system prompts (HTTP 422)")
@@ -687,7 +710,7 @@ def test_jailbreak(client, report):
         report.h3(f"Test {name}")
         r = client.call([{"role": "user", "content": prompt}], max_tokens=1024)
         if "error" in r:
-            report.p(f"Error: {r['error']}")
+            _report_error(report, r["error"])
             error_messages.append(r.get("error", ""))
         else:
             success_count += 1
@@ -782,10 +805,12 @@ def test_tool_substitution(client, report):
     report.p("| Manager | Expected | Received | Verdict |")
     report.p("|---------|----------|----------|---------|")
     error_count = 0
+    error_diagnostics = []
     for r in results:
         expected = r["expected"]
         if r["verdict"] == "error":
             error_count += 1
+            error_diagnostics.append((r["manager"], r.get("error") or ""))
             err_short = (r.get("error") or "")[:60].replace("|", "\\|").replace("\n", " ")
             received_cell = f"ERROR: {err_short}"
             icon = "\u26aa skipped"
@@ -799,6 +824,11 @@ def test_tool_substitution(client, report):
             else:
                 icon = "\U0001f534 SUBSTITUTED"
         report.p(f"| {r['manager']} | `{expected}` | {received_cell} | {icon} |")
+
+    if error_diagnostics:
+        report.p("\n**Error diagnostics:**")
+        for manager, error in error_diagnostics:
+            report.p(f"- {manager}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     if detected:
         subs = sum(1 for r in results if r["verdict"] == "substituted")
@@ -860,10 +890,12 @@ def test_error_leakage(client, args, report):
 
     report.p("| Trigger | HTTP Status | Severity | Leaks |")
     report.p("|---------|-------------|----------|-------|")
+    transport_error_diagnostics = []
     for r in results:
         name = r["trigger"]
         status_cell = str(r["status"]) if r["status"] else "—"
         if r["error"]:
+            transport_error_diagnostics.append((name, r["error"]))
             status_cell = f"ERR: {r['error'][:40]}"
         sev = r["severity"]
         if sev == "critical":
@@ -877,6 +909,11 @@ def test_error_leakage(client, args, report):
         leak_kinds = sorted({h["kind"] for h in r["hits"]})
         leaks_cell = ", ".join(leak_kinds) if leak_kinds else "—"
         report.p(f"| {name} | {status_cell} | {sev_cell} | {leaks_cell} |")
+
+    if transport_error_diagnostics:
+        report.p("\n**Transport error diagnostics:**")
+        for name, error in transport_error_diagnostics:
+            report.p(f"- {name}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     # Per-trigger detail subsections for any probe with at least one hit.
     any_hits = [r for r in results if r["hits"]]
@@ -990,6 +1027,9 @@ def test_stream_integrity(client, report):
         report.p("\n**Findings**:")
         for finding in analysis["findings"]:
             report.p(f"- {finding}")
+    if signals.transport_error:
+        report.p("\n**Transport error diagnosis:**")
+        report.p(format_diagnosis(_diagnosis_for_error(signals.transport_error)))
 
     if verdict == "anomaly":
         report.flag(
@@ -1045,8 +1085,10 @@ def test_web3_injection(client, report):
 
     report.p("| Probe | Verdict | Safe markers | Unsafe markers |")
     report.p("|-------|---------|--------------|----------------|")
+    error_diagnostics = []
     for r in results:
         if r.error:
+            error_diagnostics.append((r.name, r.error))
             report.p(f"| {r.name} | ERR: {r.error[:40]} | — | — |")
             continue
         if r.verdict == "safe":
@@ -1058,6 +1100,11 @@ def test_web3_injection(client, report):
         safe_summary = ", ".join(r.safe_markers_found[:3]) if r.safe_markers_found else "—"
         unsafe_summary = ", ".join(r.unsafe_markers_found[:3]) if r.unsafe_markers_found else "—"
         report.p(f"| {r.name} | {v} | {safe_summary} | {unsafe_summary} |")
+
+    if error_diagnostics:
+        report.p("\n**Error diagnostics:**")
+        for name, error in error_diagnostics:
+            report.p(f"- {name}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     # Per-probe details for any injected or inconclusive-with-response
     for r in results:
@@ -1179,11 +1226,13 @@ def test_infra_fingerprint(client, report):
 
     report.p("| Probe | Path | Status | Framework | Signals |")
     report.p("|-------|------|--------|-----------|---------|")
+    error_diagnostics = []
     for r in results:
         name = r["probe"]
         path = r["path"]
         status_cell = str(r["status"]) if r["status"] else "—"
         if r["error"]:
+            error_diagnostics.append((name, r["error"]))
             status_cell = f"ERR: {r['error'][:40]}"
         framework = r["framework"] or "—"
         if r["signals"]:
@@ -1192,6 +1241,11 @@ def test_infra_fingerprint(client, report):
         else:
             signals_cell = "—"
         report.p(f"| {name} | `{path}` | {status_cell} | `{framework}` | {signals_cell} |")
+
+    if error_diagnostics:
+        report.p("\n**Transport error diagnostics:**")
+        for name, error in error_diagnostics:
+            report.p(f"- {name}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     # Informative headers across all probes, de-duplicated per (name, value)
     merged_headers = {}
@@ -1269,6 +1323,13 @@ def test_latency_variance(client, report, probe_count=10):
     stats = result["stats"]
 
     if not latencies:
+        if errors:
+            report.p("\n**Error diagnostics:**")
+            for idx, error in enumerate(errors, start=1):
+                report.p(
+                    f"- probe {idx}: "
+                    f"{format_diagnosis(_diagnosis_for_error(error))}"
+                )
         report.flag(
             "yellow",
             f"Latency variance test inconclusive: all {len(errors)} "
@@ -1290,6 +1351,11 @@ def test_latency_variance(client, report, probe_count=10):
     report.p(f"| coefficient of variation | {stats['cv']:.3f} |")
     report.p(f"| largest-gap / median | {result['gap_ratio']:.3f} |")
     report.p(f"| verdict | `{result['verdict']}` |")
+
+    if errors:
+        report.p("\n**Error diagnostics:**")
+        for idx, error in enumerate(errors, start=1):
+            report.p(f"- failed probe {idx}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     verdict = result["verdict"]
     if verdict == "bimodal":
@@ -1398,6 +1464,13 @@ def test_channel_classifier(client, report):
         report.p(f"| evidence | {ev_str} |")
     else:
         report.p("| evidence | — |")
+
+    if error:
+        report.p("\n**Transport error diagnosis:**")
+        report.p(format_diagnosis(_diagnosis_for_error(error)))
+    elif verdict == "inconclusive" and raw_status:
+        report.p("\n**HTTP status diagnosis:**")
+        report.p(format_diagnosis(_diagnosis_for_error(None, status=raw_status)))
 
     if verdict == "inconclusive":
         if error:

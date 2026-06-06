@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import httpx
 
 from api_relay_audit import _transport
+from api_relay_audit.error_diagnosis import diagnose_error
 from api_relay_audit.stream_integrity import StreamSignals
 
 
@@ -332,6 +333,16 @@ class APIClient:
         return _transport.httpx_post_json(
             url, headers, body, self.timeout, httpx_module=httpx)
 
+    @staticmethod
+    def _error_result(error, **extra):
+        error_text = str(error)
+        result = {
+            "error": error_text,
+            "diagnosis": diagnose_error(error_text),
+        }
+        result.update(extra)
+        return result
+
     # -- Anthropic native format ----------------------------------------------
 
     def _call_anthropic(self, messages, system=None, max_tokens=512):
@@ -351,7 +362,7 @@ class APIClient:
 
         data = self._post(url, headers, body)
         if "_http_error" in data:
-            return {"error": data["_http_error"]}
+            return self._error_result(data["_http_error"])
         text = _extract_anthropic_text(data.get("content"))
         usage = data.get("usage", {})
         return {
@@ -381,7 +392,7 @@ class APIClient:
 
         data = self._post(url, headers, body)
         if "_http_error" in data:
-            return {"error": data["_http_error"]}
+            return self._error_result(data["_http_error"])
         choice = data.get("choices", [{}])[0]
         text = choice.get("message", {}).get("content", "")
         usage = data.get("usage", {})
@@ -468,7 +479,7 @@ class APIClient:
             self._log_transparent(
                 "call", self._resolve_call_url(), "POST",
                 request_body, None, 0, None, elapsed, str(e))
-            return {"error": str(e), "time": elapsed}
+            return self._error_result(e, time=elapsed)
 
     def _resolve_call_url(self) -> str:
         """Reconstruct the URL used by the last ``call()`` based on detected format."""
@@ -530,7 +541,7 @@ class APIClient:
         if openai_result and "error" not in openai_result:
             self._format = "openai"
             return openai_result
-        return anthropic_result or openai_result or {"error": "Both formats failed"}
+        return anthropic_result or openai_result or self._error_result("Both formats failed")
 
     def _handle_ssl_error(self, e: Exception) -> bool:
         """Switch to curl on SSL errors. Returns True if retry is warranted."""

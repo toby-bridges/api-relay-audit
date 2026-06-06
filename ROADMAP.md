@@ -6,9 +6,9 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-06-07 (roadmap hygiene pass: v1.9 follow-up test gaps,
-refusal/transport decouplings, and the protobuf-channel spike are no longer
-active near-term candidates)
+**Last updated**: 2026-06-07 (error diagnosis report layer added; roadmap
+hygiene pass: v1.9 follow-up test gaps, refusal/transport decouplings, and
+the protobuf-channel spike are no longer active near-term candidates)
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -23,6 +23,25 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
 ---
 
 ## ✅ Shipped
+
+### 2026-06-07 follow-up — Error diagnosis report layer
+- **Productized operational error explanations**: added
+  `api_relay_audit/error_diagnosis.py`, a zero-dependency helper that maps
+  common HTTP/transport failures (`401`, `403`, `404`, `422`, `429`,
+  `5xx`, TLS, DNS/connect, timeout, CORS/browser fetch, non-JSON response,
+  format-detection failure) to a category, likely cause, and next action.
+- **Report integration without risk-matrix changes**: `APIClient.call()`
+  error results now include a `diagnosis` object, and the Markdown report
+  renders compact diagnosis lines wherever user-visible probe errors occur.
+  Step 9 deliberately diagnoses only transport failures because its `400` /
+  `422` responses are intentionally induced leakage probes, not user
+  configuration failures.
+- **Boundary held**: this is an explanatory/reporting layer, not a new
+  detector, not a hosted preflight service, not a new API family, and not a
+  change to LOW/MEDIUM/HIGH semantics. `inconclusive` remains
+  `inconclusive`.
+- **Final test count**: 743/743 passing (733 baseline → 743 after error
+  diagnosis unit, client, and standalone-parity coverage).
 
 ### v1.9 — Dual-distribution full generation (2026-06-01)
 - **Standalone product promise preserved**: root `audit.py` stays committed,

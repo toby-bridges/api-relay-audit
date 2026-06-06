@@ -118,6 +118,7 @@ class TestCallAnthropic:
 
         result = client._call_anthropic([{"role": "user", "content": "x"}])
         assert "error" in result
+        assert result["diagnosis"]["category"] == "upstream-or-relay"
 
     @patch("api_relay_audit.client.httpx.post")
     def test_empty_content(self, mock_post, client):
@@ -273,6 +274,7 @@ class TestCallOpenAI:
 
         result = client._call_openai([{"role": "user", "content": "x"}])
         assert "error" in result
+        assert result["diagnosis"]["category"] == "bad-request"
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +517,7 @@ class TestAutoDetection:
         result = client.call([{"role": "user", "content": "x"}])
         assert "error" in result
         assert "time" in result
+        assert result["diagnosis"]["category"] == "format-detection"
         assert result["time"] >= 0
 
 

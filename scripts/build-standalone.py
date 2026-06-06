@@ -35,6 +35,7 @@ SOURCE_PATHS = (
     "api_relay_audit/_transport.py",
     "api_relay_audit/client.py",
     "api_relay_audit/context.py",
+    "api_relay_audit/error_diagnosis.py",
     "api_relay_audit/error_leakage.py",
     "api_relay_audit/identity_patterns.py",
     "api_relay_audit/infra_fingerprint.py",
@@ -291,6 +292,7 @@ def transform_client(text: str) -> str:
     text = drop_import_blocks(text, (
         "import httpx",
         "from api_relay_audit import _transport",
+        "from api_relay_audit.error_diagnosis import ",
         "from api_relay_audit.stream_integrity import StreamSignals",
         "from api_relay_audit.transparent_log import ",
     ))
@@ -379,6 +381,10 @@ SECTIONS = (
     Section(
         "Tool-call substitution detector",
         "api_relay_audit/tool_substitution.py",
+    ),
+    Section(
+        "Error diagnosis helpers",
+        "api_relay_audit/error_diagnosis.py",
     ),
     Section(
         "Non-Claude identity detector",

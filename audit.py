@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 223e4f941de9b4fda1d1c8c440314de5ad3f5fc1fb6cad69d365c1aa38ff2a66
-# standalone_body_sha256: 54a80470c90fccf97e640b7831e05ca2dde72ef685e6ccc2e639a7fa73b6e25c
+# source_sha256: 8b832d50481029fa972bf0772bed8119f6e1fd13c2cfe38082c34aaded25b98b
+# standalone_body_sha256: 664a23e101a5b0f598a3273e97911cc3a3b13da975c105afb7882cd6ff177640
 # END GENERATED STANDALONE HEADER
 
 """
@@ -1033,6 +1033,16 @@ class APIClient:
         return _transport.httpx_post_json(
             url, headers, body, self.timeout)
 
+    @staticmethod
+    def _error_result(error, **extra):
+        error_text = str(error)
+        result = {
+            "error": error_text,
+            "diagnosis": diagnose_error(error_text),
+        }
+        result.update(extra)
+        return result
+
     # -- Anthropic native format ----------------------------------------------
 
     def _call_anthropic(self, messages, system=None, max_tokens=512):
@@ -1052,7 +1062,7 @@ class APIClient:
 
         data = self._post(url, headers, body)
         if "_http_error" in data:
-            return {"error": data["_http_error"]}
+            return self._error_result(data["_http_error"])
         text = _extract_anthropic_text(data.get("content"))
         usage = data.get("usage", {})
         return {
@@ -1082,7 +1092,7 @@ class APIClient:
 
         data = self._post(url, headers, body)
         if "_http_error" in data:
-            return {"error": data["_http_error"]}
+            return self._error_result(data["_http_error"])
         choice = data.get("choices", [{}])[0]
         text = choice.get("message", {}).get("content", "")
         usage = data.get("usage", {})
@@ -1169,7 +1179,7 @@ class APIClient:
             self._log_transparent(
                 "call", self._resolve_call_url(), "POST",
                 request_body, None, 0, None, elapsed, str(e))
-            return {"error": str(e), "time": elapsed}
+            return self._error_result(e, time=elapsed)
 
     def _resolve_call_url(self) -> str:
         """Reconstruct the URL used by the last ``call()`` based on detected format."""
@@ -1231,7 +1241,7 @@ class APIClient:
         if openai_result and "error" not in openai_result:
             self._format = "openai"
             return openai_result
-        return anthropic_result or openai_result or {"error": "Both formats failed"}
+        return anthropic_result or openai_result or self._error_result("Both formats failed")
 
     def _handle_ssl_error(self, e: Exception) -> bool:
         """Switch to curl on SSL errors. Returns True if retry is warranted."""
@@ -2294,6 +2304,224 @@ def run_tool_substitution_test(client, sleep: float = 1.0):
     detected = any(r["verdict"] == "substituted" for r in results)
     inconclusive = all(r["verdict"] == "error" for r in results)
     return results, detected, inconclusive
+
+
+# ============================================================
+# Error diagnosis helpers
+# ============================================================
+
+"""User-facing diagnosis helpers for relay/API errors.
+
+This module turns terse transport or HTTP errors into a stable, reportable
+explanation. It is intentionally informational: diagnoses help users fix
+connectivity/configuration problems but do not change any detector verdict or
+overall risk-matrix branch.
+"""
+
+import re
+
+
+_HTTP_STATUS_RE = re.compile(r"\bHTTP\s+(\d{3})\b", re.IGNORECASE)
+
+
+def _coerce_status(status):
+    if status is None:
+        return None
+    try:
+        value = int(status)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _status_from_error(error):
+    match = _HTTP_STATUS_RE.search(str(error or ""))
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _diagnosis(category, summary, likely_cause, suggested_action):
+    return {
+        "category": category,
+        "summary": summary,
+        "likely_cause": likely_cause,
+        "suggested_action": suggested_action,
+    }
+
+
+def diagnose_error(error=None, status=None):
+    """Return a structured diagnosis for an HTTP/transport error.
+
+    Args:
+        error: Error string from ``APIClient.call()``, ``raw_request()``, or a
+            stream transport failure.
+        status: Optional numeric HTTP status. When present, it takes priority
+            over status text parsed from ``error``.
+
+    Returns:
+        Dict with ``category``, ``summary``, ``likely_cause``, and
+        ``suggested_action``. The function never raises and never treats an
+        error as safe; it only explains the most likely operational cause.
+    """
+    text = str(error or "").strip()
+    text_lower = text.lower()
+    status_code = _coerce_status(status) or _status_from_error(text)
+
+    if status_code == 400:
+        return _diagnosis(
+            "bad-request",
+            "Request shape rejected by the relay.",
+            "The selected API format, model name, message schema, or content-type may not match this relay.",
+            "Verify the base URL, model id, and whether the relay expects Anthropic messages or OpenAI chat completions.",
+        )
+    if status_code == 401:
+        return _diagnosis(
+            "auth",
+            "Authentication failed.",
+            "The API key is invalid, expired, copied with extra whitespace, or not accepted by this relay.",
+            "Check the key in the provider dashboard and retry with a freshly copied key.",
+        )
+    if status_code == 403:
+        return _diagnosis(
+            "permission",
+            "The relay rejected an authenticated request.",
+            "The account may lack model access, have billing/credit problems, or be blocked from this API format.",
+            "Check account balance, model permissions, regional restrictions, and relay-side allowlists.",
+        )
+    if status_code == 404:
+        return _diagnosis(
+            "endpoint",
+            "Endpoint not found.",
+            "The base URL may be missing or duplicating a /v1 prefix, or the relay may not expose this route.",
+            "Try the relay's documented base URL and avoid appending /messages or /chat/completions manually.",
+        )
+    if status_code == 408:
+        return _diagnosis(
+            "timeout",
+            "The relay timed out the request.",
+            "The relay or upstream provider did not answer before the HTTP timeout.",
+            "Retry once, then increase --timeout or run with slower steps skipped to isolate the failing probe.",
+        )
+    if status_code == 413:
+        return _diagnosis(
+            "payload-too-large",
+            "Request body is too large for the relay.",
+            "The relay may enforce a smaller payload/context limit than the advertised model.",
+            "Retry with --fast-context or --skip-context, then run the full context test only if the relay supports it.",
+        )
+    if status_code == 422:
+        return _diagnosis(
+            "unprocessable",
+            "Request schema was understood but rejected.",
+            "Common causes are unsupported system prompts, unsupported model ids, or a relay-specific schema restriction.",
+            "Verify model access and whether this relay accepts custom system prompts for the selected format.",
+        )
+    if status_code == 429:
+        return _diagnosis(
+            "rate-limit",
+            "Rate limit or quota was hit.",
+            "The relay or upstream provider is throttling this key, account, or model.",
+            "Wait and retry with --skip-context or a lower --latency-probe-count, or upgrade the relay/provider quota.",
+        )
+    if status_code in (500, 502, 503, 504):
+        return _diagnosis(
+            "upstream-or-relay",
+            "Relay or upstream provider error.",
+            "The relay backend, gateway, or upstream model provider failed while handling the request.",
+            "Retry later; if it repeats, share the redacted report with the relay operator and inspect Step 9 for leakage.",
+        )
+    if status_code is not None and status_code >= 400:
+        return _diagnosis(
+            "http-error",
+            f"HTTP {status_code} error from the relay.",
+            "The relay returned a non-success status that is not mapped to a more specific diagnosis.",
+            "Check the raw response, relay documentation, selected model, and account state.",
+        )
+
+    if "both formats failed" in text_lower:
+        return _diagnosis(
+            "format-detection",
+            "Neither Anthropic nor OpenAI chat format produced a usable response.",
+            "The base URL may be wrong, the key may be invalid, or the relay may require a different API family.",
+            "Run a minimal vendor curl command from the relay docs, then retry with the documented base URL and model id.",
+        )
+    if "cors" in text_lower or "failed to fetch" in text_lower:
+        return _diagnosis(
+            "browser-cors",
+            "Browser access was blocked before a normal API response was available.",
+            "The relay likely does not allow browser-origin requests or hides responses from frontend JavaScript.",
+            "Run the generated curl command in a terminal; terminal requests are not subject to browser CORS.",
+        )
+    if "ssl" in text_lower or "certificate" in text_lower or "tls" in text_lower:
+        return _diagnosis(
+            "tls",
+            "TLS/SSL connection failed.",
+            "The relay certificate may be self-signed, expired, misconfigured, or blocked by the local trust store.",
+            "Retry once; the audit client may fall back to curl, but treat persistent TLS failures as operator-quality evidence.",
+        )
+    if "timed out" in text_lower or "timeout" in text_lower:
+        return _diagnosis(
+            "timeout",
+            "Request timed out before a response was received.",
+            "The relay, upstream model, or local network path is too slow for the current timeout.",
+            "Retry with --timeout increased, or skip long-running probes to determine whether only one step is slow.",
+        )
+    if (
+        "connecterror" in text_lower
+        or "connection refused" in text_lower
+        or "connection reset" in text_lower
+        or "name or service not known" in text_lower
+        or "nodename nor servname" in text_lower
+        or "could not resolve" in text_lower
+        or "temporary failure in name resolution" in text_lower
+    ):
+        return _diagnosis(
+            "network",
+            "Network connection to the relay failed.",
+            "DNS, firewall, proxy, VPN, or relay availability may be preventing any HTTP response.",
+            "Check the base URL in a browser or with curl -I, then retry from the same network path.",
+        )
+    if "expecting value" in text_lower or "jsondecodeerror" in text_lower:
+        return _diagnosis(
+            "non-json",
+            "Relay returned a non-JSON response where API JSON was expected.",
+            "The endpoint may be an HTML landing page, reverse-proxy error page, or non-API route.",
+            "Check the base URL and inspect the raw response with curl before running the full audit.",
+        )
+    if "empty curl output" in text_lower or "no header/body separator" in text_lower:
+        return _diagnosis(
+            "curl-output",
+            "curl did not receive a parseable HTTP response.",
+            "The relay closed the connection, returned malformed output, or an intermediary stripped the response.",
+            "Retry with curl -i against the same URL and inspect whether any HTTP status line is present.",
+        )
+    if "curl failed" in text_lower:
+        return _diagnosis(
+            "curl",
+            "curl transport failed.",
+            "The fallback transport could not complete the request, often due to network, TLS, DNS, or proxy issues.",
+            "Run curl --version and a minimal curl request to the relay, then retry the audit.",
+        )
+
+    return _diagnosis(
+        "unknown",
+        "Unmapped relay/API error.",
+        "The audit received an error string that does not match a known operational bucket.",
+        "Inspect the raw error, verify the key/base URL/model, and include the redacted report when asking the relay operator.",
+    )
+
+
+def format_diagnosis(diagnosis):
+    """Render a diagnosis dict as one compact Markdown line."""
+    return (
+        f"**Diagnosis**: {diagnosis['summary']} "
+        f"Likely cause: {diagnosis['likely_cause']} "
+        f"Next step: {diagnosis['suggested_action']}"
+    )
 
 
 # ============================================================
@@ -4622,6 +4850,21 @@ def _format_identity_inconsistency(non_claude_matches):
     )
 
 
+def _diagnosis_for_error(error, status=None):
+    """Return the best available user-facing diagnosis for an error."""
+    return diagnose_error(error, status=status)
+
+
+def _report_error(report, error, status=None):
+    """Render a terse error plus an operational diagnosis.
+
+    The diagnosis is informational only: it helps the user fix auth, model,
+    endpoint, quota, or network problems but does not affect the risk matrix.
+    """
+    report.p(f"Error: {error}")
+    report.p(format_diagnosis(_diagnosis_for_error(error, status=status)))
+
+
 # ============================================================
 # CLI
 # ============================================================
@@ -4960,12 +5203,14 @@ def test_token_injection(client, report):
     injection_size = 0
     errors = []
     success_count = 0
+    error_diagnostics = []
     for name, sys_prompt, user_msg, expected in tests:
         r = client.call([{"role": "user", "content": user_msg}],
                         system=sys_prompt, max_tokens=100)
         if "error" in r:
             report.p(f"| {name} | ERROR | ~{expected} | - |")
             errors.append(r.get("error", ""))
+            error_diagnostics.append((name, r["error"]))
         else:
             success_count += 1
             actual = r["input_tokens"]
@@ -4973,6 +5218,11 @@ def test_token_injection(client, report):
             injection_size = max(injection_size, diff)
             report.p(f"| {name} | **{actual}** | ~{expected} | **~{diff}** |")
         time.sleep(1)
+
+    if error_diagnostics:
+        report.p("\n**Error diagnostics:**")
+        for name, error in error_diagnostics:
+            report.p(f"- {name}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     if success_count == 0:
         if errors and all(_looks_like_claude_code_client_gate(err) for err in errors):
@@ -5022,7 +5272,7 @@ def test_prompt_extraction(client, report):
         report.h3(f"Test {name}")
         r = client.call([{"role": "user", "content": prompt}], max_tokens=1024)
         if "error" in r:
-            report.p(f"Error: {r['error']}")
+            _report_error(report, r["error"])
             inconclusive = True
             inconclusive_names.append(name)
         else:
@@ -5115,7 +5365,7 @@ def test_instruction_conflict(client, report):
 
     overridden = False
     if "error" in r:
-        report.p(f"Error: {r['error']}")
+        _report_error(report, r["error"])
         # 422 typically means relay rejects custom system prompts — user has no control
         if "422" in str(r.get("error", "")):
             overridden = True
@@ -5152,7 +5402,7 @@ def test_instruction_conflict(client, report):
     )
 
     if "error" in r:
-        report.p(f"Error: {r['error']}")
+        _report_error(report, r["error"])
         if "422" in str(r.get("error", "")):
             overridden = True
             report.flag("red", "Identity test blocked: relay rejects custom system prompts (HTTP 422)")
@@ -5229,7 +5479,7 @@ def test_jailbreak(client, report):
         report.h3(f"Test {name}")
         r = client.call([{"role": "user", "content": prompt}], max_tokens=1024)
         if "error" in r:
-            report.p(f"Error: {r['error']}")
+            _report_error(report, r["error"])
             error_messages.append(r.get("error", ""))
         else:
             success_count += 1
@@ -5324,10 +5574,12 @@ def test_tool_substitution(client, report):
     report.p("| Manager | Expected | Received | Verdict |")
     report.p("|---------|----------|----------|---------|")
     error_count = 0
+    error_diagnostics = []
     for r in results:
         expected = r["expected"]
         if r["verdict"] == "error":
             error_count += 1
+            error_diagnostics.append((r["manager"], r.get("error") or ""))
             err_short = (r.get("error") or "")[:60].replace("|", "\\|").replace("\n", " ")
             received_cell = f"ERROR: {err_short}"
             icon = "\u26aa skipped"
@@ -5341,6 +5593,11 @@ def test_tool_substitution(client, report):
             else:
                 icon = "\U0001f534 SUBSTITUTED"
         report.p(f"| {r['manager']} | `{expected}` | {received_cell} | {icon} |")
+
+    if error_diagnostics:
+        report.p("\n**Error diagnostics:**")
+        for manager, error in error_diagnostics:
+            report.p(f"- {manager}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     if detected:
         subs = sum(1 for r in results if r["verdict"] == "substituted")
@@ -5402,10 +5659,12 @@ def test_error_leakage(client, args, report):
 
     report.p("| Trigger | HTTP Status | Severity | Leaks |")
     report.p("|---------|-------------|----------|-------|")
+    transport_error_diagnostics = []
     for r in results:
         name = r["trigger"]
         status_cell = str(r["status"]) if r["status"] else "—"
         if r["error"]:
+            transport_error_diagnostics.append((name, r["error"]))
             status_cell = f"ERR: {r['error'][:40]}"
         sev = r["severity"]
         if sev == "critical":
@@ -5419,6 +5678,11 @@ def test_error_leakage(client, args, report):
         leak_kinds = sorted({h["kind"] for h in r["hits"]})
         leaks_cell = ", ".join(leak_kinds) if leak_kinds else "—"
         report.p(f"| {name} | {status_cell} | {sev_cell} | {leaks_cell} |")
+
+    if transport_error_diagnostics:
+        report.p("\n**Transport error diagnostics:**")
+        for name, error in transport_error_diagnostics:
+            report.p(f"- {name}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     # Per-trigger detail subsections for any probe with at least one hit.
     any_hits = [r for r in results if r["hits"]]
@@ -5532,6 +5796,9 @@ def test_stream_integrity(client, report):
         report.p("\n**Findings**:")
         for finding in analysis["findings"]:
             report.p(f"- {finding}")
+    if signals.transport_error:
+        report.p("\n**Transport error diagnosis:**")
+        report.p(format_diagnosis(_diagnosis_for_error(signals.transport_error)))
 
     if verdict == "anomaly":
         report.flag(
@@ -5587,8 +5854,10 @@ def test_web3_injection(client, report):
 
     report.p("| Probe | Verdict | Safe markers | Unsafe markers |")
     report.p("|-------|---------|--------------|----------------|")
+    error_diagnostics = []
     for r in results:
         if r.error:
+            error_diagnostics.append((r.name, r.error))
             report.p(f"| {r.name} | ERR: {r.error[:40]} | — | — |")
             continue
         if r.verdict == "safe":
@@ -5600,6 +5869,11 @@ def test_web3_injection(client, report):
         safe_summary = ", ".join(r.safe_markers_found[:3]) if r.safe_markers_found else "—"
         unsafe_summary = ", ".join(r.unsafe_markers_found[:3]) if r.unsafe_markers_found else "—"
         report.p(f"| {r.name} | {v} | {safe_summary} | {unsafe_summary} |")
+
+    if error_diagnostics:
+        report.p("\n**Error diagnostics:**")
+        for name, error in error_diagnostics:
+            report.p(f"- {name}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     # Per-probe details for any injected or inconclusive-with-response
     for r in results:
@@ -5721,11 +5995,13 @@ def test_infra_fingerprint(client, report):
 
     report.p("| Probe | Path | Status | Framework | Signals |")
     report.p("|-------|------|--------|-----------|---------|")
+    error_diagnostics = []
     for r in results:
         name = r["probe"]
         path = r["path"]
         status_cell = str(r["status"]) if r["status"] else "—"
         if r["error"]:
+            error_diagnostics.append((name, r["error"]))
             status_cell = f"ERR: {r['error'][:40]}"
         framework = r["framework"] or "—"
         if r["signals"]:
@@ -5734,6 +6010,11 @@ def test_infra_fingerprint(client, report):
         else:
             signals_cell = "—"
         report.p(f"| {name} | `{path}` | {status_cell} | `{framework}` | {signals_cell} |")
+
+    if error_diagnostics:
+        report.p("\n**Transport error diagnostics:**")
+        for name, error in error_diagnostics:
+            report.p(f"- {name}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     # Informative headers across all probes, de-duplicated per (name, value)
     merged_headers = {}
@@ -5811,6 +6092,13 @@ def test_latency_variance(client, report, probe_count=10):
     stats = result["stats"]
 
     if not latencies:
+        if errors:
+            report.p("\n**Error diagnostics:**")
+            for idx, error in enumerate(errors, start=1):
+                report.p(
+                    f"- probe {idx}: "
+                    f"{format_diagnosis(_diagnosis_for_error(error))}"
+                )
         report.flag(
             "yellow",
             f"Latency variance test inconclusive: all {len(errors)} "
@@ -5832,6 +6120,11 @@ def test_latency_variance(client, report, probe_count=10):
     report.p(f"| coefficient of variation | {stats['cv']:.3f} |")
     report.p(f"| largest-gap / median | {result['gap_ratio']:.3f} |")
     report.p(f"| verdict | `{result['verdict']}` |")
+
+    if errors:
+        report.p("\n**Error diagnostics:**")
+        for idx, error in enumerate(errors, start=1):
+            report.p(f"- failed probe {idx}: {format_diagnosis(_diagnosis_for_error(error))}")
 
     verdict = result["verdict"]
     if verdict == "bimodal":
@@ -5940,6 +6233,13 @@ def test_channel_classifier(client, report):
         report.p(f"| evidence | {ev_str} |")
     else:
         report.p("| evidence | — |")
+
+    if error:
+        report.p("\n**Transport error diagnosis:**")
+        report.p(format_diagnosis(_diagnosis_for_error(error)))
+    elif verdict == "inconclusive" and raw_status:
+        report.p("\n**HTTP status diagnosis:**")
+        report.p(format_diagnosis(_diagnosis_for_error(None, status=raw_status)))
 
     if verdict == "inconclusive":
         if error:
