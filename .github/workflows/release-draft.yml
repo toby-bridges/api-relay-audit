@@ -23,6 +23,17 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Require master ref
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" != "branch" ] || [ "${GITHUB_REF_NAME}" != "master" ]; then
+            echo "draft releases must run from the master branch, not ${GITHUB_REF_TYPE}:${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
       - name: Validate release version inputs
         id: version
         env:
