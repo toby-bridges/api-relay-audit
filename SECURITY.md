@@ -33,6 +33,32 @@ Please include:
 Do not include live credentials, private relay URLs, wallet seed phrases,
 private keys, or user traffic captures.
 
+## Which Path To Use
+
+Use the public evidence path for redacted relay audit evidence:
+
+- Use the `Submit Audit Evidence` issue template.
+- Include only sanitized screenshots, redacted report artifacts, hashes,
+  provider/profile metadata, and reproducible non-sensitive summaries.
+- Do not include API keys, raw headers, full response bodies, wallet material,
+  private relay traffic, or user data.
+
+Use the operator response path when you operate the relay being discussed:
+
+- Use the `Operator Response` issue template.
+- Prove domain control as requested by the template.
+- Keep remediation notes public-safe and avoid posting secrets or private user
+  traffic.
+
+Use private vulnerability disclosure for sensitive issues:
+
+- API key exposure caused by this repository or its workflows.
+- A bug that can redirect audit traffic to an unintended host.
+- A redaction failure involving raw response bodies, request headers, wallet
+  material, or user data.
+- A reproducible issue where this tool marks an unsafe or inconclusive state as
+  clean.
+
 ## Scope
 
 In scope:

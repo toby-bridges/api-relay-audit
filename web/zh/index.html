@@ -4,14 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>API Relay Audit - AI API 中转站安全审计</title>
-<meta name="description" content="本地审计 AI API 中转站和 LLM proxy，检测 prompt injection、模型替换、工具调用改写、SSE 异常、错误泄漏和 Web3 钱包风险。API Key 只发送到你指定的中转站 URL。">
+<meta name="description" content="本地审计 AI API 中转站和 LLM proxy，把 API relay audit、prompt injection audit、model substitution signals 和 Web3 relay audit 拆成清晰查询意图。">
 <link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/zh/">
 <link rel="alternate" hreflang="en" href="https://toby-bridges.github.io/api-relay-audit/">
 <link rel="alternate" hreflang="zh-CN" href="https://toby-bridges.github.io/api-relay-audit/zh/">
 <link rel="alternate" hreflang="x-default" href="https://toby-bridges.github.io/api-relay-audit/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="API Relay Audit - AI API 中转站安全审计">
-<meta property="og:description" content="本地审计 AI API 中转站和 LLM proxy。检测 prompt injection、模型替换、工具调用改写、SSE 异常和 Web3 钱包风险。">
+<meta property="og:description" content="本地审计 AI API 中转站和 LLM proxy，并为 relay、prompt injection、model substitution signals 和 Web3 profile 保持清晰证据边界。">
 <meta property="og:url" content="https://toby-bridges.github.io/api-relay-audit/zh/">
 <meta property="og:image" content="https://toby-bridges.github.io/api-relay-audit/assets/social-preview.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -31,7 +31,7 @@
 <main class="wrap">
   <div class="eyebrow">Local AI API Relay Security Audit</div>
   <h1>AI API 中转站安全审计，本地运行，只连接你指定的中转站</h1>
-  <p class="lead">API Relay Audit 是一个本地运行的 AI API 中转站 / LLM proxy 安全审计工具。它检测 prompt injection、模型替换、工具调用改写、SSE 流异常、错误响应泄漏，以及 Web3 钱包相关风险。</p>
+  <p class="lead">API Relay Audit 是本地运行、证据优先的 AI API 中转站 / LLM proxy 安全审计工具。它把 API relay audit、prompt injection audit、model substitution signals 和 Web3 relay audit 拆成独立查询意图。</p>
   <div class="cta">
     <a class="button primary" href="../#install">生成审计命令</a>
     <a class="button" href="https://github.com/toby-bridges/api-relay-audit">查看 GitHub</a>
@@ -44,11 +44,31 @@
     </section>
     <section class="card">
       <h2>检测什么</h2>
-      <p>覆盖 token injection、prompt extraction、identity substitution、context truncation、tool-call rewriting、error leakage、SSE stream integrity 和 Web3 signature isolation probes。</p>
+      <p>覆盖 token injection、prompt extraction、identity consistency signals、context truncation、tool-call rewriting、error leakage、SSE stream integrity 和 Web3 signature isolation probes。</p>
     </section>
     <section class="card">
       <h2>不声称什么</h2>
       <p>它不为任何中转站颁发安全认证，也不替代人工安全审查。`inconclusive` 不是 `clean`，被拦截或无法判断的探针会保留在报告里。</p>
+    </section>
+  </div>
+
+  <h2>查询意图边界</h2>
+  <div class="grid">
+    <section class="card">
+      <h2>API relay audit</h2>
+      <p>审计第三方中转站、镜像、网关、LLM proxy 或 resale API；默认使用 <code>general</code> profile。</p>
+    </section>
+    <section class="card">
+      <h2>Prompt injection audit</h2>
+      <p>检测隐藏 prompt 注入、prompt 泄漏、指令覆盖和提取行为；主要覆盖 Step 3-6。</p>
+    </section>
+    <section class="card">
+      <h2>Model substitution signals</h2>
+      <p>收集 self-ID、stream、latency 和 channel fingerprint 信号，但这些信号不能单独证明 provider 替换。</p>
+    </section>
+    <section class="card">
+      <h2>Web3 relay audit</h2>
+      <p>钱包敏感场景使用 <code>--profile web3</code> 或 <code>--profile full</code>，Step 11 是 profile-gated。</p>
     </section>
   </div>
 

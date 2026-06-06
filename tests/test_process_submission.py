@@ -34,6 +34,18 @@ api.example.com
 
 full
 
+### Claimed Provider / 声称供应商
+
+Anthropic via Example Relay
+
+### API Format / API 格式
+
+anthropic-native
+
+### Model Tested / 测试模型
+
+claude-opus-4-6
+
 ### Tool Version / 工具版本
 
 v2.3
@@ -49,6 +61,24 @@ v2.3
 ### Overall Rating / 总体评级
 
 HIGH
+
+### Evidence Level / 证据等级
+
+redacted-report
+
+### Step Summary / 步骤摘要
+
+Step 3 prompt injection: anomaly
+Step 5 identity consistency: inconclusive
+Step 11 Web3 prompt injection: clean
+
+### Operator Contacted / 是否联系运营方
+
+yes
+
+### False Positive Suspected / 是否怀疑误报
+
+no
 
 ### Report Screenshot / 报告截图
 
@@ -77,10 +107,17 @@ def test_parse_issue_body():
     fields = parse_issue_body(SAMPLE_BODY)
     assert fields["relay_domain"] == "api.example.com"
     assert fields["profile"] == "full"
+    assert fields["claimed_provider"] == "Anthropic via Example Relay"
+    assert fields["api_format"] == "anthropic-native"
+    assert fields["model_tested"] == "claude-opus-4-6"
     assert fields["tool_version"] == "v2.3"
     assert fields["tool_commit"] == "040676c"
     assert fields["tested_at"] == "2026-06-01T12:00:00Z"
     assert fields["overall_rating"] == "HIGH"
+    assert fields["evidence_level"] == "redacted-report"
+    assert "Step 3 prompt injection" in fields["step_summary"]
+    assert fields["operator_contacted"] == "yes"
+    assert fields["false_positive_suspected"] == "no"
     assert fields["report_hash"] == f"sha256:{REPORT_HASH}"
     assert "report.png" in fields["report_image"]
     assert "report-redacted.md" in fields["report_artifact"]
@@ -109,9 +146,16 @@ def test_build_evidence_record():
     entry = build_evidence_record(fields, "testuser", "42")
     assert entry["recordType"] == "community-submitted-audit-evidence"
     assert entry["relayDomain"] == "api.example.com"
+    assert entry["claimedProvider"] == "Anthropic via Example Relay"
+    assert entry["apiFormat"] == "anthropic-native"
+    assert entry["modelTested"] == "claude-opus-4-6"
     assert entry["toolCommit"] == "040676c"
     assert entry["auditProfile"] == "full"
     assert entry["toolReportedOverallRating"] == "HIGH"
+    assert entry["evidenceLevel"] == "redacted-report"
+    assert "Step 5 identity consistency" in entry["stepSummary"]
+    assert entry["operatorContacted"] == "yes"
+    assert entry["falsePositiveSuspected"] == "no"
     assert entry["reportHash"] == f"sha256:{REPORT_HASH}"
     assert (
         entry["reportArtifactUrl"]
@@ -202,10 +246,21 @@ def _make_body(**overrides):
     defaults = {
         "relay_domain": "api.example.com",
         "profile": "full",
+        "claimed_provider": "Anthropic via Example Relay",
+        "api_format": "anthropic-native",
+        "model_tested": "claude-opus-4-6",
         "tool_version": "v2.3",
         "tool_commit": "040676c",
         "tested_at": "2026-06-01T12:00:00Z",
         "overall_rating": "HIGH",
+        "evidence_level": "redacted-report",
+        "step_summary": (
+            "Step 3 prompt injection: anomaly\n"
+            "Step 5 identity consistency: inconclusive\n"
+            "Step 11 Web3 prompt injection: clean"
+        ),
+        "operator_contacted": "yes",
+        "false_positive_suspected": "no",
         "report_image": "![report](https://user-images.githubusercontent.com/123/report.png)",
         "report_artifact": (
             "[report-redacted.md](https://github.com/user-attachments/files/123/report-redacted.md)"
@@ -218,10 +273,17 @@ def _make_body(**overrides):
     return (
         f"### Relay Domain / 中转站域名\n\n{defaults['relay_domain']}\n\n"
         f"### Audit Profile / 审计配置\n\n{defaults['profile']}\n\n"
+        f"### Claimed Provider / 声称供应商\n\n{defaults['claimed_provider']}\n\n"
+        f"### API Format / API 格式\n\n{defaults['api_format']}\n\n"
+        f"### Model Tested / 测试模型\n\n{defaults['model_tested']}\n\n"
         f"### Tool Version / 工具版本\n\n{defaults['tool_version']}\n\n"
         f"### Tool Commit / 工具提交\n\n{defaults['tool_commit']}\n\n"
         f"### Tested At / 审计时间\n\n{defaults['tested_at']}\n\n"
         f"### Overall Rating / 总体评级\n\n{defaults['overall_rating']}\n\n"
+        f"### Evidence Level / 证据等级\n\n{defaults['evidence_level']}\n\n"
+        f"### Step Summary / 步骤摘要\n\n{defaults['step_summary']}\n\n"
+        f"### Operator Contacted / 是否联系运营方\n\n{defaults['operator_contacted']}\n\n"
+        f"### False Positive Suspected / 是否怀疑误报\n\n{defaults['false_positive_suspected']}\n\n"
         f"### Report Screenshot / 报告截图\n\n{defaults['report_image']}\n\n"
         f"### Report Artifact / 报告文件\n\n{defaults['report_artifact']}\n\n"
         f"### Report Hash / 报告哈希\n\n{defaults['report_hash']}\n\n"
@@ -368,6 +430,73 @@ def test_report_artifact_written_separately_from_screenshot():
     assert entry["reportImages"] == ["https://example.com/report.png"]
     assert entry["reportArtifactUrl"] == "https://example.com/report-redacted.md"
     assert entry["reportImages"][0] != entry["reportArtifactUrl"]
+
+
+def test_optional_provider_profile_feedback_defaults_for_legacy_body():
+    """Older issue bodies without growth feedback fields remain accepted."""
+    legacy_body = f"""### Relay Domain / 中转站域名
+
+api.example.com
+
+### Audit Profile / 审计配置
+
+general
+
+### Tool Version / 工具版本
+
+v2.3
+
+### Tool Commit / 工具提交
+
+040676c
+
+### Tested At / 审计时间
+
+2026-06-01T12:00:00Z
+
+### Overall Rating / 总体评级
+
+LOW
+
+### Report Screenshot / 报告截图
+
+![report](https://user-images.githubusercontent.com/123/report.png)
+
+### Report Artifact / 报告文件
+
+https://github.com/user-attachments/files/123/report-redacted.md
+
+### Report Hash / 报告哈希
+
+sha256:{REPORT_HASH}
+"""
+    fields = parse_issue_body(legacy_body)
+    assert validate_fields(fields) == []
+
+    entry = build_evidence_record(fields, "legacy-user", "77")
+    assert entry["claimedProvider"] == "unknown"
+    assert entry["apiFormat"] == "unknown"
+    assert entry["modelTested"] == ""
+    assert entry["evidenceLevel"] == "unknown"
+    assert entry["stepSummary"] == ""
+    assert entry["operatorContacted"] == "unknown"
+    assert entry["falsePositiveSuspected"] == "unsure"
+
+
+def test_provider_profile_feedback_values_are_validated():
+    bad_fields = parse_issue_body(
+        _make_body(
+            api_format="bad-format",
+            evidence_level="private-dump",
+            operator_contacted="maybe",
+            false_positive_suspected="definitely",
+        )
+    )
+    errors = validate_fields(bad_fields)
+    assert any("api_format" in e for e in errors)
+    assert any("evidence_level" in e for e in errors)
+    assert any("operator_contacted" in e for e in errors)
+    assert any("false_positive_suspected" in e for e in errors)
 
 
 def test_version_formats():

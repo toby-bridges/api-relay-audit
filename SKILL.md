@@ -1,6 +1,6 @@
 ---
 name: api-relay-audit
-description: "OpenClaw skill for local AI API relay and LLM proxy security audits. Use when an OpenClaw agent must test a relay for prompt injection, model substitution, tool-call rewriting, SSE anomalies, upstream channel mismatch, error leakage, and Web3 wallet risks before trusting API traffic."
+description: "OpenClaw skill for local API Relay Audit. Use when an OpenClaw agent must audit a third-party AI API relay, LLM proxy, gateway, or resale API before trusting coding, tool, production, or wallet-sensitive traffic."
 version: 2.3.0
 metadata:
   openclaw:
@@ -72,6 +72,15 @@ Trigger this skill when the user:
 - Wants to compare security across multiple relay providers
 - Encounters unexpected API behavior and suspects relay tampering
 - Mentions: "test relay", "audit API", "detect injection", "relay security", "中转站安全", "测试中转站", "test proxy API"
+
+Keep these query families separate when deciding whether to run the skill:
+
+| Query family | Use when | Profile / evidence boundary |
+|---|---|---|
+| API relay audit | The user wants a local report for a relay, mirror, gateway, LLM proxy, or resale API. | Default `general`; report is evidence, not certification. |
+| Prompt injection audit | The user asks about hidden prompt injection, prompt leakage, instruction override, or extraction behavior. | Steps 3-6; do not publish private prompts or secrets. |
+| Model substitution signals | The user suspects model identity, route, latency, or upstream channel mismatch. | Signals from Steps 5, 10, 13, and 14 require corroboration; self-ID and fingerprints are not standalone provider proof. |
+| Web3 relay audit | The user is testing wallet-sensitive agent workflows. | Use `--profile web3` or `--profile full`; Step 11 is profile-gated. |
 
 ## Step-by-Step Agent Workflow (代理工作流)
 

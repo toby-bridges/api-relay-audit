@@ -118,6 +118,13 @@ Primary concepts stay unchanged:
 - AI API relay security audit
 - LLM proxy security
 
+Do not merge these project-level query families into one marketplace slogan:
+
+- API relay audit
+- prompt injection audit
+- model substitution signals
+- Web3 relay audit
+
 Skill-specific long-tail phrases:
 
 - OpenClaw skill for AI API relay audit

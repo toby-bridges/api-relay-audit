@@ -1,6 +1,6 @@
 ---
 name: api-relay-audit
-description: Use when auditing third-party AI API relays, proxy APIs, or API-key resale services for hidden prompt injection, prompt leakage, instruction override, context truncation, tool-call substitution, error leakage, SSE stream anomalies, Web3 wallet-safety prompt injection, infrastructure fingerprints, latency variance, and upstream channel mismatches.
+description: Use when auditing third-party AI API relays, LLM proxies, gateways, or API-key resale services locally before trusting coding, tool, production, or wallet-sensitive traffic.
 version: 2.3.0
 author: Toby Bridges
 license: AGPL-3.0-only
@@ -20,7 +20,7 @@ required_environment_variables:
 
 ## Overview
 
-This skill runs `api-relay-audit`, a zero-dependency security audit for third-party AI API relays and proxy services. It checks whether the relay tampers with prompts, truncates context, rewrites package-install instructions, leaks upstream credentials or internal headers, corrupts Anthropic SSE streams, changes the upstream channel, or injects unsafe Web3 wallet behavior.
+This skill runs `api-relay-audit`, a zero-dependency 14-step security audit for third-party AI API relays and proxy services. It checks relay behavior while keeping API relay audit, prompt injection audit, model substitution signals, and Web3 relay audit as separate query families with separate evidence boundaries.
 
 Use the standalone `audit.py` path by default. It only needs Python 3 and `curl`, which makes it suitable for local Hermes terminal sessions and sandboxed execution. On Windows, run the POSIX shell recipes from Git Bash or an equivalent shell; direct `python audit.py ...` invocations also work from PowerShell when the environment variables are set.
 
@@ -32,6 +32,15 @@ Use the standalone `audit.py` path by default. It only needs Python 3 and `curl`
 - The user wants to audit Web3/wallet safety behavior with `--profile web3` or `--profile full`.
 
 Do not use this skill for general model benchmarking, provider price comparison, or legal/security certification. The output is a technical audit report, not a guarantee that a service is safe.
+
+Keep these query families separate:
+
+| Query family | Use when | Profile / evidence boundary |
+|---|---|---|
+| API relay audit | The user wants a local report for a relay, mirror, gateway, LLM proxy, or resale API. | Default `general`; report is evidence, not certification. |
+| Prompt injection audit | The user asks about hidden prompt injection, prompt leakage, instruction override, or extraction behavior. | Steps 3-6; do not publish private prompts or secrets. |
+| Model substitution signals | The user suspects model identity, route, latency, or upstream channel mismatch. | Signals from Steps 5, 10, 13, and 14 require corroboration; self-ID and fingerprints are not standalone provider proof. |
+| Web3 relay audit | The user is testing wallet-sensitive agent workflows. | Use `--profile web3` or `--profile full`; Step 11 is profile-gated. |
 
 ## Install or Share
 

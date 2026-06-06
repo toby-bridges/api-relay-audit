@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>API Relay Audit - AI API Relay Security Audit for LLM Proxies</title>
-<meta name="description" content="Audit AI API relays and LLM proxies for prompt injection, model substitution, tool rewriting, SSE anomalies, error leakage, and Web3 wallet risks. Runs locally; your API key is sent only to the relay URL you choose.">
+<meta name="description" content="API Relay Audit runs locally for AI API relays and LLM proxies, with separate query families for relay audits, prompt injection audits, model substitution signals, and Web3 relay audits.">
 <link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/">
 <link rel="alternate" hreflang="en" href="https://toby-bridges.github.io/api-relay-audit/">
 <link rel="alternate" hreflang="zh-CN" href="https://toby-bridges.github.io/api-relay-audit/zh/">
@@ -12,7 +12,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="API Relay Audit">
 <meta property="og:title" content="API Relay Audit - AI API Relay Security Audit">
-<meta property="og:description" content="Local security audit for AI API relays and LLM proxies: prompt injection, model substitution, tool rewriting, SSE anomalies, and Web3 wallet risks.">
+<meta property="og:description" content="Local security audit for AI API relays and LLM proxies with clean evidence boundaries across relay, prompt injection, model substitution, and Web3 profiles.">
 <meta property="og:url" content="https://toby-bridges.github.io/api-relay-audit/">
 <meta property="og:image" content="https://toby-bridges.github.io/api-relay-audit/assets/social-preview.png">
 <meta property="og:image:width" content="1280">
@@ -20,7 +20,7 @@
 <meta property="og:image:alt" content="API Relay Audit - AI API Relay Security Audit. Runs locally; your API key is sent only to the relay URL you choose.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="API Relay Audit - AI API Relay Security Audit">
-<meta name="twitter:description" content="Local security audit for AI API relays and LLM proxies: prompt injection, model substitution, tool rewriting, SSE anomalies, and Web3 wallet risks.">
+<meta name="twitter:description" content="Local security audit for AI API relays and LLM proxies with clean query-family and evidence boundaries.">
 <meta name="twitter:image" content="https://toby-bridges.github.io/api-relay-audit/assets/social-preview.png">
 <script type="application/ld+json">
 {
@@ -42,7 +42,7 @@
       "url": "https://github.com/toby-bridges/api-relay-audit",
       "codeRepository": "https://github.com/toby-bridges/api-relay-audit",
       "license": "https://github.com/toby-bridges/api-relay-audit/blob/master/LICENSE",
-      "description": "Local security audit tool for AI API relays and LLM proxies. It detects prompt injection, model substitution, tool rewriting, SSE anomalies, error leakage, and Web3 wallet risks. Your API key is sent only to the relay URL you choose."
+      "description": "Local security audit tool for AI API relays and LLM proxies. It preserves separate query families for relay audits, prompt injection audits, model substitution signals, and Web3 relay audits. Your API key is sent only to the relay URL you choose."
     },
     {
       "@type": "FAQPage",
@@ -77,7 +77,7 @@
           "name": "What is model substitution?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Model substitution means the relay claims to provide one model but routes you to another model or leaks a different model identity. API Relay Audit checks identity patterns and stream model identity where available."
+            "text": "Model substitution means the relay may expose signals for a different model identity, route, or upstream channel than expected. API Relay Audit treats self-ID, stream model identity, latency, and channel fingerprints as evidence signals that require corroboration."
           }
         },
         {
@@ -379,7 +379,7 @@ footer a:hover{color:var(--text)}
     <span data-i18n="hero_badge">Local execution — your API key is sent only to the relay URL you choose</span>
   </div>
   <h1 data-i18n="hero_title"><span class="gradient">AI API Relay</span> Security Audit</h1>
-  <p class="hero-sub" data-i18n="hero_sub">API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It detects prompt injection, model substitution, tool rewriting, SSE anomalies, error leakage, and Web3 wallet risks. Your API key is sent only to the relay URL you choose.</p>
+  <p class="hero-sub" data-i18n="hero_sub">API Relay Audit is a local, evidence-first audit for AI API relays and LLM proxies. It keeps relay audits, prompt injection audits, model substitution signals, and Web3 relay audits as separate query families.</p>
   <div class="hero-stats">
     <div class="stat"><div class="stat-num">14</div><div class="stat-label" data-i18n="stat_steps">Audit Steps</div></div>
     <div class="stat"><div class="stat-num">6D</div><div class="stat-label" data-i18n="stat_matrix">Risk Matrix</div></div>
@@ -397,7 +397,7 @@ footer a:hover{color:var(--text)}
   <div class="summary-grid">
     <div class="summary-block">
       <h2 data-i18n="what_title">What is API Relay Audit?</h2>
-      <p data-i18n="what_desc">API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It checks whether a third-party relay injects prompts, substitutes models, rewrites tool output, leaks credentials in error responses, or produces stream integrity anomalies.</p>
+      <p data-i18n="what_desc">API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It checks whether a third-party relay injects prompts, exposes model identity signals, rewrites tool output, leaks credentials in error responses, or produces stream integrity anomalies.</p>
     </div>
     <div class="summary-block">
       <h3 data-i18n="use_title">When to use it</h3>
@@ -414,6 +414,30 @@ footer a:hover{color:var(--text)}
         <li data-i18n="claim_2">It does not replace manual security review.</li>
         <li data-i18n="claim_3">It does not treat inconclusive as clean.</li>
       </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── Audit Families ── -->
+<section class="summary-section container" id="audit-families">
+  <h2 style="font-size:1.4rem;font-weight:700;text-align:center" data-i18n="family_title">Audit Families</h2>
+  <p style="text-align:center;color:var(--text2);font-size:.9rem;margin:8px auto 24px;max-width:680px" data-i18n="family_sub">Each family maps to a distinct search intent, runtime profile, and evidence boundary.</p>
+  <div class="summary-grid">
+    <div class="summary-block">
+      <h3 data-i18n="family_api_title">API relay audit</h3>
+      <p data-i18n="family_api_desc">Audit third-party relays, mirrors, gateways, LLM proxies, or resale APIs with the general profile before trusting production or agent traffic.</p>
+    </div>
+    <div class="summary-block">
+      <h3 data-i18n="family_prompt_title">Prompt injection audit</h3>
+      <p data-i18n="family_prompt_desc">Detect hidden prompt injection, prompt leakage, instruction override, and extraction behavior through Steps 3-6.</p>
+    </div>
+    <div class="summary-block">
+      <h3 data-i18n="family_model_title">Model substitution signals</h3>
+      <p data-i18n="family_model_desc">Collect identity, stream, latency, and channel signals without treating self-ID or fingerprints as standalone provider proof.</p>
+    </div>
+    <div class="summary-block">
+      <h3 data-i18n="family_web3_title">Web3 relay audit</h3>
+      <p data-i18n="family_web3_desc">Use the profile-gated Step 11 checks with --profile web3 or --profile full before wallet-sensitive agent workflows.</p>
     </div>
   </div>
 </section>
@@ -590,7 +614,7 @@ footer a:hover{color:var(--text)}
 
 <!-- ── How It Works ── -->
 <section class="container">
-  <h2 style="font-size:1.4rem;font-weight:700;text-align:center" data-i18n="how_title">Detect Prompt Injection and Model Substitution</h2>
+  <h2 style="font-size:1.4rem;font-weight:700;text-align:center" data-i18n="how_title">Detect Prompt Injection and Model Substitution Signals</h2>
   <p style="text-align:center;color:var(--text2);font-size:.9rem;margin-bottom:8px" data-i18n="how_sub">Threat taxonomy based on Liu et al., "Your Agent Is Mine" (arXiv:2604.08407)</p>
   <div class="steps">
     <div class="step">
@@ -610,8 +634,8 @@ footer a:hover{color:var(--text)}
     </div>
     <div class="step">
       <div class="step-num" data-i18n="step_id_label">Step 5</div>
-      <h3 data-i18n="step_id_title">Identity Substitution</h3>
-      <p data-i18n="step_id_desc">An identity keyword set detects if "Claude" is actually GPT, DeepSeek, GLM, Qwen, or other models in disguise. Anchor phrases confirm true identity.</p>
+      <h3 data-i18n="step_id_title">Identity Consistency Signals</h3>
+      <p data-i18n="step_id_desc">An identity keyword set checks whether a claimed Claude route leaks GPT, DeepSeek, GLM, Qwen, or other model identities. This is an evidence signal, not standalone provider-level proof.</p>
     </div>
     <div class="step">
       <div class="step-num" data-i18n="step_ctx_label">Step 7</div>
@@ -720,7 +744,7 @@ footer a:hover{color:var(--text)}
   </div>
   <div class="faq-item">
     <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q4">What is model substitution?</div>
-    <div class="faq-a" data-i18n="faq_a4">Model substitution means the relay claims to provide one model but routes you to another model or leaks a different model identity. API Relay Audit checks identity patterns and stream model identity where available.</div>
+    <div class="faq-a" data-i18n="faq_a4">Model substitution means the relay may expose signals for a different model identity, route, or upstream channel than expected. API Relay Audit checks self-ID, stream model identity, latency, and channel fingerprints as signals that require corroboration before provider-level claims.</div>
   </div>
   <div class="faq-item">
     <div class="faq-q" onclick="toggleFaq(this)" data-i18n="faq_q5">What is tool-call rewriting?</div>
@@ -1012,9 +1036,9 @@ const i18n={
     nav_demo:"Demo",nav_install:"快速开始",nav_faq:"FAQ",
     hero_badge:"本地运行 — API Key 只发送到你指定的中转站 URL",
     hero_title:'<span class="gradient">AI API 中转站</span>安全审计',
-    hero_sub:"API Relay Audit 是一个本地运行的 AI API 中转站 / LLM proxy 安全审计工具。它检测 prompt injection、模型替换、工具调用改写、SSE 异常、错误响应泄漏和 Web3 钱包风险；你的 API Key 只会发送到你指定的中转站 URL。",
+    hero_sub:"API Relay Audit 是本地运行、证据优先的 AI API 中转站 / LLM proxy 审计工具。它把 relay audit、prompt injection audit、model substitution signals 和 Web3 relay audit 拆成独立查询意图。",
     what_title:"API Relay Audit 是什么？",
-    what_desc:"API Relay Audit 是一个本地安全审计工具，用来检查第三方 AI API 中转站和 LLM proxy 是否注入 prompt、替换模型、改写工具输出、在错误响应中泄漏凭证，或产生流完整性异常。",
+    what_desc:"API Relay Audit 是一个本地安全审计工具，用来检查第三方 AI API 中转站和 LLM proxy 是否注入 prompt、暴露模型身份信号、改写工具输出、在错误响应中泄漏凭证，或产生流完整性异常。",
     use_title:"什么时候使用",
     use_1:"审计第三方 AI API 中转站、镜像、网关和 LLM proxy。",
     use_2:"在生产流量前检查 Claude / OpenAI 兼容代理。",
@@ -1023,6 +1047,16 @@ const i18n={
     claim_1:"它不为任何中转站颁发安全认证。",
     claim_2:"它不替代人工安全审查。",
     claim_3:"它不会把 inconclusive 当作 clean。",
+    family_title:"审计意图家族",
+    family_sub:"每个家族对应独立搜索意图、运行 profile 和证据边界。",
+    family_api_title:"API relay audit",
+    family_api_desc:"在信任生产流量或 agent 流量前，用 general profile 审计第三方中转站、镜像、网关、LLM proxy 或 resale API。",
+    family_prompt_title:"Prompt injection audit",
+    family_prompt_desc:"通过 Step 3-6 检测隐藏 prompt 注入、prompt 泄漏、指令覆盖和提取行为。",
+    family_model_title:"Model substitution signals",
+    family_model_desc:"收集身份、stream、延迟和 channel 信号，但不把 self-ID 或 fingerprint 当成 provider-level 证明。",
+    family_web3_title:"Web3 relay audit",
+    family_web3_desc:"在钱包敏感 agent workflow 前，用 --profile web3 或 --profile full 运行 profile-gated Step 11 检查。",
     stat_steps:"审计步骤",stat_matrix:"风险矩阵",stat_tests:"单元测试",stat_deps:"依赖项 (standalone)",
     cta_demo:"查看 Demo 报告",cta_install:"开始审计",
     demo_title:"审计报告 Demo",
@@ -1031,12 +1065,12 @@ const i18n={
     demo_note:"域名已脱敏。数据来自 api-relay-audit 的实际审计。",
     demo_date:"测试日期",demo_no_inject:"无注入",demo_extracted:"提取成功",demo_risk_items:"风险项",
     demo_th_step:"检测项",demo_th_result:"结果",demo_th_detail:"详情",
-    how_title:"检测 Prompt 注入和模型替换",
+    how_title:"检测 Prompt 注入和模型替换信号",
     how_sub:'威胁分类基于 Liu et al., "Your Agent Is Mine" (arXiv:2604.08407)',
     step_infra_label:"Step 1-2",step_infra_title:"基础设施侦察",step_infra_desc:"DNS、CDN、SSL 证书、管理面板指纹、模型列表枚举 — 了解中转站背后的技术栈。",
     step_inject_label:"Step 3",step_inject_title:"Token 注入 (AC-1)",step_inject_desc:"对比实际 token 用量与预期值。隐藏 system prompt 注入会增加额外 token — 差值揭示注入量。",
     step_extract_label:"Step 4 & 6",step_extract_title:"Prompt 提取",step_extract_desc:"3 种攻击向量尝试提取隐藏 system prompt：直接复述、翻译法、JSON 接龙。加上越狱防护测试。",
-    step_id_label:"Step 5",step_id_title:"身份替换",step_id_desc:'身份关键词集合检测 "Claude" 是否实际是 GPT、DeepSeek、GLM、Qwen 或其他模型。锚点短语确认真实身份。',
+    step_id_label:"Step 5",step_id_title:"身份一致性信号",step_id_desc:'身份关键词集合检测 "Claude" 路由是否泄漏 GPT、DeepSeek、GLM、Qwen 或其他模型身份。这是证据信号，需结合 metadata、request id 或 stream signature 才能提出 provider-level 结论。',
     step_ctx_label:"Step 7",step_ctx_title:"上下文截断",step_ctx_desc:"5 个 canary 标记 + 二分查找精确定位真实上下文窗口边界。你的 200K context 真的有 200K 吗？",
     step_tool_label:"Step 8 (AC-1.a)",step_tool_title:"工具调用改写",step_tool_desc:"检测中转站是否在返回路径上偷改包安装命令 — 代理层面的拼写投毒供应链攻击。",
     step_err_label:"Step 9 (AC-2)",step_err_title:"错误响应泄漏",step_err_desc:"7 种故意破坏的请求探测 API Key、环境变量、文件路径、LiteLLM 内部字段是否在错误响应中泄漏。",
@@ -1089,7 +1123,7 @@ const i18n={
     faq_q3:"这里的 prompt injection 是什么意思？",
     faq_a3:'Prompt injection 指中转站可能在你的请求中插入隐藏指令。API Relay Audit 会比较 token 用量、运行 prompt 提取探针，并在出现隐藏 prompt 内容时记录证据。',
     faq_q4:"什么是模型替换？",
-    faq_a4:'模型替换指中转站声称提供某个模型，但实际路由到另一个模型，或泄漏了不同的模型身份。API Relay Audit 会检查身份关键词，并在可用时检查 stream 里的模型身份。',
+    faq_a4:'模型替换指中转站可能暴露出不同于预期的模型身份、路由或上游 channel 信号。API Relay Audit 会检查 self-ID、stream 模型身份、延迟和 channel fingerprint，但这些信号需要交叉验证，不能单独证明 provider 替换。',
     faq_q5:"什么是工具调用改写？",
     faq_a5:'工具调用改写指中转站修改模型回复中的包安装命令或工具输出。API Relay Audit 会比对固定 package 命令和返回文本，用来检测代理层供应链篡改。',
     faq_q6:"什么是 SSE 异常？",
@@ -1104,9 +1138,9 @@ const i18n={
     nav_demo:"Demo",nav_install:"Quick Start",nav_faq:"FAQ",
     hero_badge:"Local execution — your API key is sent only to the relay URL you choose",
     hero_title:'<span class="gradient">AI API Relay</span> Security Audit',
-    hero_sub:"API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It detects prompt injection, model substitution, tool rewriting, SSE anomalies, error leakage, and Web3 wallet risks. Your API key is sent only to the relay URL you choose.",
+    hero_sub:"API Relay Audit is a local, evidence-first audit for AI API relays and LLM proxies. It keeps relay audits, prompt injection audits, model substitution signals, and Web3 relay audits as separate query families.",
     what_title:"What is API Relay Audit?",
-    what_desc:"API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It checks whether a third-party relay injects prompts, substitutes models, rewrites tool output, leaks credentials in error responses, or produces stream integrity anomalies.",
+    what_desc:"API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It checks whether a third-party relay injects prompts, exposes model identity signals, rewrites tool output, leaks credentials in error responses, or produces stream integrity anomalies.",
     use_title:"When to use it",
     use_1:"Audit third-party AI API relays, mirrors, gateways, and LLM proxies.",
     use_2:"Check Claude-compatible or OpenAI-compatible proxies before production traffic.",
@@ -1115,6 +1149,16 @@ const i18n={
     claim_1:"It does not certify that a relay is safe.",
     claim_2:"It does not replace manual security review.",
     claim_3:"It does not treat inconclusive as clean.",
+    family_title:"Audit Families",
+    family_sub:"Each family maps to a distinct search intent, runtime profile, and evidence boundary.",
+    family_api_title:"API relay audit",
+    family_api_desc:"Audit third-party relays, mirrors, gateways, LLM proxies, or resale APIs with the general profile before trusting production or agent traffic.",
+    family_prompt_title:"Prompt injection audit",
+    family_prompt_desc:"Detect hidden prompt injection, prompt leakage, instruction override, and extraction behavior through Steps 3-6.",
+    family_model_title:"Model substitution signals",
+    family_model_desc:"Collect identity, stream, latency, and channel signals without treating self-ID or fingerprints as standalone provider proof.",
+    family_web3_title:"Web3 relay audit",
+    family_web3_desc:"Use the profile-gated Step 11 checks with --profile web3 or --profile full before wallet-sensitive agent workflows.",
     stat_steps:"Audit Steps",stat_matrix:"Risk Matrix",stat_tests:"Unit Tests",stat_deps:"Dependencies (standalone)",
     cta_demo:"See Demo Report",cta_install:"Start Audit",
     demo_title:"Audit Report Demo",demo_sub:"Real audit results from three relay services — click tabs to compare",
@@ -1122,12 +1166,12 @@ const i18n={
     demo_note:"Domain names redacted. Data from actual audits run with api-relay-audit.",
     demo_date:"Test date",demo_no_inject:"No injection",demo_extracted:"extracted",demo_risk_items:"Risk Items",
     demo_th_step:"Test",demo_th_result:"Result",demo_th_detail:"Detail",
-    how_title:"Detect Prompt Injection and Model Substitution",
+    how_title:"Detect Prompt Injection and Model Substitution Signals",
     how_sub:'Threat taxonomy based on Liu et al., "Your Agent Is Mine" (arXiv:2604.08407)',
     step_infra_label:"Step 1-2",step_infra_title:"Infrastructure Recon",step_infra_desc:"DNS, CDN, SSL certificate, management panel fingerprint, model list enumeration — understand what's behind the relay.",
     step_inject_label:"Step 3",step_inject_title:"Token Injection (AC-1)",step_inject_desc:"Compares actual token usage against expected values. Hidden system prompt injection adds extra tokens — the delta reveals it.",
     step_extract_label:"Step 4 & 6",step_extract_title:"Prompt Extraction",step_extract_desc:"3 attack vectors attempt to extract hidden system prompts: verbatim recall, translation trick, JSON continuation. Plus jailbreak resistance tests.",
-    step_id_label:"Step 5",step_id_title:"Identity Substitution",step_id_desc:'An identity keyword set detects if "Claude" is actually GPT, DeepSeek, GLM, Qwen, or other models in disguise. Anchor phrases confirm true identity.',
+    step_id_label:"Step 5",step_id_title:"Identity Consistency Signals",step_id_desc:'An identity keyword set checks whether a claimed Claude route leaks GPT, DeepSeek, GLM, Qwen, or other model identities. This is an evidence signal, not standalone provider-level proof.',
     step_ctx_label:"Step 7",step_ctx_title:"Context Truncation",step_ctx_desc:"5 canary markers + binary search pinpoint the real context window boundary. Is your 200K context really 200K?",
     step_tool_label:"Step 8 (AC-1.a)",step_tool_title:"Tool-Call Rewriting",step_tool_desc:"Checks if the relay silently modifies package install commands in responses — typosquatting supply-chain attacks at the proxy layer.",
     step_err_label:"Step 9 (AC-2)",step_err_title:"Error Response Leakage",step_err_desc:"7 deliberately broken requests probe for API key, env vars, file paths, and LiteLLM internals leaking in error responses.",
@@ -1180,7 +1224,7 @@ const i18n={
     faq_q3:"What does prompt injection mean here?",
     faq_a3:'Prompt injection means the relay may prepend or insert hidden instructions into your request. API Relay Audit compares token usage, runs extraction probes, and records evidence when hidden prompt content appears.',
     faq_q4:"What is model substitution?",
-    faq_a4:'Model substitution means the relay claims to provide one model but routes you to another model or leaks a different model identity. API Relay Audit checks identity patterns and stream model identity where available.',
+    faq_a4:'Model substitution means the relay may expose signals for a different model identity, route, or upstream channel than expected. API Relay Audit checks self-ID, stream model identity, latency, and channel fingerprints as signals that require corroboration before provider-level claims.',
     faq_q5:"What is tool-call rewriting?",
     faq_a5:'Tool-call rewriting means the relay modifies package-install commands or tool-like output in the model response. API Relay Audit compares pinned package commands against returned text to detect proxy-layer supply-chain tampering.',
     faq_q6:"What are SSE anomalies?",

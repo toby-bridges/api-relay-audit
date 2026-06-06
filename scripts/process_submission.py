@@ -35,8 +35,20 @@ MAX_RED_FLAGS = 10
 MAX_FLAG_LENGTH = 500
 MAX_IMAGES = 4
 MAX_VERSION_LENGTH = 20
+MAX_METADATA_LENGTH = 120
+MAX_STEP_SUMMARY_LENGTH = 1200
 STALE_AFTER_DAYS = 90
 TESTED_AT_FUTURE_GRACE_SECONDS = 300
+API_FORMAT_VALUES = {"unknown", "openai-compatible", "anthropic-native", "both", "other"}
+EVIDENCE_LEVEL_VALUES = {
+    "redacted-report",
+    "screenshot-only",
+    "transparent-log-hash",
+    "reproducible-run",
+    "unknown",
+}
+OPERATOR_CONTACTED_VALUES = {"unknown", "no", "yes", "operator-response-submitted"}
+FALSE_POSITIVE_VALUES = {"unsure", "no", "yes"}
 
 HOSTNAME_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 TOOL_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
@@ -61,10 +73,17 @@ def parse_issue_body(body):
     patterns = {
         "relay_domain": r"### Relay Domain.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
         "profile": r"### Audit Profile.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
+        "claimed_provider": r"### Claimed Provider.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
+        "api_format": r"### API Format.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
+        "model_tested": r"### Model Tested.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
         "tool_version": r"### Tool Version.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
         "tool_commit": r"### Tool Commit.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
         "tested_at": r"### Tested At.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
         "overall_rating": r"### Overall Rating.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
+        "evidence_level": r"### Evidence Level.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
+        "step_summary": r"### Step Summary.*?\n\n(.+?)(?:\n###|\Z)",
+        "operator_contacted": r"### Operator Contacted.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
+        "false_positive_suspected": r"### False Positive Suspected.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
         "report_hash": r"### Report Hash.*?\n\n(.+?)(?:\n\n|\n###|\Z)",
         "red_flags": r"### Key Findings.*?\n\n(.+?)(?:\n###|\Z)",
         "report_image": r"### Report Screenshot.*?\n\n(.+?)(?:\n###|\Z)",
@@ -90,6 +109,17 @@ def normalize_report_hash(report_hash):
     if value.startswith("sha256:"):
         return value
     return f"sha256:{value}"
+
+
+def normalize_optional_choice(value, allowed, default):
+    """Normalize optional issue-form dropdown values while preserving compatibility."""
+    normalized = (value or "").strip().lower()
+    return normalized if normalized in allowed else default
+
+
+def clamp_metadata(value, max_length=MAX_METADATA_LENGTH):
+    """Trim optional metadata fields to stable public-record lengths."""
+    return (value or "").strip()[:max_length]
 
 
 def parse_tested_at(value):
@@ -163,6 +193,29 @@ def validate_fields(fields):
 
     if fields.get("profile", "").lower() not in ("general", "web3", "full"):
         errors.append(f"Invalid profile: {fields.get('profile')}")
+
+    api_format = fields.get("api_format", "")
+    if api_format and api_format.strip().lower() not in API_FORMAT_VALUES:
+        errors.append(f"Invalid api_format: {api_format}")
+
+    evidence_level = fields.get("evidence_level", "")
+    if evidence_level and evidence_level.strip().lower() not in EVIDENCE_LEVEL_VALUES:
+        errors.append(f"Invalid evidence_level: {evidence_level}")
+
+    operator_contacted = fields.get("operator_contacted", "")
+    if operator_contacted and operator_contacted.strip().lower() not in OPERATOR_CONTACTED_VALUES:
+        errors.append(f"Invalid operator_contacted: {operator_contacted}")
+
+    false_positive = fields.get("false_positive_suspected", "")
+    if false_positive and false_positive.strip().lower() not in FALSE_POSITIVE_VALUES:
+        errors.append(f"Invalid false_positive_suspected: {false_positive}")
+
+    for key in ["claimed_provider", "model_tested"]:
+        if len(fields.get(key, "")) > MAX_METADATA_LENGTH:
+            errors.append(f"{key} too long (max {MAX_METADATA_LENGTH})")
+
+    if len(fields.get("step_summary", "")) > MAX_STEP_SUMMARY_LENGTH:
+        errors.append(f"step_summary too long (max {MAX_STEP_SUMMARY_LENGTH})")
 
     version = fields.get("tool_version", "")
     if version:
@@ -316,10 +369,23 @@ def build_evidence_record(fields, issue_author, issue_number, now=None):
         "schemaVersion": 1,
         "recordType": "community-submitted-audit-evidence",
         "relayDomain": normalize_domain(fields["relay_domain"]),
+        "claimedProvider": clamp_metadata(fields.get("claimed_provider")) or "unknown",
+        "apiFormat": normalize_optional_choice(fields.get("api_format"), API_FORMAT_VALUES, "unknown"),
+        "modelTested": clamp_metadata(fields.get("model_tested")),
         "toolVersion": fields.get("tool_version", ""),
         "toolCommit": fields["tool_commit"].strip().lower(),
         "auditProfile": fields.get("profile", "general").lower(),
         "toolReportedOverallRating": fields["overall_rating"].upper(),
+        "evidenceLevel": normalize_optional_choice(
+            fields.get("evidence_level"), EVIDENCE_LEVEL_VALUES, "unknown"
+        ),
+        "stepSummary": clamp_metadata(fields.get("step_summary"), MAX_STEP_SUMMARY_LENGTH),
+        "operatorContacted": normalize_optional_choice(
+            fields.get("operator_contacted"), OPERATOR_CONTACTED_VALUES, "unknown"
+        ),
+        "falsePositiveSuspected": normalize_optional_choice(
+            fields.get("false_positive_suspected"), FALSE_POSITIVE_VALUES, "unsure"
+        ),
         "submittedAt": now.isoformat(),
         "testedAt": tested_at.isoformat(),
         "submitter": issue_author,

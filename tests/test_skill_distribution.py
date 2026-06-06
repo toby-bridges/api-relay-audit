@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ROOT_SKILL = REPO_ROOT / "SKILL.md"
 HERMES_SKILL = REPO_ROOT / "skills" / "api-relay-audit" / "SKILL.md"
 SKILL_DISTRIBUTION_DOC = REPO_ROOT / "docs" / "skill-distribution.md"
+QUERY_FAMILY_DOC = REPO_ROOT / "docs" / "query-families.md"
 HOMEPAGE = REPO_ROOT / "web" / "index.html"
 
 
@@ -115,6 +116,58 @@ def test_homepage_channel_classifier_is_not_marked_future():
     assert "cmp_channel:\"上游通道分类\"" in text
     assert "Channel Fingerprint" not in text
     assert '<td class="soon">Soon</td>' not in text
+
+
+def test_growth_surfaces_keep_query_families_separate():
+    surfaces = [
+        REPO_ROOT / "README.md",
+        HOMEPAGE,
+        REPO_ROOT / "web" / "zh" / "index.html",
+        ROOT_SKILL,
+        HERMES_SKILL,
+        SKILL_DISTRIBUTION_DOC,
+        QUERY_FAMILY_DOC,
+    ]
+    required_families = [
+        "API relay audit",
+        "Prompt injection audit",
+        "Model substitution signals",
+        "Web3 relay audit",
+    ]
+    for path in surfaces:
+        text = _read(path).lower()
+        for family in required_families:
+            assert family.lower() in text, f"{path} is missing {family!r}"
+
+
+def test_growth_surfaces_preserve_current_audit_contract():
+    surfaces = [REPO_ROOT / "README.md", HOMEPAGE, ROOT_SKILL, HERMES_SKILL]
+    for path in surfaces:
+        text = _read(path)
+        assert "API Relay Audit" in text
+        assert "14-step" in text or "14 steps" in text or "14 步" in text
+        for profile in ["general", "web3", "full"]:
+            assert profile in text
+
+
+def test_web3_relay_audit_is_profile_gated():
+    surfaces = [REPO_ROOT / "README.md", HOMEPAGE, QUERY_FAMILY_DOC, ROOT_SKILL, HERMES_SKILL]
+    for path in surfaces:
+        text = _read(path)
+        assert "Web3 relay audit" in text
+        assert "--profile web3" in text or "`web3`" in text or "profile web3" in text
+        assert "Step 11" in text
+        assert "profile-gated" in text
+
+
+def test_model_substitution_copy_requires_corroboration():
+    surfaces = [REPO_ROOT / "README.md", HOMEPAGE, QUERY_FAMILY_DOC, ROOT_SKILL, HERMES_SKILL]
+    for path in surfaces:
+        text = _read(path)
+        assert "model substitution" in text.lower()
+        assert "signals" in text.lower()
+        assert "standalone" in text.lower() or "单独证明" in text
+        assert "provider proof" in text.lower() or "provider-level proof" in text.lower() or "provider 替换" in text
 
 
 def test_root_skill_secret_handling_prefers_secure_environment():

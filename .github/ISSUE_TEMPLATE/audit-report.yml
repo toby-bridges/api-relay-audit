@@ -24,6 +24,31 @@ body:
       required: true
 
   - type: input
+    id: claimed_provider
+    attributes:
+      label: Claimed Provider / 声称供应商
+      description: "What provider/channel did the relay claim or advertise? Use unknown if unclear."
+      placeholder: "Anthropic / OpenAI / OpenRouter / unknown"
+
+  - type: dropdown
+    id: api_format
+    attributes:
+      label: API Format / API 格式
+      options:
+        - unknown
+        - openai-compatible
+        - anthropic-native
+        - both
+        - other
+
+  - type: input
+    id: model_tested
+    attributes:
+      label: Model Tested / 测试模型
+      description: "The model name used for this audit run, if shown in your command or report."
+      placeholder: "claude-opus-4-6"
+
+  - type: input
     id: tool_version
     attributes:
       label: Tool Version / 工具版本
@@ -60,6 +85,49 @@ body:
         - HIGH
     validations:
       required: true
+
+  - type: dropdown
+    id: evidence_level
+    attributes:
+      label: Evidence Level / 证据等级
+      options:
+        - redacted-report
+        - screenshot-only
+        - transparent-log-hash
+        - reproducible-run
+        - unknown
+
+  - type: textarea
+    id: step_summary
+    attributes:
+      label: Step Summary / 步骤摘要
+      description: |
+        Optional structured summary for key steps. Keep it redacted.
+        可选：填写关键步骤三态结果，请保持脱敏。
+      placeholder: |
+        Step 3 prompt injection: anomaly
+        Step 5 identity consistency: inconclusive
+        Step 8 tool-call substitution: clean
+        Step 11 Web3 prompt injection: not run
+
+  - type: dropdown
+    id: operator_contacted
+    attributes:
+      label: Operator Contacted / 是否联系运营方
+      options:
+        - unknown
+        - no
+        - yes
+        - operator-response-submitted
+
+  - type: dropdown
+    id: false_positive_suspected
+    attributes:
+      label: False Positive Suspected / 是否怀疑误报
+      options:
+        - unsure
+        - no
+        - yes
 
   - type: textarea
     id: report_image
