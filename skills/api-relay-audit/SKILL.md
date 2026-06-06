@@ -85,7 +85,7 @@ MODEL="${API_RELAY_AUDIT_MODEL:-claude-opus-4-6}"
 PROFILE="${API_RELAY_AUDIT_PROFILE:-general}"
 WORKDIR="$(mktemp -d)"
 REPORT="$PWD/api-relay-audit-report.md"
-AUDIT_SCRIPT_REF=fa12ae8513ef77c13c4cd8227a47e9121a257504
+AUDIT_SCRIPT_REF=v2.3.0
 
 curl -fsSL \
   "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" \

@@ -7,15 +7,29 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ROOT_SKILL = REPO_ROOT / "SKILL.md"
 HERMES_SKILL = REPO_ROOT / "skills" / "api-relay-audit" / "SKILL.md"
-RELEASE_DRAFT = REPO_ROOT / "docs" / "releases" / "v2.3.md"
 SKILL_DISTRIBUTION_DOC = REPO_ROOT / "docs" / "skill-distribution.md"
 HOMEPAGE = REPO_ROOT / "web" / "index.html"
-
-AUDIT_SCRIPT_REF = "fa12ae8513ef77c13c4cd8227a47e9121a257504"
 
 
 def _read(path):
     return path.read_text(encoding="utf-8")
+
+
+def _version_parts():
+    version = _read(REPO_ROOT / "VERSION").strip()
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version)
+    major, minor, patch = (int(part) for part in version.split("."))
+    return version, major, minor, patch
+
+
+VERSION, VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH = _version_parts()
+VERSION_TAG = f"v{VERSION}"
+DISPLAY_VERSION = (
+    f"v{VERSION_MAJOR}.{VERSION_MINOR}"
+    if VERSION_PATCH == 0
+    else VERSION_TAG
+)
+RELEASE_DRAFT = REPO_ROOT / "docs" / "releases" / f"{DISPLAY_VERSION}.md"
 
 
 def _frontmatter(path):
@@ -33,14 +47,14 @@ def test_skill_frontmatter_declares_required_distribution_fields():
     root = _frontmatter(ROOT_SKILL)
     assert _has_line(root, r"^name:\s+api-relay-audit$")
     assert _has_line(root, r"^description:\s+.+OpenClaw")
-    assert _has_line(root, r"^version:\s+2\.3\.0$")
+    assert _has_line(root, rf"^version:\s+{re.escape(VERSION)}$")
     for field in ["metadata:", "openclaw:", "requires:", "bins:", "anyBins:", "envVars:", "skillKey: api-relay-audit"]:
         assert field in root
 
     hermes = _frontmatter(HERMES_SKILL)
     assert _has_line(hermes, r"^name:\s+api-relay-audit$")
     assert _has_line(hermes, r"^description:\s+Use when")
-    assert _has_line(hermes, r"^version:\s+2\.3\.0$")
+    assert _has_line(hermes, rf"^version:\s+{re.escape(VERSION)}$")
     assert _has_line(hermes, r"^platforms:\s+\[linux,\s+macos,\s+windows\]$")
     for field in [
         "author: Toby Bridges",
@@ -55,13 +69,14 @@ def test_skill_frontmatter_declares_required_distribution_fields():
 
 
 def test_versioned_skill_artifacts_pin_audit_script_download():
+    assert RELEASE_DRAFT.exists()
     for path in [ROOT_SKILL, HERMES_SKILL, RELEASE_DRAFT]:
         text = _read(path)
-        assert AUDIT_SCRIPT_REF in text
+        assert VERSION_TAG in text
         assert "master/audit.py" not in text
 
     distribution_doc = _read(SKILL_DISTRIBUTION_DOC)
-    assert AUDIT_SCRIPT_REF in distribution_doc
+    assert VERSION_TAG in distribution_doc
     assert "Do not publish a\nversioned skill that downloads mutable `master/audit.py`" in distribution_doc
 
 

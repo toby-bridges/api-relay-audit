@@ -13,7 +13,7 @@ It is operational release documentation, not a user-facing safety claim.
 Both files must stay aligned with the current audit surface:
 
 - version `2.3.0`
-- audit script ref `fa12ae8513ef77c13c4cd8227a47e9121a257504`
+- audit script ref `v2.3.0`
 - 14 audit steps
 - local-first execution
 - API key not repeated in chat, logs, filenames, or public comments

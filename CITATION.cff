@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use API Relay Audit in research, security reports, or public relay evaluations, please cite the software using these metadata. The references below record academic work that informed the audit model; cite those papers directly when you rely on their methods or findings."
 type: software
 title: "API Relay Audit"
-version: "2.3"
+version: "2.3.0"
 authors:
   - family-names: "Bridges"
     given-names: "Toby"

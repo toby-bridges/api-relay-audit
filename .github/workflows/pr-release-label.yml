@@ -1,0 +1,48 @@
+name: PR Release Label
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  release-label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require exactly one release label
+        env:
+          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          allowed = {
+              "release:patch",
+              "release:minor",
+              "release:major",
+              "release:none",
+          }
+          labels = json.loads(os.environ["LABELS_JSON"])
+          release_labels = [label for label in labels if label.startswith("release:")]
+          invalid = sorted(set(release_labels) - allowed)
+
+          if invalid:
+              print(f"Invalid release label(s): {', '.join(invalid)}", file=sys.stderr)
+              print(f"Allowed labels: {', '.join(sorted(allowed))}", file=sys.stderr)
+              sys.exit(1)
+
+          if len(release_labels) != 1:
+              print(
+                  "Pull requests must have exactly one release label: "
+                  + ", ".join(sorted(allowed)),
+                  file=sys.stderr,
+              )
+              print(f"Current release labels: {release_labels or '(none)'}", file=sys.stderr)
+              sys.exit(1)
+
+          print(f"Release intent: {release_labels[0]}")
+          PY

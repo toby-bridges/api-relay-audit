@@ -40,8 +40,8 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
   detector, not a hosted preflight service, not a new API family, and not a
   change to LOW/MEDIUM/HIGH semantics. `inconclusive` remains
   `inconclusive`.
-- **Final test count**: 743/743 passing (733 baseline → 743 after error
-  diagnosis unit, client, and standalone-parity coverage).
+- **Final test count**: 769/769 passing (733 baseline → 764 after current
+  master follow-ups → 769 after release-engineering version sync coverage).
 
 ### v1.9 — Dual-distribution full generation (2026-06-01)
 - **Standalone product promise preserved**: root `audit.py` stays committed,

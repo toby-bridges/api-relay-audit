@@ -1,0 +1,102 @@
+name: Draft Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Full SemVer from VERSION, for example 2.3.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  draft-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate release version inputs
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          expected="$(tr -d '[:space:]' < VERSION)"
+          if [ "${INPUT_VERSION}" != "${expected}" ]; then
+            echo "workflow input version (${INPUT_VERSION}) must match VERSION (${expected})" >&2
+            exit 1
+          fi
+
+          tag="$(python3 scripts/sync-version.py --show tag)"
+          notes="$(python3 scripts/sync-version.py --show release-notes)"
+
+          if [ ! -f "${notes}" ]; then
+            echo "release notes file is missing: ${notes}" >&2
+            exit 1
+          fi
+
+          echo "version=${expected}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "notes=${notes}" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pytest
+
+      - name: Run release gates
+        run: |
+          python3 scripts/sync-version.py --check
+          python3 scripts/build-standalone.py --check
+          python3 scripts/collect-metrics.py --check
+          python3 -m pytest tests/ -q
+          python3 -S audit.py --help
+
+      - name: Confirm workflow did not mutate source files
+        run: git diff --exit-code
+
+      - name: Ensure tag and release do not already exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "tag already exists: ${TAG}" >&2
+            exit 1
+          fi
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "release already exists: ${TAG}" >&2
+            exit 1
+          fi
+
+      - name: Package standalone artifact
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp audit.py dist/audit.py
+          (cd dist && sha256sum audit.py > audit.py.sha256)
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          NOTES: ${{ steps.version.outputs.notes }}
+        run: |
+          gh release create "${TAG}" \
+            dist/audit.py \
+            dist/audit.py.sha256 \
+            --draft \
+            --title "${TAG}" \
+            --notes-file "${NOTES}" \
+            --target "${GITHUB_SHA}"
