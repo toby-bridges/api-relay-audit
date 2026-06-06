@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from api_relay_audit.channel_classifier import run_channel_classifier
 from api_relay_audit.client import APIClient
+from api_relay_audit.connectivity import run_connectivity_check
 from api_relay_audit.context import run_context_scan
 from api_relay_audit.error_leakage import run_error_leakage_test
 from api_relay_audit.identity_patterns import find_non_claude_identities
@@ -88,6 +89,9 @@ def parse_args():
     p.add_argument("--key", required=True, help="API Key")
     p.add_argument("--url", required=True, help="Base URL (e.g. https://xxx.com/v1)")
     p.add_argument("--model", default="claude-opus-4-6", help="Model name")
+    p.add_argument("--connectivity", action="store_true",
+                   help="Run a quick Anthropic/OpenAI Chat connectivity check "
+                        "and exit without running the full 14-step audit.")
     p.add_argument("--skip-infra", action="store_true", help="Skip infrastructure recon")
     p.add_argument("--skip-context", action="store_true", help="Skip context length test")
     p.add_argument("--fast-context", action="store_true",
@@ -1505,7 +1509,6 @@ def _run_step(name, reporter, step_fn, *args, default=None, crashes=None):
 def main():
     args = parse_args()
     client = APIClient(args.url, args.key, args.model, timeout=args.timeout)
-    report = Reporter()
 
     # v1.7.7: transparent forensic log (arXiv §7.3)
     _transparent_logger = None
@@ -1513,6 +1516,29 @@ def main():
         from api_relay_audit.transparent_log import TransparentLogger
         _transparent_logger = TransparentLogger(args.transparent_log)
         client.set_transparent_logger(_transparent_logger)
+
+    if args.connectivity:
+        print(f"\n{'=' * 60}")
+        print("  API Relay Connectivity Check")
+        print(f"  Target: {client.base_url}")
+        print(f"  Model:  {args.model}")
+        print(f"{'=' * 60}\n")
+
+        result = run_connectivity_check(client)
+        md = result["markdown"]
+        if args.output:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.output).write_text(md, encoding="utf-8")
+            print(f"  Connectivity report saved: {args.output}")
+        else:
+            print(md)
+
+        if _transparent_logger is not None:
+            _transparent_logger.close()
+            print(f"\n  Transparent log: {args.transparent_log}")
+        return 0 if result["success"] else 1
+
+    report = Reporter()
 
     print(f"\n{'=' * 60}")
     print(f"  API Relay Security Audit")
@@ -1838,7 +1864,8 @@ def main():
     print(f"\n{'=' * 60}")
     print("  Audit complete")
     print(f"{'=' * 60}\n")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

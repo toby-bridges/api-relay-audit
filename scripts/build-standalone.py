@@ -369,6 +369,10 @@ SECTIONS = (
         "api_relay_audit/reporter.py",
     ),
     Section(
+        "Connectivity check",
+        "api_relay_audit/connectivity.py",
+    ),
+    Section(
         "Context length scan",
         "api_relay_audit/context.py",
     ),

@@ -426,7 +426,97 @@ def test_public_help_flags_parity():
     CLI flags even when their implementations differ internally."""
     modular_flags = _help_option_set(REPO_ROOT / "scripts" / "audit.py")
     standalone_flags = _help_option_set(REPO_ROOT / "audit.py")
+    assert "--connectivity" in modular_flags
     assert modular_flags == standalone_flags
+
+
+def test_connectivity_mode_exits_before_full_audit(monkeypatch, tmp_path):
+    """--connectivity must not run warmup or any of the 14 audit steps."""
+    import scripts.audit as modular
+
+    standalone = _load_standalone_audit()
+
+    audit_functions = [
+        "run_warmup",
+        "test_infrastructure",
+        "test_models",
+        "test_token_injection",
+        "test_prompt_extraction",
+        "test_instruction_conflict",
+        "test_jailbreak",
+        "test_context_length",
+        "test_tool_substitution",
+        "test_error_leakage",
+        "test_stream_integrity",
+        "test_web3_injection",
+        "test_infra_fingerprint",
+        "test_latency_variance",
+        "test_channel_classifier",
+    ]
+
+    class FakeClient:
+        def __init__(self, base_url, api_key, model, timeout=120):
+            self.base_url = base_url.rstrip("/")
+            self.api_key = api_key
+            self.model = model
+            self.timeout = timeout
+
+        def set_transparent_logger(self, logger):
+            pass
+
+        def raw_request(self, method, path, headers, body, content_type, timeout):
+            if path == "/v1/messages":
+                return {
+                    "status": 200,
+                    "headers": {"content-type": "application/json"},
+                    "body": json.dumps({
+                        "content": [{"type": "text", "text": "ok"}],
+                        "usage": {"input_tokens": 8, "output_tokens": 1},
+                    }),
+                    "error": None,
+                }
+            return {
+                "status": 404,
+                "headers": {"content-type": "application/json"},
+                "body": json.dumps({"error": {"message": "not found"}}),
+                "error": None,
+            }
+
+    for module in (modular, standalone):
+        monkeypatch.setattr(module, "APIClient", FakeClient)
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("--connectivity should exit before full audit steps")
+
+        for name in audit_functions:
+            monkeypatch.setattr(module, name, forbidden)
+
+        output = tmp_path / f"{module.__name__.replace('.', '_')}-connectivity.md"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--connectivity",
+                "--key",
+                "sk-test",
+                "--url",
+                "https://relay.example.com/v1",
+                "--model",
+                "claude-test",
+                "--warmup",
+                "3",
+                "--skip-infra",
+                "--output",
+                str(output),
+            ],
+        )
+
+        assert module.main() == 0
+        markdown = output.read_text(encoding="utf-8")
+        assert "API Relay Connectivity Report" in markdown
+        assert "Security Audit Report" not in markdown
+        assert "LOW RISK" not in markdown
 
 
 def _extract_overall_rating(markdown):
