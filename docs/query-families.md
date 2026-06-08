@@ -39,6 +39,10 @@ one headline, directory name, or skill description.
   that a provider or platform substituted the upstream model. Stronger claims
   require raw response JSON, request IDs, provider/model metadata, stream
   signatures, transparent logs, and reproducible runs.
+- Calibration note: ZenMux Arena's 2026-06-01 "Who Are You?" pooled run
+  measured cross-vendor self-identification confusion in first-party model
+  calls, which reinforces treating self-ID mismatches as consistency signals
+  rather than attribution proof.
 - Public surfaces: evidence model, FAQ, issue template provider/profile fields,
   operator response path.
 

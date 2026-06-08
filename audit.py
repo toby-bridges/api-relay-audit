@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 57cc4ddc3ccb3ed54e76e82dfc447c6e21322c2c03ab804625924e7ec655f245
-# standalone_body_sha256: 3adf747824d6eeb9df837a1e6ae8fd6fe5aa861c57b6a422b9367e52ee0c630f
+# source_sha256: 7ba5f64496601cd86af13488f66aafa2fb6396adf4ea62f72f198032d0f2d1c4
+# standalone_body_sha256: b71fa88ef496bf1e52b118af00bf0b4d6a33b1545df5a4239ce2df36ba18b610
 # END GENERATED STANDALONE HEADER
 
 """
@@ -2597,8 +2597,10 @@ import re
 
 
 # Keyword literals that, if present in a response to "Who are you?
-# Who made you?", indicate that the relay is routing to a non-Claude
-# substitute model. See module docstring for matching strategy.
+# Who made you?", indicate that the response is self-identifying as
+# something other than Claude/Anthropic. See module docstring for the
+# evidence boundary: this is an identity-consistency signal, not
+# standalone attribution proof.
 #
 # Groups (not enforced by code, just for readability):
 #   1. Legacy (v2.1)        — Amazon / AWS brand leakage from earlier audits
@@ -2607,7 +2609,9 @@ import re
 #   3. Extended ASCII       — our additions (Zhipu / Tongyi brand aliases
 #                              for hvoy.ai's glm / qwen + Chinese-market
 #                              substitutes hvoy.ai did not cover)
-#   4. Chinese brand names  — CJK literals for catching Chinese-language
+#   4. ZenMux calibration   — current frontier-vendor aliases observed in
+#                              ZenMux Arena's 2026-06-01 "Who Are You?" run
+#   5. Chinese brand names  — CJK literals for catching Chinese-language
 #                              responses that use the Chinese brand instead
 #                              of the ASCII model name
 NON_CLAUDE_IDENTITY_KEYWORDS = (
@@ -2643,13 +2647,48 @@ NON_CLAUDE_IDENTITY_KEYWORDS = (
     "doubao",    # ByteDance Doubao
     "moonshot",  # Moonshot AI
     "kimi",      # Moonshot's Kimi product
-    # 6. Chinese brand names (catch Chinese-language responses)
+    # 6. Current frontier-vendor aliases from ZenMux Arena identity data
+    #    (2026-06-01 mix). These broaden Step 5 from a China-substitute
+    #    keyword set into a natural-language identity consistency signal.
+    "openai",
+    "chatgpt",
+    "chat gpt",
+    "google",
+    "gemini",
+    "x-ai",
+    "x.ai",
+    "xai",
+    "baidu",
+    "xiaomi",
+    "tencent",
+    "hunyuan",
+    "stepfun",
+    "step fun",
+    "kwai",
+    "kuaishou",
+    "kat-coder",
+    "kat coder",
+    "katcoder",
+    "inclusionai",
+    "inclusion ai",
+    "mistral",
+    "microsoft",
+    # 7. Chinese brand names (catch Chinese-language responses)
     "通义",
     "千问",
     "智谱",
     "豆包",
     "文心",
     "月之暗面",
+    "百度",
+    "小米",
+    "腾讯",
+    "混元",
+    "阶跃",
+    "阶跃星辰",
+    "快手",
+    "可灵",
+    "百灵",
 )
 
 
@@ -2668,6 +2707,31 @@ _STRICT_ASCII_KEYWORDS = frozenset({
     "gpt",    # "unlike GPT" / "not GPT" prose
     "ernie",  # common given name (Sesame Street)
     "kimi",   # common given name
+    # ZenMux-calibrated current vendor names that are high-signal only
+    # when used as an identity claim, not as ordinary product references.
+    "openai",
+    "chatgpt",
+    "chat gpt",
+    "google",
+    "gemini",
+    "x-ai",
+    "x.ai",
+    "xai",
+    "baidu",
+    "xiaomi",
+    "tencent",
+    "hunyuan",
+    "stepfun",
+    "step fun",
+    "kwai",
+    "kuaishou",
+    "kat-coder",
+    "kat coder",
+    "katcoder",
+    "inclusionai",
+    "inclusion ai",
+    "mistral",
+    "microsoft",
 })
 
 # v1.7.7: context-strict keywords require BOTH an identity anchor AND
@@ -2814,6 +2878,24 @@ _CJK_CONTEXT_STRICT_PATTERNS = tuple(
     if kw in _CONTEXT_STRICT_KEYWORDS
 )
 
+# v1.7.8: CJK-anchor supplementary patterns for lax ASCII keywords.
+# The normal lax regex starts with \b, but Python treats CJK letters as
+# word characters, so "我是DeepSeek" has no word boundary before D and
+# used to be missed. Keep this path anchor-gated so ordinary prose such
+# as "讨论DeepSeek发布节奏" does not become a match solely because a CJK
+# character precedes an ASCII model name.
+_CJK_LAX_ASCII_PATTERNS = tuple(
+    (kw, re.compile(
+        r"(?:" + _CJK_ANCHOR_ALTERNATION + r")"
+        r"\s*"
+        + re.escape(kw) + r"(?![a-zA-Z])",
+        re.IGNORECASE,
+    ))
+    for kw in NON_CLAUDE_IDENTITY_KEYWORDS
+    if kw.isascii() and kw not in _STRICT_ASCII_KEYWORDS
+    and kw not in _CONTEXT_STRICT_KEYWORDS
+)
+
 
 def find_non_claude_identities(text: str) -> list:
     """Return a sorted list of non-Claude identity keywords found in text.
@@ -2870,6 +2952,11 @@ def find_non_claude_identities(text: str) -> list:
             matched.append(keyword)
     # v1.7.7: CJK-anchor + identity suffix for context-strict keywords.
     for keyword, pattern in _CJK_CONTEXT_STRICT_PATTERNS:
+        if keyword not in matched and pattern.search(text):
+            matched.append(keyword)
+    # v1.7.8: CJK-anchor + no-whitespace path for distinctive lax
+    # ASCII model/vendor names such as "我是DeepSeek".
+    for keyword, pattern in _CJK_LAX_ASCII_PATTERNS:
         if keyword not in matched and pattern.search(text):
             matched.append(keyword)
     for keyword, pattern in _LAX_ASCII_PATTERNS:
