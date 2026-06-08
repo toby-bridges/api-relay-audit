@@ -55,6 +55,32 @@ class TestNonClaudeIdentityKeywords:
         ):
             assert kw in NON_CLAUDE_IDENTITY_KEYWORDS
 
+    def test_zenmux_calibrated_vendor_aliases_present(self):
+        """ZenMux Arena's 2026-06-01 identity-confusion data showed
+        frontier models self-identifying as a wider set of non-Claude
+        vendors. These aliases keep Step 5 calibrated to natural-language
+        identity inconsistency, not only older China-substitute keywords."""
+        for kw in (
+            "openai",
+            "chatgpt",
+            "google",
+            "gemini",
+            "x-ai",
+            "x.ai",
+            "xai",
+            "baidu",
+            "xiaomi",
+            "tencent",
+            "hunyuan",
+            "stepfun",
+            "kwai",
+            "kuaishou",
+            "inclusionai",
+            "mistral",
+            "microsoft",
+        ):
+            assert kw in NON_CLAUDE_IDENTITY_KEYWORDS
+
     def test_chinese_brand_names_present(self):
         """Chinese brand names (for catching Chinese-language responses)
         must be present — this is our v1.6 extension beyond hvoy.ai."""
@@ -371,6 +397,43 @@ class TestFindNonClaudeIdentities:
         text = "Gravity is a fundamental force of nature."
         assert find_non_claude_identities(text) == []
 
+    def test_zenmux_current_vendor_aliases_with_identity_anchors(self):
+        """Current frontier-vendor aliases should match when the answer
+        self-identifies as that vendor or product."""
+        cases = [
+            ("I am Google Gemini, an AI model.", {"google", "gemini"}),
+            ("I am ChatGPT, built by OpenAI.", {"chatgpt", "openai"}),
+            ("I'm Mistral Large, created by Mistral AI.", {"mistral"}),
+            ("I am Microsoft Copilot.", {"microsoft"}),
+            ("I am Tencent Hunyuan, an AI assistant.", {"tencent", "hunyuan"}),
+            ("I'm KAT-Coder, created by Kuaishou.", {"kat-coder", "kuaishou"}),
+            ("I am inclusionAI, a model from Ant Group.", {"inclusionai"}),
+            ("I am ERNIE, developed by Baidu.", {"baidu", "ernie"}),
+            ("I am Grok, made by xAI.", {"xai", "grok"}),
+        ]
+        for text, expected in cases:
+            matches = set(find_non_claude_identities(text))
+            assert expected <= matches, f"Expected {expected} in {text!r}, got {matches}"
+
+    def test_zenmux_current_vendor_aliases_need_identity_context(self):
+        """Common product/vendor names must not fire from a bare comparison
+        mention without a self-identification anchor."""
+        text = (
+            "I can compare Claude with OpenAI, Google, Microsoft, "
+            "Gemini, Mistral, Tencent, and Baidu products."
+        )
+        matches = find_non_claude_identities(text)
+        for kw in (
+            "openai",
+            "google",
+            "microsoft",
+            "gemini",
+            "mistral",
+            "tencent",
+            "baidu",
+        ):
+            assert kw not in matches
+
 
 # ---------------------------------------------------------------------------
 # v1.7.6: Warp / Windsurf reverse-proxy dev-tool channels (cctest.ai FAQ)
@@ -474,6 +537,22 @@ class TestCJKNoWhitespace:
     def test_chinese_anchor_no_space_grok(self):
         """我是Grok must match grok."""
         assert "grok" in find_non_claude_identities("我是Grok，由xAI开发。")
+
+    def test_chinese_anchor_no_space_lax_ascii_keywords(self):
+        """ZenMux regression: distinctive lax ASCII names also need the
+        CJK no-whitespace path. `我是DeepSeek` used to be missed because
+        Python's Unicode word boundary does not split between 是 and D."""
+        for text, expected in (
+            ("我是DeepSeek，由深度求索公司创造的智能助手。", "deepseek"),
+            ("我是Qwen3.7，由阿里云开发。", "qwen"),
+            ("我叫MiniMax，一个AI助手。", "minimax"),
+        ):
+            assert expected in find_non_claude_identities(text)
+
+    def test_cjk_prose_before_lax_ascii_without_anchor_not_matched(self):
+        """The CJK no-whitespace repair is anchor-gated; ordinary CJK prose
+        directly preceding a distinctive ASCII model name should not match."""
+        assert find_non_claude_identities("讨论DeepSeek发布节奏。") == []
 
     def test_chinese_no_space_does_not_affect_english(self):
         """English 'I amGPT' (no space, typo) should NOT match because
