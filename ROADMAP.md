@@ -6,9 +6,11 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-06-07 (error diagnosis report layer added; roadmap
-hygiene pass: v1.9 follow-up test gaps, refusal/transport decouplings, and
-the protobuf-channel spike are no longer active near-term candidates)
+**Last updated**: 2026-06-10 (roadmap-only update: add release artifact
+provenance hardening after a Windows working-tree hash check produced a false
+drift alarm, and add a privacy-first opt-in usage telemetry candidate for
+future active-install / step-failure visibility; previous 2026-06-07 update
+covered error diagnosis and roadmap hygiene)
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -361,6 +363,58 @@ for why the tests exist.
 
 **Cost of deferring further**: none; there is no remaining action for this
 item unless a future CLI refactor changes argparse wiring again.
+
+### 2.41 v1.9 — release artifact provenance hardening
+**Status**: discovered 2026-06-10 during release-version audit. An initial
+manual SHA-256 check compared the GitHub Release `audit.py` asset against the
+Windows working-tree copy of `audit.py` and appeared to show drift
+(`c9c1f66c...` vs `6067eb57...`). A blob-level recheck showed the release is
+actually consistent: `v2.3.0:audit.py`, the generated standalone artifact, the
+release `audit.py` asset, and `audit.py.sha256` all resolve to
+`c9c1f66cfb6e880f044ba18e7a9e7952f45e688470e299e455c64836b68ab482`.
+The false alarm came from hashing a CRLF-converted Windows working-tree file
+instead of the Git tag blob.
+
+**Why this matters**:
+- Maintainers can get a false supply-chain alarm if they hash the working-tree
+  file on a platform with line-ending conversion instead of hashing
+  `git show vX.Y.Z:audit.py`.
+- Users and security reviewers still need a single documented command that
+  proves the release asset, checksum file, tag blob, and generated standalone
+  output all match.
+- Future incident response should be able to answer "which `audit.py` did you
+  run?" with a release tag plus SHA, not with local filesystem bytes that may
+  differ by checkout settings.
+- The release process should prove provenance from the tagged source tree, not
+  merely integrity of a manually uploaded asset.
+
+**Target contract**:
+- One canonical standalone artifact per version. Prefer: root `audit.py` in
+  the tag is byte-identical to the release asset.
+- If the release asset is intentionally generated and differs from a source
+  file, document the generator command and source path, and publish a
+  provenance note saying "asset hash X was generated from commit Y by command
+  Z".
+- README quick-start, release notes, and `audit.py.sha256` must all point at
+  the same artifact identity.
+
+**Implementation sketch**:
+1. Add a release verification script that compares:
+   - `git show vX.Y.Z:audit.py` hash
+   - freshly generated standalone hash from `scripts/build-standalone.py`
+   - release asset `audit.py` hash after download
+2. Fail CI/release if the hashes drift without an explicit
+   `docs/releases/vX.Y.md` provenance exception.
+3. Move release uploading to GitHub Actions so assets are generated from the
+   tag in a clean checkout, not manually uploaded from a working tree.
+4. Add a short "Which file should I run?" section to release notes and README:
+   use either the release asset plus `audit.py.sha256`, or the pinned raw tag
+   URL only if it is byte-identical.
+
+**Acceptance test**: a clean temp clone can run one command (or one CI job)
+that downloads the latest release asset, verifies `audit.py.sha256`, compares
+it to the tag/build output, and prints the exact artifact URL users should
+run.
 
 ### 2.45 v1.9 — controlled-blast decouplings (handoff-prep triage, 2026-04-20)
 
@@ -864,6 +918,70 @@ vs DeepSeek) + optional embedding-distance scoring.
 Step 12 (infra) + future v2.0 (capability delta) together cover the same
 detection question — active prompt-distribution fingerprinting is the
 third orthogonal signal but has the worst cost/benefit of the three.
+
+### 11b. Privacy-first opt-in usage telemetry / active-install counter
+**Status**: product-discovery candidate. Added 2026-06-10 after comparing
+the project against `garrytan/gstack`, which uses opt-in telemetry to learn
+skill usage and failures. This project has a stricter privacy posture because
+users provide API keys, relay URLs, model names, and potentially sensitive
+audit findings.
+
+**Goal**: know approximate real usage without weakening the local-first trust
+claim:
+- opt-in active installs by week/month
+- version distribution
+- OS / Python major-minor
+- profile usage (`general`, `web3`, `full`)
+- per-step success / error / inconclusive counts
+- per-step duration buckets
+- whether users run standalone `audit.py` vs modular `scripts/audit.py`
+
+**Default**: off. No network request to API Relay Audit infrastructure unless
+the user explicitly consents. A first-run prompt may offer:
+- `off`: send nothing, default
+- `anonymous`: aggregate events with no stable install ID
+- `community`: random locally generated install ID for retention counting
+
+**Allowed fields**:
+- `event_type` (`audit_run`, `step_result`, `version_check`)
+- `project_version`, `distribution` (`standalone` / `modular`)
+- `os`, `python_version`
+- `profile`
+- `step_id`, `step_status`, `duration_ms_bucket`
+- random `installation_id` only in `community` mode
+- coarse timestamp (day or hour; no high-resolution trace timestamp needed)
+
+**Never collect**:
+- API keys or auth headers
+- relay URL, target domain, hostname, IP, or model ID
+- prompts, responses, report body, transparent-log data, raw errors, stack
+  traces, file paths, repo names, branch names, usernames, or environment
+  variable values
+- exact latency samples that could fingerprint a private relay
+
+**Implementation sketch**:
+1. Add a tiny local JSONL buffer under a clearly named state directory, e.g.
+   `~/.api-relay-audit/analytics/events.jsonl`.
+2. Add `--telemetry {off,anonymous,community}` plus an environment override
+   (`API_RELAY_AUDIT_TELEMETRY=off|anonymous|community`). Default `off`.
+3. Redact at the producer boundary, not only at upload time. Event builders
+   should not accept raw relay URLs, prompts, responses, or exception strings.
+4. Upload only through a validated HTTPS endpoint or edge function that
+   allowlists event types and field lengths.
+5. Add tests that seed fake API keys, relay URLs, prompts, model IDs, file
+   paths, and stack traces, then assert none can appear in local JSONL or
+   upload payloads.
+6. Publish a `docs/privacy-telemetry.md` before enabling remote upload.
+
+**Product use**: this data directly informs ROADMAP §2.5 item #1. If opt-in
+data shows standalone `audit.py` is rarely used, deprecating or regenerating
+the standalone artifact becomes easier to justify. If standalone remains
+popular, release artifact provenance stays a hard invariant.
+
+**Decision boundary**: do not implement remote telemetry until the release
+artifact provenance item (§2.41) is solved. Telemetry must not be the
+first hosted component users see; otherwise it conflicts with the project's
+current "no hosted key upload, local audit" trust story.
 
 ### 11. AC-2 active webhook canary
 **Status**: paper describes this as the highest-confidence AC-2 signal
