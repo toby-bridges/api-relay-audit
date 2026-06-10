@@ -111,3 +111,12 @@ jobs:
             --title "${TAG}" \
             --notes-file "${NOTES}" \
             --target "${GITHUB_SHA}"
+
+      - name: Verify published release artifact provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          python3 scripts/verify-release-artifact.py --tag "${TAG}"
