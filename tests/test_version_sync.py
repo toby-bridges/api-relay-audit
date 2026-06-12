@@ -77,3 +77,5 @@ def test_generated_standalone_uses_display_version():
     modular = (REPO_ROOT / "scripts" / "audit.py").read_text(encoding="utf-8")
     assert f"API Relay Security Audit Tool {display}" in modular
     assert f"API Relay Security Audit Tool {display} --- Standalone Edition" in standalone
+    assert f'TOOL_VERSION_FALLBACK = "{version}"' in modular
+    assert f'TOOL_VERSION_FALLBACK = "{version}"' in standalone

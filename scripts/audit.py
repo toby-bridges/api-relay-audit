@@ -69,6 +69,8 @@ from api_relay_audit.stream_integrity import analyze_stream
 from api_relay_audit.tool_substitution import run_tool_substitution_test
 from api_relay_audit.web3.injection_probes import run_web3_injection_probes
 
+TOOL_VERSION_FALLBACK = "2.3.0"
+
 
 def _format_identity_inconsistency(non_claude_matches):
     """Render Step 5's non-Claude self-ID finding without over-attribution."""
@@ -94,6 +96,42 @@ def _report_error(report, error, status=None):
     """
     report.p(f"Error: {error}")
     report.p(format_diagnosis(_diagnosis_for_error(error, status=status)))
+
+
+def _tool_version():
+    """Return the packaged tool version for report metadata."""
+    script_path = Path(__file__).resolve()
+    for candidate in (
+        script_path.parent / "VERSION",
+        script_path.parent.parent / "VERSION",
+    ):
+        try:
+            value = candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if re.fullmatch(r"\d+\.\d+\.\d+", value):
+            return value
+    return TOOL_VERSION_FALLBACK
+
+
+def _tool_commit_from_checkout():
+    """Return a short git commit only when this script is in this repo checkout."""
+    script_path = Path(__file__).resolve()
+    repo_root = script_path.parent.parent if script_path.parent.name == "scripts" else script_path.parent
+    if not (repo_root / ".git").exists():
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--short=12", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+    except Exception:
+        return ""
+    commit = result.stdout.strip()
+    return commit if re.fullmatch(r"[0-9a-f]{7,12}", commit) else ""
 
 
 # ============================================================
@@ -1911,7 +1949,13 @@ def main():
                  "anomaly, or Web3 injection detected.")
 
     # Output
-    md = report.render(target_url=client.base_url, model=args.model)
+    md = report.render(
+        target_url=client.base_url,
+        model=args.model,
+        tool_version=f"v{_tool_version()}",
+        profile=args.profile,
+        tool_commit=_tool_commit_from_checkout(),
+    )
 
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)

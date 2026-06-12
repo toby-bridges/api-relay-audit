@@ -103,10 +103,16 @@ def replace_regex(
 
 def sync_audit_script(version: Version, path: Path) -> str:
     text = read_text(path)
-    return replace_regex(
+    text = replace_regex(
         text,
         rf"API Relay Security Audit Tool {DISPLAY_VERSION_RE}",
         f"API Relay Security Audit Tool {version.display}",
+        path,
+    )
+    return replace_regex(
+        text,
+        rf'^TOOL_VERSION_FALLBACK = "{FULL_VERSION_RE}"$',
+        f'TOOL_VERSION_FALLBACK = "{version.full}"',
         path,
     )
 

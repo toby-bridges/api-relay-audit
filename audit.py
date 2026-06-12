@@ -1624,7 +1624,7 @@ class APIClient:
 
 """Markdown report generator for audit results."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class Reporter:
@@ -1701,7 +1701,8 @@ class Reporter:
         self.summary.append((level, msg))
         self.sections.append(f"{icon} **{msg}**\n")
 
-    def render(self, target_url="", model=""):
+    def render(self, target_url="", model="", tool_version="", profile="",
+               tool_commit=""):
         """Render the complete Markdown report.
 
         Produces a header block (title, metadata, risk summary) followed
@@ -1712,6 +1713,11 @@ class Reporter:
                 metadata when provided.
             model: The model identifier used for the audit. Shown in the
                 report metadata when provided.
+            tool_version: API Relay Audit version used for the run.
+            profile: Audit profile used for the run (``general``, ``web3``,
+                or ``full``).
+            tool_commit: Optional git commit for checkout-based runs. Omitted
+                when the standalone script is run outside a repository.
 
         Returns:
             A single Markdown string containing the full report.
@@ -1724,12 +1730,18 @@ class Reporter:
         """
         header = (
             f"# API Relay Security Audit Report\n\n"
-            f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+            f"**Generated**: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
         )
+        if tool_version:
+            header += f"**Tool Version**: `{tool_version}`\n"
+        if profile:
+            header += f"**Profile**: `{profile}`\n"
         if target_url:
             header += f"**Target**: `{target_url}`\n"
         if model:
             header += f"**Model**: `{model}`\n"
+        if tool_commit:
+            header += f"**Tool Commit**: `{tool_commit}`\n"
 
         header += "\n## Risk Summary\n\n"
         for level, msg in self.summary:
@@ -4842,6 +4854,8 @@ from urllib.request import Request, urlopen
 
 
 
+TOOL_VERSION_FALLBACK = "2.3.0"
+
 
 def _format_identity_inconsistency(non_claude_matches):
     """Render Step 5's non-Claude self-ID finding without over-attribution."""
@@ -4867,6 +4881,42 @@ def _report_error(report, error, status=None):
     """
     report.p(f"Error: {error}")
     report.p(format_diagnosis(_diagnosis_for_error(error, status=status)))
+
+
+def _tool_version():
+    """Return the packaged tool version for report metadata."""
+    script_path = Path(__file__).resolve()
+    for candidate in (
+        script_path.parent / "VERSION",
+        script_path.parent.parent / "VERSION",
+    ):
+        try:
+            value = candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if re.fullmatch(r"\d+\.\d+\.\d+", value):
+            return value
+    return TOOL_VERSION_FALLBACK
+
+
+def _tool_commit_from_checkout():
+    """Return a short git commit only when this script is in this repo checkout."""
+    script_path = Path(__file__).resolve()
+    repo_root = script_path.parent.parent if script_path.parent.name == "scripts" else script_path.parent
+    if not (repo_root / ".git").exists():
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--short=12", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+    except Exception:
+        return ""
+    commit = result.stdout.strip()
+    return commit if re.fullmatch(r"[0-9a-f]{7,12}", commit) else ""
 
 
 # ============================================================
@@ -6683,7 +6733,13 @@ def main():
                  "anomaly, or Web3 injection detected.")
 
     # Output
-    md = report.render(target_url=client.base_url, model=args.model)
+    md = report.render(
+        target_url=client.base_url,
+        model=args.model,
+        tool_version=f"v{_tool_version()}",
+        profile=args.profile,
+        tool_commit=_tool_commit_from_checkout(),
+    )
 
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
