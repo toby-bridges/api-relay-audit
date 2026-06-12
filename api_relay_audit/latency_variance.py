@@ -28,6 +28,7 @@ v1.8's "Infrastructure Audit Layer".
 Given ``count`` successful samples:
 
   count < 3                 -> "inconclusive"
+  mean <= 0                 -> "inconclusive"
   bimodality detected       -> "bimodal"
   CV < 0.25                 -> "stable"
   0.25 <= CV < 0.5          -> "variable"
@@ -163,6 +164,8 @@ def classify_variance(stats, is_bimodal):
     ``bimodal`` / ``inconclusive``.
     """
     if not stats or stats.get("count", 0) < 3:
+        return "inconclusive"
+    if stats.get("mean", 0.0) <= 0:
         return "inconclusive"
     if is_bimodal:
         return "bimodal"

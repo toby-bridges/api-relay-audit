@@ -1386,6 +1386,13 @@ def test_latency_variance(client, report, probe_count=10):
             f"Latency **stable** (CV={stats['cv']:.2f}). "
             "Consistent with a single honest upstream.",
         )
+    elif stats.get("mean", 0.0) <= 0:
+        report.flag(
+            "yellow",
+            "Latency variance **inconclusive**: successful probes measured "
+            "zero or non-positive latency. This indicates mocked or broken "
+            "timing infrastructure; re-run in a real network environment.",
+        )
     else:  # inconclusive
         report.flag(
             "yellow",

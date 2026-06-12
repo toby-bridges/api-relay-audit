@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 6fb11df52ddf05eeab8989ad23f0039c9038f369a0db942427cad02e883e980b
-# standalone_body_sha256: badbe213d9e8f5ee25a551fec8cb7a6e82b6253b38c5bcb2e9b62ca58ce57aae
+# source_sha256: 9efb15db9395ea199650974647bb458bcd05a81c2efbca3769322c8b87d7a351
+# standalone_body_sha256: 55332e36882d1a25938b9b30243e8a0da9340a89b571784bf3eec7f3fd8eca5f
 # END GENERATED STANDALONE HEADER
 
 """
@@ -4274,6 +4274,7 @@ v1.8's "Infrastructure Audit Layer".
 Given ``count`` successful samples:
 
   count < 3                 -> "inconclusive"
+  mean <= 0                 -> "inconclusive"
   bimodality detected       -> "bimodal"
   CV < 0.25                 -> "stable"
   0.25 <= CV < 0.5          -> "variable"
@@ -4409,6 +4410,8 @@ def classify_variance(stats, is_bimodal):
     ``bimodal`` / ``inconclusive``.
     """
     if not stats or stats.get("count", 0) < 3:
+        return "inconclusive"
+    if stats.get("mean", 0.0) <= 0:
         return "inconclusive"
     if is_bimodal:
         return "bimodal"
@@ -6190,6 +6193,13 @@ def test_latency_variance(client, report, probe_count=10):
             "green",
             f"Latency **stable** (CV={stats['cv']:.2f}). "
             "Consistent with a single honest upstream.",
+        )
+    elif stats.get("mean", 0.0) <= 0:
+        report.flag(
+            "yellow",
+            "Latency variance **inconclusive**: successful probes measured "
+            "zero or non-positive latency. This indicates mocked or broken "
+            "timing infrastructure; re-run in a real network environment.",
         )
     else:  # inconclusive
         report.flag(
