@@ -1,7 +1,7 @@
 name: Local Run Feedback / 本地运行反馈
 description: Share install or runtime feedback without submitting relay evidence / 提交安装或运行反馈，不提交中转站证据
 title: "[Local Run] "
-labels: ["documentation", "help wanted"]
+labels: ["documentation"]
 body:
   - type: markdown
     attributes:
