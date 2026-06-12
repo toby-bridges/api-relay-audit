@@ -387,7 +387,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text_lower.index(host)
                 raw = text[max(0, idx - 30):idx + len(host) + 30]
                 hits.append(_mk_hit("high", "upstream_host", raw, where, api_key))
-                break
 
         # HIGH: environment variable name
         for env in ENV_VAR_MARKERS:
@@ -395,7 +394,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text.index(env)
                 raw = text[max(0, idx - 20):idx + len(env) + 40]
                 hits.append(_mk_hit("high", "env_var", raw, where, api_key))
-                break
 
         # MEDIUM: filesystem path
         for prefix in PATH_PREFIXES:
@@ -403,7 +401,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text.index(prefix)
                 raw = text[max(0, idx):idx + 80]
                 hits.append(_mk_hit("medium", "fs_path", raw, where, api_key))
-                break
 
         # MEDIUM: stack trace marker
         for marker in STACK_TRACE_MARKERS:
@@ -411,7 +408,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text.index(marker)
                 raw = text[max(0, idx):idx + 120]
                 hits.append(_mk_hit("medium", "stack_trace", raw, where, api_key))
-                break
 
         # MEDIUM: LiteLLM internal field leak (v1.5.1, sourced from
         # LiteLLM issues #5762 / #13705 / #20419)
@@ -420,7 +416,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text.index(marker)
                 raw = text[max(0, idx - 20):idx + len(marker) + 60]
                 hits.append(_mk_hit("medium", "litellm_internal_leak", raw, where, api_key))
-                break
 
         # MEDIUM: provider-side guardrail PII echo (v1.5.1, sourced from
         # LiteLLM issue #12152)
@@ -429,7 +424,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text.index(marker)
                 raw = text[max(0, idx):idx + 120]
                 hits.append(_mk_hit("medium", "pii_echo", raw, where, api_key))
-                break
 
     return hits
 

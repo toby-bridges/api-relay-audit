@@ -114,6 +114,27 @@ class TestScanForLeaks:
         assert "high" in severities
         assert "medium" in severities
 
+    def test_multiple_markers_per_category_are_all_reported(self):
+        """A single error response can leak several signals in the same
+        category; each distinct marker should be surfaced."""
+        body = (
+            "proxy failed api.openai.com then api.anthropic.com; "
+            "env OPENAI_API_KEY and ANTHROPIC_API_KEY; "
+            'paths /home/relay/app.py and /var/www/relay/app.py; '
+            'Traceback (most recent call last): File "server.py"; '
+            '"user_api_key" appeared in previous_models; '
+            '"piiEntities" under sensitiveInformationPolicy'
+        )
+
+        hits = scan_for_leaks(body, {}, API_KEY, "https://relay.example.com")
+
+        assert len([h for h in hits if h["kind"] == "upstream_host"]) == 2
+        assert len([h for h in hits if h["kind"] == "env_var"]) == 2
+        assert len([h for h in hits if h["kind"] == "fs_path"]) == 2
+        assert len([h for h in hits if h["kind"] == "stack_trace"]) == 2
+        assert len([h for h in hits if h["kind"] == "litellm_internal_leak"]) == 2
+        assert len([h for h in hits if h["kind"] == "pii_echo"]) == 2
+
     def test_snippet_always_redacted_for_path_hit(self):
         """Even a non-credential hit must scrub the api_key if it happens
         to fall inside the 80-char context window."""
