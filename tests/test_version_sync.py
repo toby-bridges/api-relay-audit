@@ -4,14 +4,26 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SYNC_VERSION = REPO_ROOT / "scripts" / "sync-version.py"
+AUDIT_SCRIPT = REPO_ROOT / "scripts" / "audit.py"
+STANDALONE_AUDIT = REPO_ROOT / "audit.py"
 
 
 def _load_sync_version_module():
     spec = importlib.util.spec_from_file_location("sync_version", SYNC_VERSION)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_module(path: Path, name: str):
+    sys.modules.pop(name, None)
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -73,9 +85,48 @@ def test_generated_standalone_uses_display_version():
     major, minor, patch = (int(part) for part in version.split("."))
     display = f"v{major}.{minor}" if patch == 0 else f"v{version}"
 
-    standalone = (REPO_ROOT / "audit.py").read_text(encoding="utf-8")
-    modular = (REPO_ROOT / "scripts" / "audit.py").read_text(encoding="utf-8")
+    standalone = STANDALONE_AUDIT.read_text(encoding="utf-8")
+    modular = AUDIT_SCRIPT.read_text(encoding="utf-8")
     assert f"API Relay Security Audit Tool {display}" in modular
     assert f"API Relay Security Audit Tool {display} --- Standalone Edition" in standalone
     assert f'TOOL_VERSION_FALLBACK = "{version}"' in modular
     assert f'TOOL_VERSION_FALLBACK = "{version}"' in standalone
+
+
+def test_standalone_metadata_ignores_arbitrary_neighbor_version(tmp_path):
+    module = _load_module(STANDALONE_AUDIT, "standalone_audit_metadata_boundary")
+    downstream = tmp_path / "downstream"
+    downstream.mkdir()
+    (downstream / "VERSION").write_text("9.9.9\n", encoding="utf-8")
+
+    module.__file__ = str(downstream / "audit.py")
+
+    assert module._tool_version() == module.TOOL_VERSION_FALLBACK
+
+
+def test_standalone_metadata_does_not_probe_downstream_git_repo(tmp_path):
+    module = _load_module(STANDALONE_AUDIT, "standalone_audit_commit_boundary")
+    downstream = tmp_path / "downstream"
+    downstream.mkdir()
+    (downstream / ".git").mkdir()
+    (downstream / "VERSION").write_text("9.9.9\n", encoding="utf-8")
+
+    module.__file__ = str(downstream / "audit.py")
+
+    with patch.object(module.subprocess, "run") as run:
+        assert module._tool_commit_from_checkout() == ""
+    run.assert_not_called()
+
+
+def test_modular_metadata_reads_version_only_for_project_checkout_shape(tmp_path):
+    module = _load_module(AUDIT_SCRIPT, "modular_audit_metadata_boundary")
+    checkout = tmp_path / "api-relay-audit"
+    (checkout / "scripts").mkdir(parents=True)
+    (checkout / "api_relay_audit").mkdir()
+    (checkout / "VERSION").write_text("3.4.5\n", encoding="utf-8")
+    (checkout / "scripts" / "build-standalone.py").write_text("", encoding="utf-8")
+    (checkout / "api_relay_audit" / "reporter.py").write_text("", encoding="utf-8")
+
+    module.__file__ = str(checkout / "scripts" / "audit.py")
+
+    assert module._tool_version() == "3.4.5"

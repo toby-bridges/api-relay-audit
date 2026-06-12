@@ -72,6 +72,24 @@ from api_relay_audit.web3.injection_probes import run_web3_injection_probes
 TOOL_VERSION_FALLBACK = "2.3.0"
 
 
+def _api_relay_audit_checkout_root(script_path):
+    """Return this project's checkout root, or ``None`` for copied scripts."""
+    script_path = script_path.resolve()
+    candidates = []
+    if script_path.parent.name == "scripts":
+        candidates.append(script_path.parent.parent)
+    candidates.append(script_path.parent)
+
+    for root in candidates:
+        if all((
+            (root / "VERSION").is_file(),
+            (root / "scripts" / "build-standalone.py").is_file(),
+            (root / "api_relay_audit" / "reporter.py").is_file(),
+        )):
+            return root
+    return None
+
+
 def _format_identity_inconsistency(non_claude_matches):
     """Render Step 5's non-Claude self-ID finding without over-attribution."""
     matches = ", ".join(non_claude_matches)
@@ -100,15 +118,13 @@ def _report_error(report, error, status=None):
 
 def _tool_version():
     """Return the packaged tool version for report metadata."""
-    script_path = Path(__file__).resolve()
-    for candidate in (
-        script_path.parent / "VERSION",
-        script_path.parent.parent / "VERSION",
-    ):
+    repo_root = _api_relay_audit_checkout_root(Path(__file__).resolve())
+    if repo_root is not None:
+        candidate = repo_root / "VERSION"
         try:
             value = candidate.read_text(encoding="utf-8").strip()
         except OSError:
-            continue
+            value = ""
         if re.fullmatch(r"\d+\.\d+\.\d+", value):
             return value
     return TOOL_VERSION_FALLBACK
@@ -116,11 +132,22 @@ def _tool_version():
 
 def _tool_commit_from_checkout():
     """Return a short git commit only when this script is in this repo checkout."""
-    script_path = Path(__file__).resolve()
-    repo_root = script_path.parent.parent if script_path.parent.name == "scripts" else script_path.parent
+    repo_root = _api_relay_audit_checkout_root(Path(__file__).resolve())
+    if repo_root is None:
+        return ""
     if not (repo_root / ".git").exists():
         return ""
     try:
+        root_result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+        git_root = Path(root_result.stdout.strip()).resolve()
+        if git_root != repo_root.resolve():
+            return ""
         result = subprocess.run(
             ["git", "-C", str(repo_root), "rev-parse", "--short=12", "HEAD"],
             capture_output=True,
