@@ -4,7 +4,7 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: ae0e88978fd7e4e0a3c48bfbf23006b2c2efa8854fd98d81a7d118ef4c233453
+# source_sha256: 6fb11df52ddf05eeab8989ad23f0039c9038f369a0db942427cad02e883e980b
 # standalone_body_sha256: badbe213d9e8f5ee25a551fec8cb7a6e82b6253b38c5bcb2e9b62ca58ce57aae
 # END GENERATED STANDALONE HEADER
 
