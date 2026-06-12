@@ -16,6 +16,11 @@ on:
           - web3
           - full
         default: general
+      upload_private_report:
+        description: "Upload raw report.md as a private artifact"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -32,7 +37,10 @@ jobs:
       - name: Download pinned standalone audit script
         run: |
           set -euo pipefail
-          curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
+          base_url="https://github.com/toby-bridges/api-relay-audit/releases/download/${AUDIT_SCRIPT_REF}"
+          curl -fsSLO "${base_url}/audit.py"
+          curl -fsSLO "${base_url}/audit.py.sha256"
+          sha256sum -c audit.py.sha256
           python3 -S audit.py --help >/dev/null
 
       - name: Run local relay audit
@@ -46,11 +54,21 @@ jobs:
             --model "${{ inputs.model }}" \
             --profile "${{ inputs.profile }}" \
             --output report.md
+          sha256sum report.md > report.md.sha256
 
-      - name: Upload redaction-required report artifact
+      - name: Upload report checksum artifact
         uses: actions/upload-artifact@v4
         with:
-          name: api-relay-audit-report
+          name: api-relay-audit-report-sha256
+          path: report.md.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload private report artifact
+        if: ${{ inputs.upload_private_report }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-relay-audit-private-report
           path: report.md
           if-no-files-found: error
           retention-days: 7

@@ -6,7 +6,7 @@ that any third-party repository has adopted the tool.
 
 Use this when you want a manual workflow that downloads the pinned standalone
 `audit.py`, runs a local audit against a relay URL stored in repository
-secrets, and uploads the resulting Markdown report as a workflow artifact.
+secrets, and records a checksum for the resulting Markdown report.
 
 ## Secrets
 
@@ -29,14 +29,23 @@ The workflow is manual (`workflow_dispatch`) and asks for:
 
 - `model`: the model name sent to the relay.
 - `profile`: `general`, `web3`, or `full`.
+- `upload_private_report`: optional, default `false`. Enabling it uploads the
+  raw `report.md` as a private workflow artifact for internal review.
 
 The workflow pins `AUDIT_SCRIPT_REF` to `v2.3.0`. Update that value only after
-reviewing the corresponding API Relay Audit release.
+reviewing the corresponding API Relay Audit release. The workflow downloads
+the release asset `audit.py` plus `audit.py.sha256` and verifies the script
+checksum before running.
 
 ## Report Handling
 
-The uploaded `report.md` artifact may contain private relay metadata depending
-on the target and findings. Treat it as private by default.
+The workflow does not upload `report.md` by default. It uploads only
+`report.md.sha256`, which lets an internal team later prove which private
+report was reviewed without exposing report contents.
+
+If `upload_private_report` is enabled, the uploaded `report.md` artifact may
+contain private relay metadata depending on the target and findings. Treat it
+as private by default.
 
 Before sharing a report publicly:
 
