@@ -137,6 +137,10 @@ class TestClassifyVariance:
         stats = summarize_latencies([1.0, 1.1])
         assert classify_variance(stats, False) == "inconclusive"
 
+    def test_zero_mean_stats_inconclusive(self):
+        stats = summarize_latencies([0.0, 0.0, 0.0])
+        assert classify_variance(stats, False) == "inconclusive"
+
     def test_bimodal_takes_precedence(self):
         """Even if the CV is below the stable cutoff, a detected
         bimodal distribution wins -- clustering is a stronger
