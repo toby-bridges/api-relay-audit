@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 08bf533ec15f7cd3a1b3a6cd40949865fa64ed2e9cca2b72c4c8ccd58ac4bc4e
-# standalone_body_sha256: d271d96014bf1edb3732606071fe2913e348a2ff7582ac6babfc81c53721c926
+# source_sha256: ae0e88978fd7e4e0a3c48bfbf23006b2c2efa8854fd98d81a7d118ef4c233453
+# standalone_body_sha256: badbe213d9e8f5ee25a551fec8cb7a6e82b6253b38c5bcb2e9b62ca58ce57aae
 # END GENERATED STANDALONE HEADER
 
 """
@@ -3468,7 +3468,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text_lower.index(host)
                 raw = text[max(0, idx - 30):idx + len(host) + 30]
                 hits.append(_mk_hit("high", "upstream_host", raw, where, api_key))
-                break
 
         # HIGH: environment variable name
         for env in ENV_VAR_MARKERS:
@@ -3476,7 +3475,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text.index(env)
                 raw = text[max(0, idx - 20):idx + len(env) + 40]
                 hits.append(_mk_hit("high", "env_var", raw, where, api_key))
-                break
 
         # MEDIUM: filesystem path
         for prefix in PATH_PREFIXES:
@@ -3484,7 +3482,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text.index(prefix)
                 raw = text[max(0, idx):idx + 80]
                 hits.append(_mk_hit("medium", "fs_path", raw, where, api_key))
-                break
 
         # MEDIUM: stack trace marker
         for marker in STACK_TRACE_MARKERS:
@@ -3492,7 +3489,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text.index(marker)
                 raw = text[max(0, idx):idx + 120]
                 hits.append(_mk_hit("medium", "stack_trace", raw, where, api_key))
-                break
 
         # MEDIUM: LiteLLM internal field leak (v1.5.1, sourced from
         # LiteLLM issues #5762 / #13705 / #20419)
@@ -3501,7 +3497,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text.index(marker)
                 raw = text[max(0, idx - 20):idx + len(marker) + 60]
                 hits.append(_mk_hit("medium", "litellm_internal_leak", raw, where, api_key))
-                break
 
         # MEDIUM: provider-side guardrail PII echo (v1.5.1, sourced from
         # LiteLLM issue #12152)
@@ -3510,7 +3505,6 @@ def scan_for_leaks(body: str, response_headers: dict, api_key: str, base_url: st
                 idx = text.index(marker)
                 raw = text[max(0, idx):idx + 120]
                 hits.append(_mk_hit("medium", "pii_echo", raw, where, api_key))
-                break
 
     return hits
 
