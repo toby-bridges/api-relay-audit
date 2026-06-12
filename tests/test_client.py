@@ -1,11 +1,13 @@
 """Tests for api_relay_audit.client.APIClient."""
 
+import inspect
 import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+import api_relay_audit.client as client_module
 from api_relay_audit.client import APIClient
 
 
@@ -665,3 +667,9 @@ class TestLog:
     def test_quiet_no_output(self, client, capsys):
         client._log("hello")
         assert capsys.readouterr().out == ""
+
+    def test_transparent_log_helpers_imported_at_module_scope(self):
+        assert callable(client_module.sha256hex)
+        assert callable(client_module.redact_error)
+        source = inspect.getsource(APIClient._log_transparent)
+        assert "from api_relay_audit.transparent_log import" not in source

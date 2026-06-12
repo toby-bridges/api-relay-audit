@@ -15,6 +15,7 @@ import httpx
 from api_relay_audit import _transport
 from api_relay_audit.error_diagnosis import diagnose_error
 from api_relay_audit.stream_integrity import StreamSignals
+from api_relay_audit.transparent_log import redact_error, sha256hex
 
 
 def _extract_anthropic_text(content) -> str:
@@ -570,7 +571,6 @@ class APIClient:
         """
         if self._transparent_logger is None:
             return
-        from api_relay_audit.transparent_log import sha256hex, redact_error
         # Pre-computed digest from stream hashing is a 64-char hex string.
         if isinstance(response_body_bytes, str) and len(response_body_bytes) == 64:
             try:
