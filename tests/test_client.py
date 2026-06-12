@@ -331,6 +331,43 @@ class TestCurlFallback:
         assert "x-api-key: sk-test" in config_input
 
     @patch("api_relay_audit.client.subprocess.run")
+    def test_curl_post_invalid_json_returns_http_error(self, mock_run, client):
+        client._use_curl = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="<html>Bad Gateway</html>",
+            stderr="",
+        )
+
+        result = client._curl_post(
+            "https://relay.example.com/v1/messages",
+            {"x-api-key": "sk-test"},
+            {"model": "test"},
+        )
+
+        assert "_http_error" in result
+        assert "Invalid JSON response from curl" in result["_http_error"]
+        assert "Bad Gateway" in result["_http_error"]
+
+    @patch("api_relay_audit.client.subprocess.run")
+    def test_curl_post_escapes_header_config_values(self, mock_run, client):
+        client._use_curl = True
+        mock_run.return_value = MagicMock(returncode=0, stdout='{"ok": true}', stderr="")
+
+        client._curl_post(
+            "https://relay.example.com/v1/messages",
+            {"Authorization": 'Bearer sk-test"\nheader = "Injected: yes'},
+            {"model": "test"},
+        )
+
+        config_input = mock_run.call_args[1].get("input", "")
+        assert config_input.startswith('header = "Authorization: ')
+        assert len(config_input.splitlines()) == 1
+        assert "\n" not in config_input
+        assert "\\n" in config_input
+        assert '\\"Injected: yes' in config_input
+
+    @patch("api_relay_audit.client.subprocess.run")
     def test_curl_post_bypasses_proxy_for_loopback(self, mock_run, client):
         client._use_curl = True
         mock_run.return_value = MagicMock(
@@ -368,6 +405,18 @@ class TestCurlFallback:
         cmd = mock_run.call_args[0][0]
         assert "--noproxy" in cmd
         assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+
+    @patch("api_relay_audit.client.subprocess.run")
+    def test_curl_get_models_invalid_json_returns_empty(self, mock_run, client):
+        client._use_curl = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="<html>Bad Gateway</html>",
+            stderr="",
+        )
+
+        assert client.get_models() == []
+        assert mock_run.call_count == 2
 
     @patch("api_relay_audit.client.subprocess.run")
     def test_curl_raw_request_bypasses_proxy_for_loopback(self, mock_run):
