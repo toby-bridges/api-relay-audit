@@ -219,15 +219,18 @@ You do not need to write code to help. Good first contributions are small,
 reproducible, and evidence-focused:
 
 - Report a detector gap with a sanitized reproduction.
+- Share local run feedback for install, runtime, platform, or report-UX issues.
 - Add documentation examples for profiles, flags, or relay behavior.
 - Improve OpenClaw or Hermes install notes from a real local setup.
 - Translate Quick Start or clarify `clean`, `anomaly`, and `inconclusive`.
 
 Start with:
 
+- [Local Run Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=local-run-feedback.yml)
 - [Detector Gap](https://github.com/toby-bridges/api-relay-audit/issues/new?template=detector-gap.yml)
 - [Documentation Example](https://github.com/toby-bridges/api-relay-audit/issues/new?template=documentation-example.yml)
 - [Agent Skill Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=agent-skill-feedback.yml)
+- [Community Evidence Guide](./docs/community-evidence.md)
 - [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 Avoid publishing real API keys or private relay traffic, and keep changes scoped
@@ -336,11 +339,13 @@ API Relay Audit 也可以作为 agent skill 使用。
 
 ## 如何贡献
 
-你不需要写代码也能帮忙：可以提交检测缺口、文档示例、翻译改进，或 OpenClaw / Hermes 安装反馈。
+你不需要写代码也能帮忙：可以提交本地运行反馈、检测缺口、文档示例、翻译改进，或 OpenClaw / Hermes 安装反馈。
 
+- [Local Run Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=local-run-feedback.yml)
 - [Detector Gap](https://github.com/toby-bridges/api-relay-audit/issues/new?template=detector-gap.yml)
 - [Documentation Example](https://github.com/toby-bridges/api-relay-audit/issues/new?template=documentation-example.yml)
 - [Agent Skill Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=agent-skill-feedback.yml)
+- [Community Evidence Guide](./docs/community-evidence.md)
 
 请不要提交真实 API Key、私有中转站流量、钱包材料或未脱敏审计报告。
 

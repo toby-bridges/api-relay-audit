@@ -1,0 +1,92 @@
+name: Local Run Feedback / 本地运行反馈
+description: Share install or runtime feedback without submitting relay evidence / 提交安装或运行反馈，不提交中转站证据
+title: "[Local Run] "
+labels: ["documentation", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for local install, runtime, platform, dependency, or report-UX feedback.
+
+        This is not telemetry and not an audit-evidence submission. Do not include API keys, private relay domains, raw traffic, wallet material, or unredacted reports.
+
+  - type: input
+    id: tool_version
+    attributes:
+      label: Tool Version
+      description: "Version shown by the release, report, or downloaded script."
+      placeholder: "v2.3.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Install / Run Method
+      options:
+        - standalone curl download
+        - git checkout
+        - OpenClaw skill
+        - Hermes Agent skill
+        - other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Audit Profile
+      options:
+        - general
+        - web3
+        - full
+        - connectivity only
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: command_shape
+    attributes:
+      label: Command Shape
+      description: "Paste the command shape after replacing secrets and private domains."
+      placeholder: |
+        python audit.py --key <REDACTED> --url https://example.invalid/v1 --profile general --output report.md
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, shell, Python version, curl version, and anything relevant.
+      placeholder: "macOS 15, zsh, Python 3.11, curl 8.x"
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What happened locally? Include sanitized error text when useful.
+      placeholder: |
+        Expected:
+        Actual:
+        Sanitized error text:
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Improvement
+      description: Optional. What would make this run path clearer or easier?
+      placeholder: "The report should explain..."
+
+  - type: checkboxes
+    id: safety_confirmation
+    attributes:
+      label: Safety Confirmation
+      options:
+        - label: I removed API keys, private relay domains, wallet material, raw traffic, and unredacted reports.
+          required: true
