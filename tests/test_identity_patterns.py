@@ -1,5 +1,6 @@
 """Tests for api_relay_audit.identity_patterns (v1.6 Step 5 helper)."""
 
+import api_relay_audit.identity_patterns as identity_module
 from api_relay_audit.identity_patterns import (
     NON_CLAUDE_IDENTITY_KEYWORDS,
     find_non_claude_identities,
@@ -72,6 +73,28 @@ class TestNonClaudeIdentityKeywords:
     def test_no_duplicate_keywords(self):
         """No duplicates in the tuple."""
         assert len(NON_CLAUDE_IDENTITY_KEYWORDS) == len(set(NON_CLAUDE_IDENTITY_KEYWORDS))
+
+    def test_keyword_rules_are_single_source_for_derived_sets(self):
+        rules = identity_module._IDENTITY_KEYWORD_RULES
+        assert len(rules) == len({kw for kw, _strategy in rules})
+        assert tuple(kw for kw, _strategy in rules) == NON_CLAUDE_IDENTITY_KEYWORDS
+
+        allowed_strategies = {
+            identity_module._MATCH_LAX,
+            identity_module._MATCH_STRICT,
+            identity_module._MATCH_CONTEXT_STRICT,
+        }
+        assert {strategy for _kw, strategy in rules} <= allowed_strategies
+
+        rule_map = dict(rules)
+        assert identity_module._STRICT_ASCII_KEYWORDS == frozenset(
+            kw for kw, strategy in rule_map.items()
+            if strategy == identity_module._MATCH_STRICT
+        )
+        assert identity_module._CONTEXT_STRICT_KEYWORDS == frozenset(
+            kw for kw, strategy in rule_map.items()
+            if strategy == identity_module._MATCH_CONTEXT_STRICT
+        )
 
 
 # ---------------------------------------------------------------------------

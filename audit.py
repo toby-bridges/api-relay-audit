@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 9efb15db9395ea199650974647bb458bcd05a81c2efbca3769322c8b87d7a351
-# standalone_body_sha256: 55332e36882d1a25938b9b30243e8a0da9340a89b571784bf3eec7f3fd8eca5f
+# source_sha256: 607ef51814ae3289d0d57ef6bad5d20eecf345c5af6186dfd2916ffcae90767a
+# standalone_body_sha256: a9427ca5abbdd69b688d8e9d45938465b0a5c6dc9c4fbd5575244e5e097c3d15
 # END GENERATED STANDALONE HEADER
 
 """
@@ -2637,9 +2637,17 @@ their tool does and does not detect.
 import re
 
 
-# Keyword literals that, if present in a response to "Who are you?
-# Who made you?", indicate that the relay is routing to a non-Claude
-# substitute model. See module docstring for matching strategy.
+# Matching strategies for keyword rules. Keep these string values simple:
+# tests and standalone parity inspect the derived structures directly.
+_MATCH_LAX = "lax"
+_MATCH_STRICT = "strict"
+_MATCH_CONTEXT_STRICT = "context_strict"
+
+
+# Keyword rules that, if matched in a response to "Who are you? Who made
+# you?", indicate that the relay is routing to a non-Claude substitute
+# model. This table is the single source of truth for both the public
+# keyword tuple and the compiled pattern caches below.
 #
 # Groups (not enforced by code, just for readability):
 #   1. Legacy (v2.1)        — Amazon / AWS brand leakage from earlier audits
@@ -2651,46 +2659,51 @@ import re
 #   4. Chinese brand names  — CJK literals for catching Chinese-language
 #                              responses that use the Chinese brand instead
 #                              of the ASCII model name
-NON_CLAUDE_IDENTITY_KEYWORDS = (
+_IDENTITY_KEYWORD_RULES = (
     # 1. Legacy (v2.1)
-    "amazon",
-    "kiro",
-    "aws",
+    ("amazon", _MATCH_STRICT),
+    ("kiro", _MATCH_STRICT),
+    ("aws", _MATCH_STRICT),
     # 2. hvoy.ai verified ASCII substitutes (exact regex list from
     #    claude_detector.py IDENTITY_NEGATIVE_PATTERNS, verified 2026-04-11)
-    "glm",
-    "z.ai",
-    "deepseek",
-    "qwen",
-    "minimax",
-    "grok",
-    "gpt",
+    ("glm", _MATCH_LAX),
+    ("z.ai", _MATCH_LAX),
+    ("deepseek", _MATCH_LAX),
+    ("qwen", _MATCH_LAX),
+    ("minimax", _MATCH_LAX),
+    ("grok", _MATCH_STRICT),
+    ("gpt", _MATCH_STRICT),
     # 3. sub2api / Antigravity relay identity (v1.7.5, source-verified
     #    from Wei-Shaw/sub2api request_transformer.go:179-186)
-    "antigravity",  # sub2api injected identity: "You are Antigravity"
-    "deepmind",     # sub2api injected identity: "designed by the Google Deepmind team"
+    ("antigravity", _MATCH_LAX),  # sub2api injected identity: "You are Antigravity"
+    ("deepmind", _MATCH_LAX),     # sub2api injected identity: "designed by the Google Deepmind team"
     # 4. Reverse-proxy dev-tool platforms (v1.7.6, sourced from cctest.ai
     #    FAQ 2026-04-13). Unlike sub2api's Antigravity injection, these
     #    platforms do NOT inject a literal identity phrase; the channel
     #    label only occasionally bleeds through — classified as strict
     #    (anchor-required) because both are common English words.
-    "warp",       # "warp speed", "time warp" in prose
-    "windsurf",   # the watersport
+    ("warp", _MATCH_CONTEXT_STRICT),       # "warp speed", "time warp" in prose
+    ("windsurf", _MATCH_CONTEXT_STRICT),   # the watersport
     # 5. Extended ASCII (our additions — aliases and Chinese-market
     #    substitutes not in hvoy.ai's set)
-    "zhipu",     # Zhipu AI, parent of GLM
-    "tongyi",    # Alibaba Tongyi, parent of Qwen
-    "ernie",     # Baidu ERNIE
-    "doubao",    # ByteDance Doubao
-    "moonshot",  # Moonshot AI
-    "kimi",      # Moonshot's Kimi product
+    ("zhipu", _MATCH_LAX),     # Zhipu AI, parent of GLM
+    ("tongyi", _MATCH_LAX),    # Alibaba Tongyi, parent of Qwen
+    ("ernie", _MATCH_STRICT),  # Baidu ERNIE; also a common given name
+    ("doubao", _MATCH_LAX),    # ByteDance Doubao
+    ("moonshot", _MATCH_LAX),  # Moonshot AI
+    ("kimi", _MATCH_STRICT),   # Moonshot's Kimi product; also a common given name
     # 6. Chinese brand names (catch Chinese-language responses)
-    "通义",
-    "千问",
-    "智谱",
-    "豆包",
-    "文心",
-    "月之暗面",
+    ("通义", _MATCH_LAX),
+    ("千问", _MATCH_LAX),
+    ("智谱", _MATCH_LAX),
+    ("豆包", _MATCH_LAX),
+    ("文心", _MATCH_LAX),
+    ("月之暗面", _MATCH_LAX),
+)
+
+
+NON_CLAUDE_IDENTITY_KEYWORDS = tuple(
+    keyword for keyword, _strategy in _IDENTITY_KEYWORD_RULES
 )
 
 
@@ -2699,27 +2712,20 @@ NON_CLAUDE_IDENTITY_KEYWORDS = (
 # not GPT" or "I grok your question". Distinctive keywords like
 # "deepseek" / "qwen" / "minimax" don't need anchors because they can't
 # appear in ordinary English prose.
-_STRICT_ASCII_KEYWORDS = frozenset({
-    # Legacy short v2.1 keywords
-    "amazon",
-    "kiro",
-    "aws",
-    # Short/common ASCII words from hvoy.ai and our extensions
-    "grok",   # English slang verb "to grok"
-    "gpt",    # "unlike GPT" / "not GPT" prose
-    "ernie",  # common given name (Sesame Street)
-    "kimi",   # common given name
-})
+_STRICT_ASCII_KEYWORDS = frozenset(
+    keyword for keyword, strategy in _IDENTITY_KEYWORD_RULES
+    if strategy == _MATCH_STRICT
+)
 
 # v1.7.7: context-strict keywords require BOTH an identity anchor AND
 # a post-keyword identity signal (punctuation or role word like
 # "assistant" / "AI" / "model"). This eliminates false positives like
 # "I am in warp speed mode" or "I am a windsurf instructor" where the
 # keyword is used as a common noun, not a brand identity claim.
-_CONTEXT_STRICT_KEYWORDS = frozenset({
-    "warp",       # "warp speed" / "time warp" in prose
-    "windsurf",   # the watersport
-})
+_CONTEXT_STRICT_KEYWORDS = frozenset(
+    keyword for keyword, strategy in _IDENTITY_KEYWORD_RULES
+    if strategy == _MATCH_CONTEXT_STRICT
+)
 
 # Identity anchor phrases that must immediately precede (up to ~4 filler
 # words of distance) a strict keyword for it to count as a model
@@ -2796,29 +2802,6 @@ def _build_context_strict_pattern(keyword):
     )
 
 
-# Precompile patterns. Strict keywords use anchor-gated regex; lax
-# (distinctive) keywords use the v1.6.2 word-boundary + non-letter
-# lookahead. CJK keywords stay on substring matching.
-_STRICT_ASCII_PATTERNS = tuple(
-    (kw, _build_strict_pattern(kw))
-    for kw in NON_CLAUDE_IDENTITY_KEYWORDS
-    if kw in _STRICT_ASCII_KEYWORDS
-)
-_CONTEXT_STRICT_PATTERNS = tuple(
-    (kw, _build_context_strict_pattern(kw))
-    for kw in NON_CLAUDE_IDENTITY_KEYWORDS
-    if kw in _CONTEXT_STRICT_KEYWORDS
-)
-_LAX_ASCII_PATTERNS = tuple(
-    (kw, re.compile(r"\b" + re.escape(kw) + r"(?![a-zA-Z])", re.IGNORECASE))
-    for kw in NON_CLAUDE_IDENTITY_KEYWORDS
-    if kw.isascii() and kw not in _STRICT_ASCII_KEYWORDS
-    and kw not in _CONTEXT_STRICT_KEYWORDS
-)
-_CJK_KEYWORDS = tuple(
-    kw for kw in NON_CLAUDE_IDENTITY_KEYWORDS if not kw.isascii()
-)
-
 # v1.7.7: CJK-anchor supplementary patterns for strict keywords.
 # Chinese has no whitespace convention between words, so "我是GPT-5"
 # (zero spaces) must also match. The main _STRICT_ASCII_PATTERNS regex
@@ -2830,30 +2813,77 @@ _CJK_KEYWORDS = tuple(
 _CJK_ANCHOR_ALTERNATION = (
     r"我是|我叫|本人是|我的名字是?|我是一个|我是个|本 ?ai"
 )
-# Regular strict keywords: CJK anchor + keyword (no suffix needed).
-_CJK_STRICT_PATTERNS = tuple(
-    (kw, re.compile(
+
+
+def _build_cjk_strict_pattern(keyword):
+    """Build the CJK-anchor supplement for a strict ASCII keyword."""
+    return re.compile(
         r"(?:" + _CJK_ANCHOR_ALTERNATION + r")"
         r"\s*"
-        + re.escape(kw) + r"(?![a-zA-Z])",
+        + re.escape(keyword) + r"(?![a-zA-Z])",
         re.IGNORECASE,
-    ))
-    for kw in NON_CLAUDE_IDENTITY_KEYWORDS
-    if kw in _STRICT_ASCII_KEYWORDS
-)
-# Context-strict keywords: CJK anchor + keyword + identity suffix.
-# Without the suffix, "我是warp speed模式" would false-positive.
-_CJK_CONTEXT_STRICT_PATTERNS = tuple(
-    (kw, re.compile(
+    )
+
+
+def _build_cjk_context_strict_pattern(keyword):
+    """Build the CJK-anchor supplement for a context-strict ASCII keyword."""
+    return re.compile(
         r"(?:" + _CJK_ANCHOR_ALTERNATION + r")"
         r"\s*"
-        + re.escape(kw) + r"(?![a-zA-Z])"
+        + re.escape(keyword) + r"(?![a-zA-Z])"
         + _IDENTITY_SUFFIX_PATTERN,
         re.IGNORECASE,
-    ))
-    for kw in NON_CLAUDE_IDENTITY_KEYWORDS
-    if kw in _CONTEXT_STRICT_KEYWORDS
-)
+    )
+
+
+def _compile_identity_rule_patterns():
+    """Compile all identity pattern caches from ``_IDENTITY_KEYWORD_RULES``."""
+    strict_ascii = []
+    context_strict = []
+    lax_ascii = []
+    cjk_keywords = []
+    cjk_strict = []
+    cjk_context_strict = []
+
+    for keyword, strategy in _IDENTITY_KEYWORD_RULES:
+        if not keyword.isascii():
+            cjk_keywords.append(keyword)
+            continue
+        if strategy == _MATCH_STRICT:
+            strict_ascii.append((keyword, _build_strict_pattern(keyword)))
+            cjk_strict.append((keyword, _build_cjk_strict_pattern(keyword)))
+        elif strategy == _MATCH_CONTEXT_STRICT:
+            context_strict.append((keyword, _build_context_strict_pattern(keyword)))
+            cjk_context_strict.append(
+                (keyword, _build_cjk_context_strict_pattern(keyword))
+            )
+        else:
+            lax_ascii.append((
+                keyword,
+                re.compile(
+                    r"\b" + re.escape(keyword) + r"(?![a-zA-Z])",
+                    re.IGNORECASE,
+                ),
+            ))
+
+    return (
+        tuple(strict_ascii),
+        tuple(context_strict),
+        tuple(lax_ascii),
+        tuple(cjk_keywords),
+        tuple(cjk_strict),
+        tuple(cjk_context_strict),
+    )
+
+
+(
+    _STRICT_ASCII_PATTERNS,
+    _CONTEXT_STRICT_PATTERNS,
+    _LAX_ASCII_PATTERNS,
+    _CJK_KEYWORDS,
+    _CJK_STRICT_PATTERNS,
+    _CJK_CONTEXT_STRICT_PATTERNS,
+) = _compile_identity_rule_patterns()
 
 
 def find_non_claude_identities(text: str) -> list:
