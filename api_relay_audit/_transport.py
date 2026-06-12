@@ -17,6 +17,35 @@ LOOPBACK_NO_PROXY = "localhost,127.0.0.1,::1"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
+def _curl_config_escape(value) -> str:
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+    )
+
+
+def _curl_header_config(headers: dict) -> str:
+    return "\n".join(
+        f'header = "{_curl_config_escape(k)}: {_curl_config_escape(v)}"'
+        for k, v in headers.items()
+    )
+
+
+def _json_object_or_none(text: str):
+    try:
+        data = json.loads(text or "")
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _json_error_preview(text: str) -> str:
+    return (text or "").replace("\r", "\\r").replace("\n", "\\n")[:200]
+
+
 def curl_loopback_no_proxy_args(url: str) -> list:
     """Return curl args that keep loopback URLs out of proxy env routing."""
     if urlparse(url).hostname in LOOPBACK_HOSTS:
@@ -43,7 +72,7 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
 
         cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-X", "POST", url,
                "--max-time", str(timeout), "--config", "-", "--data-binary", f"@{body_path}"]
-        config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
+        config = _curl_header_config(headers)
         r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
                                   timeout=timeout + 10)
     finally:
@@ -55,7 +84,15 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
 
     if r.returncode != 0:
         raise RuntimeError(f"curl failed: {r.stderr[:200]}")
-    return json.loads(r.stdout)
+    data = _json_object_or_none(r.stdout)
+    if data is None:
+        return {
+            "_http_error": (
+                "Invalid JSON response from curl: "
+                f"{_json_error_preview(r.stdout)}"
+            )
+        }
+    return data
 
 
 def httpx_post_json(url: str, headers: dict, body: dict, timeout: int,
@@ -72,12 +109,16 @@ def curl_get_json_data(url: str, headers: dict, timeout: int = 15,
     """GET JSON through curl and return the top-level ``data`` list."""
     cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), url,
            "--max-time", str(timeout), "--config", "-"]
-    config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
+    config = _curl_header_config(headers)
     r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
                               timeout=timeout + 10)
     if r.returncode != 0:
         return []
-    return json.loads(r.stdout).get("data", [])
+    payload = _json_object_or_none(r.stdout)
+    if payload is None:
+        return []
+    data = payload.get("data", [])
+    return data if isinstance(data, list) else []
 
 
 def httpx_get_json_data(url: str, headers: dict, timeout: int = 15,

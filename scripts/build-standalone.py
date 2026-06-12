@@ -75,7 +75,7 @@ def httpx_get_json_data(url: str, headers: dict, timeout: int = 15):
         "curl", "-sk", *curl_loopback_no_proxy_args(url),
         "-i", url, "--max-time", str(timeout), "--config", "-"
     ]
-    config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
+    config = _curl_header_config(headers)
     r = subprocess.run(
         cmd,
         capture_output=True,
@@ -90,10 +90,10 @@ def httpx_get_json_data(url: str, headers: dict, timeout: int = 15):
     text = parsed.get("body", "")
     data = []
     if status == 200:
-        try:
-            data = json.loads(text).get("data", [])
-        except Exception:
-            data = []
+        payload = _json_object_or_none(text)
+        if payload is not None:
+            maybe_data = payload.get("data", [])
+            data = maybe_data if isinstance(maybe_data, list) else []
     return status, data, text, parsed.get("headers", {})
 
 
