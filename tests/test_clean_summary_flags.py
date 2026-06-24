@@ -336,20 +336,19 @@ class TestOptionDEndToEnd:
         assert yellows, f"standalone Step 6 must fire yellow on Repro 2. Summary: {reporter.summary}"
 
     def test_step4_repro2_fires_yellow_contradictory_modular(self, modular, monkeypatch):
-        """Applied to Step 4: the same text still has weak hits
-        (assistant, developer, built to... well, 'built to' isn't in
-        step 4 weak, but 'assistant' and 'developer' are)."""
+        """Applied to Step 4: refusal + weak hits (assistant, developer)
+        should be skipped — refusal language takes priority."""
         from api_relay_audit.reporter import Reporter
         self._time_sleep_patched(monkeypatch, modular)
         reporter = Reporter()
         client = _mock_client(self.REPRO_2_STEP6)
         leaked = modular.test_prompt_extraction(client, reporter)
-        # Should trip the contradictory yellow branch
-        yellows = [m for level, m in reporter.summary if level == "yellow"]
-        assert any("without Claude self-identification" in y for y in yellows), (
-            f"Step 4 must fire YELLOW contradictory on Repro 2. Summary: {reporter.summary}"
+        # Refusal + weak hits = not a leak
+        assert leaked is False
+        greens = [m for level, m in reporter.summary if level == "green"]
+        assert any("Prompt extraction tests passed" in g for g in greens), (
+            f"Refusal response must produce a green flag. Summary: {reporter.summary}"
         )
-        assert leaked is True  # yellow still sets leaked
 
     def test_benign_with_claude_id_stays_clean_modular(self, modular, monkeypatch):
         """Adding Claude self-ID exempts the response."""

@@ -226,9 +226,13 @@ def _check_usage_consistent(signals: "StreamSignals") -> bool:
     )
 
 
-def _check_stream_model(signals: "StreamSignals") -> bool:
-    """``message_start.message.model`` should contain ``"claude"`` for
-    an Anthropic-format streaming response.
+def _check_stream_model(signals: "StreamSignals", expected_model: str = "") -> bool:
+    """``message_start.message.model`` should match the expected model
+    for the streaming response.
+
+    If ``expected_model`` is provided, checks that the stream model name
+    contains it (case-insensitive). Otherwise falls back to checking for
+    ``"claude"`` (Anthropic format).
 
     Missing ``message_start.message.model`` is itself suspicious once the
     relay has emitted substantive events: a middleware can hide a model
@@ -238,10 +242,12 @@ def _check_stream_model(signals: "StreamSignals") -> bool:
     """
     if not signals.message_start_model:
         return False
+    if expected_model:
+        return expected_model.lower() in signals.message_start_model.lower()
     return "claude" in signals.message_start_model.lower()
 
 
-def analyze_stream(signals: "StreamSignals") -> dict:
+def analyze_stream(signals: "StreamSignals", expected_model: str = "") -> dict:
     """Analyze a populated :class:`StreamSignals` for integrity anomalies.
 
     Returns a dict with these keys:
@@ -313,7 +319,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
     usage_monotonic = _check_usage_monotonic(signals)
     usage_consistent = _check_usage_consistent(signals)
     signature_valid = signals.empty_signature_delta_count == 0
-    stream_model_is_claude = _check_stream_model(signals)
+    stream_model_is_claude = _check_stream_model(signals, expected_model)
 
     findings = []
     if unknown_events:
@@ -340,9 +346,10 @@ def analyze_stream(signals: "StreamSignals") -> dict:
         )
     if not stream_model_is_claude:
         if signals.message_start_model:
+            expected_desc = expected_model or "claude"
             findings.append(
                 f"Stream's message_start.message.model = "
-                f"{signals.message_start_model!r} does not contain 'claude' — "
+                f"{signals.message_start_model!r} does not contain '{expected_desc}' — "
                 "relay may be routing to a substitute model"
             )
         else:
