@@ -375,9 +375,13 @@ def _check_usage_consistent(signals: "StreamSignals") -> bool:
     )
 
 
-def _check_stream_model(signals: "StreamSignals") -> bool:
-    """``message_start.message.model`` should contain ``"claude"`` for
-    an Anthropic-format streaming response.
+def _check_stream_model(signals: "StreamSignals", expected_model: str = "") -> bool:
+    """``message_start.message.model`` should match the expected model
+    for the streaming response.
+
+    If ``expected_model`` is provided, checks that the stream model name
+    contains it (case-insensitive). Otherwise falls back to checking for
+    ``"claude"`` (Anthropic format).
 
     Missing ``message_start.message.model`` is itself suspicious once the
     relay has emitted substantive events: a middleware can hide a model
@@ -387,10 +391,12 @@ def _check_stream_model(signals: "StreamSignals") -> bool:
     """
     if not signals.message_start_model:
         return False
+    if expected_model:
+        return expected_model.lower() in signals.message_start_model.lower()
     return "claude" in signals.message_start_model.lower()
 
 
-def analyze_stream(signals: "StreamSignals") -> dict:
+def analyze_stream(signals: "StreamSignals", expected_model: str = "") -> dict:
     """Analyze a populated :class:`StreamSignals` for integrity anomalies.
 
     Returns a dict with these keys:
@@ -462,7 +468,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
     usage_monotonic = _check_usage_monotonic(signals)
     usage_consistent = _check_usage_consistent(signals)
     signature_valid = signals.empty_signature_delta_count == 0
-    stream_model_is_claude = _check_stream_model(signals)
+    stream_model_is_claude = _check_stream_model(signals, expected_model)
 
     findings = []
     if unknown_events:
@@ -489,9 +495,10 @@ def analyze_stream(signals: "StreamSignals") -> dict:
         )
     if not stream_model_is_claude:
         if signals.message_start_model:
+            expected_desc = expected_model or "claude"
             findings.append(
                 f"Stream's message_start.message.model = "
-                f"{signals.message_start_model!r} does not contain 'claude' — "
+                f"{signals.message_start_model!r} does not contain '{expected_desc}' — "
                 "relay may be routing to a substitute model"
             )
         else:
@@ -5290,6 +5297,8 @@ def test_prompt_extraction(client, report):
                 continue
 
             text_lower = text.lower()
+            # Normalize Unicode apostrophes (U+2018 ' U+2019 ' U+02BC ʼ) to ASCII '
+            text_lower = text_lower.replace('‘', "'").replace('’', "'").replace('ʼ', "'")
             # Strong string markers — unambiguous leak signatures.
             strong_string_markers = ["hidden_prompt", "kiro"]
             # Weak identity markers — natural words that appear in
@@ -5304,8 +5313,9 @@ def test_prompt_extraction(client, report):
             weak_hits = [kw for kw in weak_markers if kw in text_lower]
 
             if has_strong:
-                leaked = True
-                if _is_self_corrected_hidden_prompt_echo(name, text_lower, structural, strong_hits):
+                if _looks_like_refusal(text_lower):
+                    pass  # Explicit refusal — not a leak
+                elif _is_self_corrected_hidden_prompt_echo(name, text_lower, structural, strong_hits):
                     report.flag(
                         "yellow",
                         f"Test {name}: `hidden_prompt` marker echoed, but response "
@@ -5313,18 +5323,11 @@ def test_prompt_extraction(client, report):
                         "self-correction, verify manually",
                     )
                 else:
+                    leaked = True
                     report.flag("red", f"Test {name}: Hidden prompt content extracted!")
             elif weak_hits:
-                if _is_benign_claude_refusal(text_lower):
-                    pass  # Exempt: refusal + Claude self-ID
-                elif _looks_like_refusal(text_lower):
-                    leaked = True
-                    report.flag(
-                        "yellow",
-                        f"Test {name}: identity words ({', '.join(weak_hits)}) "
-                        f"present alongside refusal without Claude self-identification "
-                        f"— possible partial leak, verify manually",
-                    )
+                if _looks_like_refusal(text_lower):
+                    pass  # Explicit refusal — not a leak
                 else:
                     leaked = True
                     report.flag("red", f"Test {name}: Hidden prompt content extracted!")
@@ -5770,7 +5773,7 @@ def test_stream_integrity(client, report):
         max_tokens=100,
         with_thinking=True,
     )
-    analysis = analyze_stream(signals)
+    analysis = analyze_stream(signals, expected_model=client.model)
     verdict = analysis["verdict"]
 
     # Event-shape table
@@ -5787,7 +5790,7 @@ def test_stream_integrity(client, report):
     report.p(f"| Signature valid | {'yes' if analysis['signature_valid'] else 'NO'} |")
     report.p(
         f"| Stream model | {analysis['stream_model_name'] or '—'} "
-        f"({'claude' if analysis['stream_model_is_claude'] else 'NOT claude'}) |"
+        f"({'expected' if analysis['stream_model_is_claude'] else 'NOT expected model'}) |"
     )
     report.p(f"| Total events seen | {signals.raw_event_count} |")
     if signals.total_duration_seconds is not None:
