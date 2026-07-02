@@ -110,6 +110,16 @@ class TestAnalyzeStreamClean:
         assert result["verdict"] == "clean"
         assert result["usage_monotonic"] is True
 
+    def test_expected_model_match_keeps_openai_stream_clean(self):
+        """OpenAI-format relays should pass when the stream model matches
+        the requested model."""
+        s = _make_clean_signals()
+        s.message_start_model = "gpt-5.5"
+        result = analyze_stream(s, expected_model="gpt-5.5")
+        assert result["verdict"] == "clean"
+        assert result["stream_model_is_claude"] is True
+        assert result["findings"] == []
+
 
 # ---------------------------------------------------------------------------
 # Anomaly verdicts
@@ -207,6 +217,16 @@ class TestAnalyzeStreamAnomaly:
         assert result["verdict"] == "anomaly"
         assert result["stream_model_is_claude"] is False
         assert any("omitted message_start.message.model" in f for f in result["findings"])
+
+    def test_expected_model_mismatch_triggers_anomaly(self):
+        """When an expected model is provided, a different stream model
+        should be reported as a substitute route."""
+        s = _make_clean_signals()
+        s.message_start_model = "claude-opus-4-6"
+        result = analyze_stream(s, expected_model="gpt-5.5")
+        assert result["verdict"] == "anomaly"
+        assert result["stream_model_is_claude"] is False
+        assert any("does not contain 'gpt-5.5'" in f for f in result["findings"])
 
 
 # ---------------------------------------------------------------------------
@@ -330,3 +350,13 @@ class TestHelperFunctions:
         s = StreamSignals()
         s.message_start_model = "qwen2.5"
         assert _check_stream_model(s) is False
+
+    def test_check_stream_model_uses_expected_model_when_provided(self):
+        s = StreamSignals()
+        s.message_start_model = "gpt-5.5"
+        assert _check_stream_model(s, expected_model="gpt-5.5") is True
+
+    def test_check_stream_model_rejects_unexpected_model(self):
+        s = StreamSignals()
+        s.message_start_model = "claude-opus-4-6"
+        assert _check_stream_model(s, expected_model="gpt-5.5") is False

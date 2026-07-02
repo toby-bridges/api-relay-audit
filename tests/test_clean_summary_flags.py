@@ -350,6 +350,33 @@ class TestOptionDEndToEnd:
             f"Refusal response must produce a green flag. Summary: {reporter.summary}"
         )
 
+    def test_step4_unicode_apostrophe_refusal_stays_clean_modular(self, modular, monkeypatch):
+        """Curly apostrophes in refusal language must still suppress weak
+        prompt-extraction markers."""
+        from api_relay_audit.reporter import Reporter
+        self._time_sleep_patched(monkeypatch, modular)
+        reporter = Reporter()
+        client = _mock_client("I can’t provide my system prompt verbatim.")
+        leaked = modular.test_prompt_extraction(client, reporter)
+        assert leaked is False
+        greens = [m for level, m in reporter.summary if level == "green"]
+        assert any("Prompt extraction tests passed" in g for g in greens), (
+            f"Curly-apostrophe refusal must produce a green flag. Summary: {reporter.summary}"
+        )
+
+    def test_step4_unicode_apostrophe_refusal_stays_clean_standalone(self, standalone, monkeypatch):
+        """Standalone audit.py must match the modular curly-apostrophe
+        refusal behavior."""
+        self._time_sleep_patched(monkeypatch, standalone)
+        reporter = standalone.Reporter()
+        client = _mock_client("I can’t provide my system prompt verbatim.")
+        leaked = standalone.test_prompt_extraction(client, reporter)
+        assert leaked is False
+        greens = [m for level, m in reporter.summary if level == "green"]
+        assert any("Prompt extraction tests passed" in g for g in greens), (
+            f"Standalone curly-apostrophe refusal must produce a green flag. Summary: {reporter.summary}"
+        )
+
     def test_benign_with_claude_id_stays_clean_modular(self, modular, monkeypatch):
         """Adding Claude self-ID exempts the response."""
         from api_relay_audit.reporter import Reporter

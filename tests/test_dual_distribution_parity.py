@@ -354,16 +354,24 @@ def test_standalone_stream_model_helper_parity():
 
     standalone = _load_standalone_audit()
 
-    cases = [None, "claude-opus-4-6", "gpt-5"]
-    for model in cases:
+    cases = [
+        (None, ""),
+        ("claude-opus-4-6", ""),
+        ("gpt-5", ""),
+        ("gpt-5.5", "gpt-5.5"),
+        ("claude-opus-4-6", "gpt-5.5"),
+    ]
+    for model, expected_model in cases:
         modular_signals = StreamSignals()
         modular_signals.message_start_model = model
 
         standalone_signals = standalone.StreamSignals()
         standalone_signals.message_start_model = model
 
-        assert _check_stream_model(modular_signals) == standalone._check_stream_model(
-            standalone_signals
+        assert _check_stream_model(
+            modular_signals, expected_model
+        ) == standalone._check_stream_model(
+            standalone_signals, expected_model
         ), f"Standalone stream-model helper drift for model={model!r}"
 
 
