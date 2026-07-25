@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code, ANTHROPIC_BASE_URL, and Prompt Steganography: How to Audit AI API Relays</title>
+<meta name="description" content="What reported Claude Code prompt steganography means for ANTHROPIC_BASE_URL users, how to audit an AI API relay locally, and what the audit cannot prove.">
+<link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/guides/claude-code-anthropic-base-url-prompt-steganography.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Claude Code, ANTHROPIC_BASE_URL, and Prompt Steganography">
+<meta property="og:description" content="A practical, evidence-bounded guide to auditing AI API relays used by Claude Code.">
+<meta property="og:url" content="https://toby-bridges.github.io/api-relay-audit/guides/claude-code-anthropic-base-url-prompt-steganography.html">
+<meta property="og:image" content="https://toby-bridges.github.io/api-relay-audit/assets/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Claude Code, ANTHROPIC_BASE_URL, and Prompt Steganography">
+<meta name="twitter:description" content="How to audit the relay trust boundary without overclaiming what a local audit can prove.">
+<meta name="twitter:image" content="https://toby-bridges.github.io/api-relay-audit/assets/social-preview.png">
+<link rel="stylesheet" href="../assets/content.css">
+<style>
+h1{overflow-wrap:anywhere}
+.title-code{white-space:normal;word-break:break-all}
+@media(max-width:640px){.title-code{display:block;font-size:.82em;line-height:1.2}.title-comma{display:none}}
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://toby-bridges.github.io/api-relay-audit/guides/claude-code-anthropic-base-url-prompt-steganography.html#article",
+      "headline": "Claude Code, ANTHROPIC_BASE_URL, and Prompt Steganography: How to Audit AI API Relays",
+      "description": "What reported Claude Code prompt steganography means for ANTHROPIC_BASE_URL users, how to audit an AI API relay locally, and what the audit cannot prove.",
+      "datePublished": "2026-07-24",
+      "dateModified": "2026-07-24",
+      "mainEntityOfPage": "https://toby-bridges.github.io/api-relay-audit/guides/claude-code-anthropic-base-url-prompt-steganography.html",
+      "image": "https://toby-bridges.github.io/api-relay-audit/assets/social-preview.png",
+      "author": {
+        "@type": "Organization",
+        "name": "API Relay Audit maintainers",
+        "url": "https://github.com/toby-bridges/api-relay-audit"
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://toby-bridges.github.io/api-relay-audit/guides/claude-code-anthropic-base-url-prompt-steganography.html#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is prompt steganography the same as prompt injection?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Prompt steganography encodes a signal inside apparently ordinary prompt text. Prompt injection adds or changes instructions that can influence model behavior. They can share the same prompt transport, but they are different mechanisms and require different evidence."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can API Relay Audit detect Claude Code's reported hidden markers?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. API Relay Audit does not inspect the Claude Code binary or capture its raw system prompt. It independently probes the relay for prompt injection, model substitution, tool-call rewriting, SSE anomalies, error leakage, and related relay behavior."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why does ANTHROPIC_BASE_URL change the trust boundary?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "ANTHROPIC_BASE_URL points Claude Code at a gateway between the client and model provider. That gateway receives the request and credential used for the route, so its behavior should be tested and monitored before sensitive coding or agent traffic is trusted to it."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">Chinese</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
+<main class="wrap">
+  <div class="eyebrow">Claude Code Gateway Security</div>
+  <h1>Claude Code, <code class="title-code">ANTHROPIC_<wbr>BASE_<wbr>URL</code><span class="title-comma">,</span> and prompt steganography: how to audit AI API relays</h1>
+  <p class="lead">Prompt steganography hides a signal inside text that looks ordinary. A June 2026 reverse-engineering report said Claude Code 2.1.196 could vary punctuation and date formatting in its system context when a custom <code>ANTHROPIC_BASE_URL</code> was configured. That report raises a client-transparency question; it also highlights a separate operational question: what can the AI API relay itself see or change?</p>
+
+  <section class="note"><strong>Evidence boundary:</strong> API Relay Audit has not independently reproduced the reported Claude Code binary behavior. The project audits relay responses and protocol behavior; it does not inspect the Claude Code binary, decode client-side markers, or certify a relay as safe.</section>
+
+  <h2>What the technical report found</h2>
+  <p><a href="https://thereallo.dev/blog/claude-code-prompt-steganography">Thereallo's June 30, 2026 analysis</a> examined a local Claude Code 2.1.196 installation. It reported that a function building the current-date sentence could choose visually similar apostrophes and switch the date separator from hyphens to slashes. According to the report, the path was associated with a custom <code>ANTHROPIC_BASE_URL</code>, the machine timezone, and checks against hostname classifications.</p>
+  <p>The important distinction is provenance. These are findings reported from reverse engineering one version of the client, not findings produced by API Relay Audit and not proof that every Claude Code request contains a marker. The report itself says the path returns early when <code>ANTHROPIC_BASE_URL</code> is unset or points to the official Anthropic API endpoint.</p>
+
+  <h2>Why <code>ANTHROPIC_BASE_URL</code> matters</h2>
+  <p><a href="https://code.claude.com/docs/en/llm-gateway-connect">Anthropic's gateway documentation</a> describes <code>ANTHROPIC_BASE_URL</code> as the setting that points Claude Code at an LLM gateway. The gateway sits between Claude Code and the model provider, authenticates the route, and receives model requests. That can be useful for centralized credentials, usage controls, routing, and audit logs, but it also creates an intermediary trust boundary.</p>
+  <p><a href="https://www.wired.com/story/how-people-in-china-keep-outsmarting-anthropics-geolocation-restrictions/">WIRED's reporting on transfer stations</a> describes the broader risk: prompts and sensitive information sent through unsanctioned intermediaries may be exposed, retained, or sold. The practical response is not to treat every gateway as malicious. It is to make the relay path observable before sending proprietary code, tool output, secrets, or wallet-related traffic through it.</p>
+
+  <h2>Prompt steganography and relay prompt injection are different</h2>
+  <table>
+    <thead><tr><th>Question</th><th>Prompt steganography</th><th>Relay prompt injection</th></tr></thead>
+    <tbody>
+      <tr><td>Mechanism</td><td>Encodes a signal in apparently ordinary prompt text.</td><td>Adds or changes hidden instructions in transit.</td></tr>
+      <tr><td>Evidence source</td><td>Client binary analysis or raw outbound request comparison.</td><td>Token deltas, extraction probes, instruction conflicts, and repeated relay tests.</td></tr>
+      <tr><td>What this project covers</td><td>Not directly detected.</td><td>Audited as one of several relay behavior families.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>How to audit the relay before using it with Claude Code</h2>
+  <ol>
+    <li>Record the relay URL, claimed upstream model, expected API format, and the Claude Code version you intend to use. Do not publish the credential or raw private prompts.</li>
+    <li>Run API Relay Audit directly against the same relay endpoint. This creates an independent baseline outside the Claude Code client.</li>
+    <li>Review the Markdown report for prompt injection, model-identity conflicts, tool-call rewriting, SSE stream anomalies, context truncation, and error leakage.</li>
+    <li>Treat <code>inconclusive</code> as unresolved. A blocked or unsupported probe is not evidence that the route is clean.</li>
+    <li>If your question is specifically about client-side markers, capture and compare raw outbound requests in an authorized test environment. That requires client or network instrumentation outside API Relay Audit.</li>
+  </ol>
+
+  <pre class="code"><code>AUDIT_SCRIPT_REF=v2.3.0
+curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
+python audit.py --key &lt;YOUR_KEY&gt; --url &lt;ANTHROPIC_BASE_URL&gt; --output claude-code-relay-audit.md</code></pre>
+
+  <h2>What a useful result looks like</h2>
+  <div class="grid">
+    <section class="card"><h3>Corroborated anomaly</h3><p>Multiple probe families point to the same behavior, such as a token delta plus extracted hidden instructions. Preserve sanitized evidence and investigate before production use.</p></section>
+    <section class="card"><h3>Inconclusive route</h3><p>The relay blocks probes, changes format, or returns ambiguous evidence. Do not translate uncertainty into a clean verdict.</p></section>
+    <section class="card"><h3>No anomaly observed</h3><p>The tested probes did not find an anomaly in that run. This is not certification and does not rule out conditional, client-specific, or future behavior.</p></section>
+  </div>
+
+  <h2>What this audit cannot prove</h2>
+  <ul>
+    <li>It cannot verify or refute the reported implementation inside a particular Claude Code binary.</li>
+    <li>It cannot show exactly what Claude Code sent unless you separately capture the authorized client request.</li>
+    <li>It cannot certify the relay operator's retention, privacy, or upstream-provider claims.</li>
+    <li>It cannot rule out behavior triggered only by a particular account, hostname, timezone, client version, or time window.</li>
+  </ul>
+
+  <h2 id="faq">FAQ</h2>
+  <h3>Is prompt steganography the same as prompt injection?</h3>
+  <p>No. Prompt steganography encodes a signal inside apparently ordinary prompt text. Prompt injection adds or changes instructions that can influence model behavior. They can share the same prompt transport, but they are different mechanisms and require different evidence.</p>
+
+  <h3>Can API Relay Audit detect Claude Code's reported hidden markers?</h3>
+  <p>No. API Relay Audit does not inspect the Claude Code binary or capture its raw system prompt. It independently probes the relay for prompt injection, model substitution, tool-call rewriting, SSE anomalies, error leakage, and related relay behavior.</p>
+
+  <h3>Why does <code>ANTHROPIC_BASE_URL</code> change the trust boundary?</h3>
+  <p><code>ANTHROPIC_BASE_URL</code> points Claude Code at a gateway between the client and model provider. That gateway receives the request and credential used for the route, so its behavior should be tested and monitored before sensitive coding or agent traffic is trusted to it.</p>
+
+  <h2>Sources and further reading</h2>
+  <ul>
+    <li><a href="https://thereallo.dev/blog/claude-code-prompt-steganography">Thereallo: Claude Code Is Steganographically Marking Requests</a></li>
+    <li><a href="https://code.claude.com/docs/en/llm-gateway-connect">Anthropic: Connect Claude Code to an LLM gateway</a></li>
+    <li><a href="https://www.wired.com/story/how-people-in-china-keep-outsmarting-anthropics-geolocation-restrictions/">WIRED: How People in China Keep Outsmarting Anthropic's Geolocation Restrictions</a></li>
+    <li><a href="https://arxiv.org/abs/2604.08407">Liu et al.: Your Agent Is Mine - malicious intermediary attacks on the LLM supply chain</a></li>
+  </ul>
+
+  <div class="cta"><a class="button primary" href="https://github.com/toby-bridges/api-relay-audit">View API Relay Audit on GitHub</a><a class="button" href="audit-claude-api-relay-safely.html">Read the Claude relay audit guide</a></div>
+</main>
+<footer><div class="wrap">Related: <a href="detect-prompt-injection-llm-api-proxies.html">prompt injection in LLM proxies</a> &middot; <a href="what-is-ai-api-relay-proxy.html">what is an AI API relay?</a></div></footer>
+</body>
+</html>
