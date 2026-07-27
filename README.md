@@ -33,17 +33,6 @@ Use it when you rely on a third-party AI API relay, OpenAI-compatible proxy, Cla
 - **Run locally:** the standalone `audit.py` uses only Python stdlib plus `curl`; your API key is sent only to the relay URL you choose.
 - **Produce reviewable evidence:** each run generates a structured Markdown report with per-step findings and a final `LOW / MEDIUM / HIGH` verdict.
 
-## Query Family Boundaries
-
-| Query family | User intent | Profile / steps | Evidence boundary |
-|---|---|---|---|
-| API relay audit | Audit a third-party relay, mirror, gateway, LLM proxy, or resale API before trusting traffic. | `general` by default; `full` for every probe | Produces a local report, not a safety certificate. |
-| Prompt injection audit | Detect hidden prompt injection, prompt leakage, instruction override, and extraction behavior. | `general`; Steps 3-6 | Records prompt evidence without publishing private prompts or secrets. |
-| Model substitution signals | Collect model identity, stream, latency, and upstream channel signals. | `general`; Steps 5, 10, 13, 14 | Self-ID, latency, and channel fingerprints are signals, not standalone proof of provider substitution. |
-| Web3 relay audit | Check wallet-sensitive relay behavior before agent workflows touch signing or transactions. | `web3` or `full`; Step 11 | Profile-gated; general relay audits do not imply wallet safety. |
-
-The canonical contract lives in [docs/query-families.md](./docs/query-families.md). README headings, Pages cards, issue templates, and skill descriptions should preserve these boundaries instead of flattening them into one slogan.
-
 ## Quick Start
 
 ```bash
@@ -58,6 +47,32 @@ python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report
 
 See a public-safe fixture report: [sanitized audit report](./docs/examples/sanitized-audit-report.md).
 Use `master` as `AUDIT_SCRIPT_REF` only when intentionally testing unreleased changes.
+
+> If API Relay Audit helps you evaluate a relay before sending real traffic, [star the repository](https://github.com/toby-bridges/api-relay-audit) to follow new detector coverage and release-tested updates.
+
+## When to Use It
+
+- You use a third-party AI API relay, mirror, gateway, or LLM proxy.
+- You want to check whether a Claude-compatible or OpenAI-compatible proxy injects prompts, swaps models, truncates context, or rewrites tool output.
+- You are testing relay behavior before production traffic, coding-agent automation, package-install suggestions, or wallet-related actions.
+- You need a local, repeatable audit report instead of a web tool that asks for your API key.
+
+## What It Does Not Claim
+
+- It does not certify that a relay is safe.
+- It does not replace manual security review or operational monitoring.
+- It does not treat `inconclusive` as `clean`; blocked probes and ambiguous responses stay visible in the report.
+
+## Query Family Boundaries
+
+| Query family | User intent | Profile / steps | Evidence boundary |
+|---|---|---|---|
+| API relay audit | Audit a third-party relay, mirror, gateway, LLM proxy, or resale API before trusting traffic. | `general` by default; `full` for every probe | Produces a local report, not a safety certificate. |
+| Prompt injection audit | Detect hidden prompt injection, prompt leakage, instruction override, and extraction behavior. | `general`; Steps 3-6 | Records prompt evidence without publishing private prompts or secrets. |
+| Model substitution signals | Collect model identity, stream, latency, and upstream channel signals. | `general`; Steps 5, 10, 13, 14 | Self-ID, latency, and channel fingerprints are signals, not standalone proof of provider substitution. |
+| Web3 relay audit | Check wallet-sensitive relay behavior before agent workflows touch signing or transactions. | `web3` or `full`; Step 11 | Profile-gated; general relay audits do not imply wallet safety. |
+
+The canonical contract lives in [docs/query-families.md](./docs/query-families.md). README headings, Pages cards, issue templates, and skill descriptions should preserve these boundaries instead of flattening them into one slogan.
 
 ## Coverage
 
@@ -93,19 +108,6 @@ audit a relay before trusting it with coding, tool, or wallet-related traffic.
 
 These skills do not certify that a relay is safe. They help agents generate a
 local, reviewable Markdown report before trusting a relay path.
-
-## When to Use It
-
-- You use a third-party AI API relay, mirror, gateway, or LLM proxy.
-- You want to check whether a Claude-compatible or OpenAI-compatible proxy injects prompts, swaps models, truncates context, or rewrites tool output.
-- You are testing relay behavior before production traffic, coding-agent automation, package-install suggestions, or wallet-related actions.
-- You need a local, repeatable audit report instead of a web tool that asks for your API key.
-
-## What It Does Not Claim
-
-- It does not certify that a relay is safe.
-- It does not replace manual security review or operational monitoring.
-- It does not treat `inconclusive` as `clean`; blocked probes and ambiguous responses stay visible in the report.
 
 ## Evidence Boundaries
 
