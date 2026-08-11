@@ -7,13 +7,15 @@ from api_relay_audit.connectivity import CONNECTIVITY_PROMPT, run_connectivity_c
 
 
 class FakeClient:
-    def __init__(self, responses, api_key="sk-secret-connectivity"):
+    def __init__(self, responses, api_key="sk-secret-connectivity",
+                 insecure_tls_used=False):
         self.base_url = "https://relay.example.com/v1"
         self.api_key = api_key
         self.model = "claude-test"
         self.timeout = 17
         self._responses = list(responses)
         self.calls = []
+        self.insecure_tls_used = insecure_tls_used
 
     def raw_request(self, method, path, headers, body, content_type, timeout):
         self.calls.append({
@@ -119,6 +121,17 @@ def test_both_formats_success_reports_ok():
     assert result["successful_formats"] == ["Anthropic Chat", "OpenAI Chat"]
     assert "9/1" in result["markdown"]
     assert "8/1" in result["markdown"]
+
+
+def test_actual_insecure_tls_use_is_prominent_and_preserved_in_next_step():
+    client = FakeClient(
+        [anthropic_ok(), openai_ok()], insecure_tls_used=True,
+    )
+
+    result = run_connectivity_check(client)
+
+    assert "TLS certificate verification was disabled" in result["markdown"]
+    assert "--allow-insecure-tls" in result["markdown"]
 
 
 @pytest.mark.parametrize(

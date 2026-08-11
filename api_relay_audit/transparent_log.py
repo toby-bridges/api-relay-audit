@@ -2,11 +2,13 @@
 
 Records every API request made during an audit run with timestamp,
 URL, SHA-256 of request/response bytes, status code, response
-headers, and transport metadata. **Hash only, not body** — keeps
+headers, TLS-verification state, and transport metadata. **Hash only, not body** — keeps
 entries <=1.5 KB and avoids credential-at-rest risk.
 
-TLS metadata capture is deferred to a follow-up commit; the
+TLS protocol/cipher capture is deferred to a follow-up commit; the
 ``tls_version`` and ``tls_cipher`` fields are always ``null`` for now.
+``tls_verification_disabled`` records whether the individual request
+used explicitly authorised curl ``-k``.
 """
 
 import hashlib

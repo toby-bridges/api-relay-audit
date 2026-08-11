@@ -54,3 +54,22 @@ references:
         given-names: "Yang"
     year: 2026
     url: "https://arxiv.org/abs/2603.01919"
+  - type: article
+    title: "The Proxy Knows Too Much: Sealing LLM API Routers with Attested TEEs"
+    authors:
+      - family-names: "Xie"
+        given-names: "Sipeng"
+      - family-names: "Wu"
+        given-names: "Qianhong"
+      - family-names: "Lu"
+        given-names: "Hengrun"
+      - family-names: "Sun"
+        given-names: "Ziliang"
+      - family-names: "Wu"
+        given-names: "Qi"
+      - family-names: "Qin"
+        given-names: "Bo"
+      - family-names: "Wang"
+        given-names: "Qin"
+    year: 2026
+    url: "https://arxiv.org/abs/2606.16358"

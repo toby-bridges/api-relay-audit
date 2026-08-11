@@ -64,15 +64,20 @@ class Section:
 
 
 STANDALONE_TRANSPORT_WRAPPERS = r'''
-def httpx_post_json(url: str, headers: dict, body: dict, timeout: int) -> dict:
+def httpx_post_json(url: str, headers: dict, body: dict, timeout: int,
+                    allow_insecure_tls: bool = False) -> dict:
     """Standalone compatibility wrapper: use curl for the modular httpx slot."""
-    return curl_post_json(url, headers, body, timeout)
+    return curl_post_json(
+        url, headers, body, timeout, allow_insecure_tls=allow_insecure_tls
+    )
 
 
-def httpx_get_json_data(url: str, headers: dict, timeout: int = 15):
+def httpx_get_json_data(url: str, headers: dict, timeout: int = 15,
+                        allow_insecure_tls: bool = False):
     """Standalone compatibility wrapper: GET JSON through curl -i."""
     cmd = [
-        "curl", "-sk", *curl_loopback_no_proxy_args(url),
+        "curl", "-s", *curl_insecure_tls_args(url, allow_insecure_tls),
+        *curl_loopback_no_proxy_args(url),
         "-i", url, "--max-time", str(timeout), "--config", "-"
     ]
     config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
@@ -98,7 +103,8 @@ def httpx_get_json_data(url: str, headers: dict, timeout: int = 15):
 
 
 def httpx_raw_request(method: str, url: str, headers: dict, body: bytes,
-                      content_type: str, timeout: int) -> dict:
+                      content_type: str, timeout: int,
+                      allow_insecure_tls: bool = False) -> dict:
     """Standalone compatibility wrapper: raw request through curl -i."""
     return curl_raw_request(
         method,
@@ -108,11 +114,13 @@ def httpx_raw_request(method: str, url: str, headers: dict, body: bytes,
         content_type,
         timeout,
         parser=_parse_curl_i_output,
+        allow_insecure_tls=allow_insecure_tls,
     )
 
 
 class _StandaloneTransport:
     curl_loopback_no_proxy_args = staticmethod(curl_loopback_no_proxy_args)
+    curl_insecure_tls_args = staticmethod(curl_insecure_tls_args)
     curl_post_json = staticmethod(curl_post_json)
     httpx_post_json = staticmethod(httpx_post_json)
     curl_get_json_data = staticmethod(curl_get_json_data)

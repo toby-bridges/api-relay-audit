@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 722d1c65bf44ee9c8dff2a62a826800db09f2d3419396c739d6d19fcec63190a
-# standalone_body_sha256: 8040f23082bd40681bfdefc52a52af0d3657de5567df51fef3b05d1fab7cd54a
+# source_sha256: e77f094760d1c2cf5c8ae42e18a84d8c13a46c1df4e3bfc4c9219094d1d27132
+# standalone_body_sha256: 702215d4ec811bae1e06173a7be1a19fd88f9202e99dc05fbdf2e25ca2121354
 # END GENERATED STANDALONE HEADER
 
 """
@@ -54,11 +54,13 @@ from urllib.parse import urlparse
 
 Records every API request made during an audit run with timestamp,
 URL, SHA-256 of request/response bytes, status code, response
-headers, and transport metadata. **Hash only, not body** — keeps
+headers, TLS-verification state, and transport metadata. **Hash only, not body** — keeps
 entries <=1.5 KB and avoids credential-at-rest risk.
 
-TLS metadata capture is deferred to a follow-up commit; the
+TLS protocol/cipher capture is deferred to a follow-up commit; the
 ``tls_version`` and ``tls_cipher`` fields are always ``null`` for now.
+``tls_verification_disabled`` records whether the individual request
+used explicitly authorised curl ``-k``.
 """
 
 import hashlib
@@ -620,7 +622,15 @@ def curl_loopback_no_proxy_args(url: str) -> list:
     return []
 
 
+def curl_insecure_tls_args(url: str, allow_insecure_tls: bool = False) -> list:
+    """Return ``-k`` only for explicitly authorised HTTPS requests."""
+    if allow_insecure_tls and urlparse(url).scheme.lower() == "https":
+        return ["-k"]
+    return []
+
+
 def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
+                   allow_insecure_tls: bool = False,
                    subprocess_module=subprocess) -> dict:
     """POST JSON through curl while keeping headers out of argv.
 
@@ -637,7 +647,8 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
             json.dump(body, tmp)
             body_path = tmp.name
 
-        cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-X", "POST", url,
+        cmd = ["curl", "-s", *curl_insecure_tls_args(url, allow_insecure_tls),
+               *curl_loopback_no_proxy_args(url), "-X", "POST", url,
                "--max-time", str(timeout), "--config", "-", "--data-binary", f"@{body_path}"]
         config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
         r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
@@ -657,9 +668,11 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
 
 
 def curl_get_json_data(url: str, headers: dict, timeout: int = 15,
+                       allow_insecure_tls: bool = False,
                        subprocess_module=subprocess) -> list:
     """GET JSON through curl and return the top-level ``data`` list."""
-    cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), url,
+    cmd = ["curl", "-s", *curl_insecure_tls_args(url, allow_insecure_tls),
+           *curl_loopback_no_proxy_args(url), url,
            "--max-time", str(timeout), "--config", "-"]
     config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
     r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
@@ -675,10 +688,12 @@ def curl_get_json_data(url: str, headers: dict, timeout: int = 15,
 
 def curl_raw_request(method: str, url: str, headers: dict, body: bytes,
                      content_type: str, timeout: int, parser,
+                     allow_insecure_tls: bool = False,
                      subprocess_module=subprocess) -> dict:
     """Raw request through curl and parse ``curl -i`` output with ``parser``."""
     all_headers = {**headers, "content-type": content_type}
-    cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-i", "-X", method, url,
+    cmd = ["curl", "-s", *curl_insecure_tls_args(url, allow_insecure_tls),
+           *curl_loopback_no_proxy_args(url), "-i", "-X", method, url,
            "--max-time", str(timeout), "--data-binary", "@-"]
     for k, v in all_headers.items():
         cmd.extend(["-H", f"{k}: {v}"])
@@ -694,15 +709,20 @@ def curl_raw_request(method: str, url: str, headers: dict, body: bytes,
     except Exception as e:
         return {"status": 0, "headers": {}, "body": "", "error": str(e)}
 
-def httpx_post_json(url: str, headers: dict, body: dict, timeout: int) -> dict:
+def httpx_post_json(url: str, headers: dict, body: dict, timeout: int,
+                    allow_insecure_tls: bool = False) -> dict:
     """Standalone compatibility wrapper: use curl for the modular httpx slot."""
-    return curl_post_json(url, headers, body, timeout)
+    return curl_post_json(
+        url, headers, body, timeout, allow_insecure_tls=allow_insecure_tls
+    )
 
 
-def httpx_get_json_data(url: str, headers: dict, timeout: int = 15):
+def httpx_get_json_data(url: str, headers: dict, timeout: int = 15,
+                        allow_insecure_tls: bool = False):
     """Standalone compatibility wrapper: GET JSON through curl -i."""
     cmd = [
-        "curl", "-sk", *curl_loopback_no_proxy_args(url),
+        "curl", "-s", *curl_insecure_tls_args(url, allow_insecure_tls),
+        *curl_loopback_no_proxy_args(url),
         "-i", url, "--max-time", str(timeout), "--config", "-"
     ]
     config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
@@ -728,7 +748,8 @@ def httpx_get_json_data(url: str, headers: dict, timeout: int = 15):
 
 
 def httpx_raw_request(method: str, url: str, headers: dict, body: bytes,
-                      content_type: str, timeout: int) -> dict:
+                      content_type: str, timeout: int,
+                      allow_insecure_tls: bool = False) -> dict:
     """Standalone compatibility wrapper: raw request through curl -i."""
     return curl_raw_request(
         method,
@@ -738,11 +759,13 @@ def httpx_raw_request(method: str, url: str, headers: dict, body: bytes,
         content_type,
         timeout,
         parser=_parse_curl_i_output,
+        allow_insecure_tls=allow_insecure_tls,
     )
 
 
 class _StandaloneTransport:
     curl_loopback_no_proxy_args = staticmethod(curl_loopback_no_proxy_args)
+    curl_insecure_tls_args = staticmethod(curl_insecure_tls_args)
     curl_post_json = staticmethod(curl_post_json)
     httpx_post_json = staticmethod(httpx_post_json)
     curl_get_json_data = staticmethod(curl_get_json_data)
@@ -767,8 +790,10 @@ Eliminates duplicated API calling logic across scripts.
 import hashlib
 import json
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 
 
@@ -799,7 +824,7 @@ def _extract_anthropic_text(content) -> str:
 
 
 def _parse_curl_i_output(output: str) -> dict:
-    """Parse ``curl -i`` (or ``curl -sk -i``) stdout into a response dict.
+    """Parse ``curl -s [-k] -i`` stdout into a response dict.
 
     Handles HTTP/1.x and HTTP/2 status lines and normalises ``\\r\\n`` line
     endings. A leading ``HTTP/X 100 Continue`` preface is skipped so the
@@ -1031,8 +1056,9 @@ class APIClient:
     On the first ``call()``, the client tries the Anthropic native message
     format and, if that fails, falls back to the OpenAI-compatible
     ``/chat/completions`` endpoint.  If a Python-level SSL error is
-    encountered, the transport silently switches to a ``curl -sk``
-    subprocess so the audit can continue against self-signed relays.
+    encountered, the transport switches to a certificate-verifying curl
+    subprocess. Certificate verification is disabled only when the caller
+    explicitly authorises it.
 
     Attributes:
         base_url: Root URL of the relay (trailing slash stripped).
@@ -1040,10 +1066,13 @@ class APIClient:
         model: Model identifier forwarded to the relay.
         timeout: Per-request timeout in seconds.
         verbose: If ``True``, diagnostic messages are printed to stdout.
+        allow_insecure_tls: Whether HTTPS curl requests may disable certificate
+            verification. Defaults to False.
     """
 
     def __init__(self, base_url: str, api_key: str, model: str,
-                 timeout: int = 120, verbose: bool = True):
+                 timeout: int = 120, verbose: bool = True,
+                 allow_insecure_tls: bool = False):
         """Initialise the client.
 
         Args:
@@ -1053,14 +1082,20 @@ class APIClient:
             model: Model identifier to include in every request body.
             timeout: HTTP / curl timeout in seconds. Defaults to 120.
             verbose: Whether to print diagnostic log lines. Defaults to True.
+            allow_insecure_tls: Permit curl to use ``-k`` for HTTPS requests.
+                Defaults to False. Merely granting permission does not mark it
+                as used; an HTTPS request must actually run through curl.
         """
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self.verbose = verbose
+        self.allow_insecure_tls = allow_insecure_tls
         self._format = None   # "anthropic" | "openai" | None (auto)
         self._use_curl = True
+        self._insecure_tls_used = False
+        self._insecure_tls_warning_emitted = False
         self._transparent_logger = None  # Optional[TransparentLogger]
 
     @property
@@ -1073,15 +1108,48 @@ class APIClient:
         """
         return self._format
 
+    @property
+    def insecure_tls_used(self) -> bool:
+        """Return whether an HTTPS curl request actually disabled TLS checks."""
+        return self._insecure_tls_used
+
     def _log(self, msg: str):
         if self.verbose:
             print(msg)
+
+    def _authorise_insecure_tls_for(self, url: str) -> bool:
+        """Mark and authorise ``curl -k`` for one HTTPS request if allowed."""
+        authorised = (
+            self.allow_insecure_tls
+            and urlparse(url).scheme.lower() == "https"
+        )
+        if not authorised:
+            return False
+        self._insecure_tls_used = True
+        if not self._insecure_tls_warning_emitted:
+            print(
+                "  [WARNING] TLS certificate verification disabled for an HTTPS "
+                "curl request (--allow-insecure-tls). Audit evidence integrity is reduced.",
+                file=sys.stderr,
+            )
+            self._insecure_tls_warning_emitted = True
+        return True
+
+    def _tls_verification_disabled_for(self, url: str) -> bool:
+        """Return the per-request TLS state used by transparent logging."""
+        return bool(
+            self._use_curl
+            and self.allow_insecure_tls
+            and urlparse(url).scheme.lower() == "https"
+        )
 
     # -- Low-level transport --------------------------------------------------
 
     def _curl_post(self, url: str, headers: dict, body: dict) -> dict:
         return _transport.curl_post_json(
-            url, headers, body, self.timeout, subprocess_module=subprocess)
+            url, headers, body, self.timeout,
+            allow_insecure_tls=self._authorise_insecure_tls_for(url),
+            subprocess_module=subprocess)
 
     def _post(self, url: str, headers: dict, body: dict) -> dict:
         if self._use_curl:
@@ -1300,10 +1368,14 @@ class APIClient:
         return anthropic_result or openai_result or self._error_result("Both formats failed")
 
     def _handle_ssl_error(self, e: Exception) -> bool:
-        """Switch to curl on SSL errors. Returns True if retry is warranted."""
+        """Switch to curl on SSL/connect errors. Returns True for one retry.
+
+        Curl still verifies certificates unless ``allow_insecure_tls`` was
+        explicitly enabled by the caller.
+        """
         if not self._use_curl and ("SSL" in str(e) or "Connect" in type(e).__name__):
             self._use_curl = True
-            self._log("  [transport] Python SSL error, switching to curl")
+            self._log("  [transport] Python SSL/connect error, switching to curl")
             return True
         return False
 
@@ -1346,6 +1418,7 @@ class APIClient:
             "response_headers": response_headers,
             "tls_version": None,   # deferred to follow-up commit
             "tls_cipher": None,    # deferred to follow-up commit
+            "tls_verification_disabled": self._tls_verification_disabled_for(url),
             "elapsed_seconds": round(elapsed, 3),
             "transport": "curl" if self._use_curl else "httpx",
             "error": redact_error(error),
@@ -1386,7 +1459,9 @@ class APIClient:
             try:
                 if self._use_curl:
                     data = _transport.curl_get_json_data(
-                        url, headers, subprocess_module=subprocess)
+                        url, headers,
+                        allow_insecure_tls=self._authorise_insecure_tls_for(url),
+                        subprocess_module=subprocess)
                     if data:
                         self._log_transparent(
                             "get_models", url, "GET", None,
@@ -1479,12 +1554,14 @@ class APIClient:
                           body: bytes, content_type: str, timeout: int) -> dict:
         """Curl-based fallback for ``raw_request``.
 
-        Uses ``curl -sk -i -X <method>`` to capture both headers and body
-        on stdout. Ignores self-signed certificate errors (``-k``).
+        Uses ``curl -s -i -X <method>`` to capture both headers and body
+        on stdout. ``-k`` is added only for explicitly authorised HTTPS.
         """
         return _transport.curl_raw_request(
             method, url, headers, body, content_type, timeout,
-            parser=_parse_curl_i_output, subprocess_module=subprocess)
+            parser=_parse_curl_i_output,
+            allow_insecure_tls=self._authorise_insecure_tls_for(url),
+            subprocess_module=subprocess)
 
     # -- Streaming (Step 10 stream integrity) --------------------------------
 
@@ -1589,7 +1666,11 @@ class APIClient:
         incremental stream.
         """
         cmd = [
-            "curl", "-sk", *_transport.curl_loopback_no_proxy_args(url),
+            "curl", "-s",
+            *_transport.curl_insecure_tls_args(
+                url, self._authorise_insecure_tls_for(url)
+            ),
+            *_transport.curl_loopback_no_proxy_args(url),
             "-N", "--no-buffer", "-X", "POST", url,
             "--max-time", str(timeout),
             "-w", f"\n{CURL_STATUS_SENTINEL}%{{http_code}}\n",
@@ -2001,12 +2082,14 @@ def _render_status(status: int) -> str:
 def _next_step(verdict: str, client) -> str:
     url = shlex.quote(client.base_url)
     model = shlex.quote(client.model)
+    insecure_tls_flag = " --allow-insecure-tls" if client.insecure_tls_used else ""
     if verdict in ("OK", "WARNING"):
         return (
             "Connectivity reached at least one chat format. For the full security audit, run:\n\n"
             "```bash\n"
             "export API_RELAY_AUDIT_KEY=sk-...\n"
-            f"python3 audit.py --key \"$API_RELAY_AUDIT_KEY\" --url {url} --model {model} --output report.md\n"
+            f"python3 audit.py --key \"$API_RELAY_AUDIT_KEY\" --url {url} "
+            f"--model {model}{insecure_tls_flag} --output report.md\n"
             "```"
         )
     return (
@@ -2030,11 +2113,20 @@ def render_connectivity_report(result: dict) -> str:
         "",
         "This is a quick connectivity check, not a security audit. It does not produce a LOW/MEDIUM/HIGH risk rating.",
         "",
+    ]
+    if client.insecure_tls_used:
+        lines.extend([
+            "> **WARNING:** TLS certificate verification was disabled for one or "
+            "more HTTPS requests under explicit `--allow-insecure-tls` authorization. "
+            "Connectivity was observed, but the transport was not authenticated end to end.",
+            "",
+        ])
+    lines.extend([
         "## Probe Results",
         "",
         "| Format | Endpoint | Auth style | HTTP status | Elapsed | Tokens | Text preview | Diagnostic |",
         "|---|---|---|---:|---:|---:|---|---|",
-    ]
+    ])
     for probe in result["probes"]:
         tokens = (
             f"{_render_token_count(probe.input_tokens)}/"
@@ -5064,6 +5156,12 @@ def parse_args():
                    help="Send N benign requests before the audit to mitigate "
                         "request-count-gated backdoors (AC-1.b). Default: 0")
     p.add_argument("--timeout", type=int, default=120, help="Request timeout in seconds")
+    p.add_argument("--allow-insecure-tls",
+        action="store_true",
+        help="Explicitly allow HTTPS curl requests to disable certificate "
+             "verification. Use only for relays with a known self-signed "
+             "certificate; actual use raises a LOW audit to MEDIUM.",
+    )
     p.add_argument("--output", default=None, help="Report output path (markdown)")
     p.add_argument("--transparent-log", default=None, metavar="PATH",
                    help="Path to an append-only JSONL forensic log (arXiv §7.3). "
@@ -6482,7 +6580,13 @@ def _run_step(name, reporter, step_fn, *args, default=None, crashes=None):
 
 def main():
     args = parse_args()
-    client = APIClient(args.url, args.key, args.model, timeout=args.timeout)
+    client = APIClient(
+        args.url,
+        args.key,
+        args.model,
+        timeout=args.timeout,
+        allow_insecure_tls=args.allow_insecure_tls,
+    )
 
     # v1.7.7: transparent forensic log (arXiv §7.3)
     _transparent_logger = None
@@ -6698,6 +6802,14 @@ def main():
     #   d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_crashed -> MEDIUM
     #   else                                        -> LOW
     report.h2("14. Overall Rating")
+    tls_evidence_degraded = client.insecure_tls_used
+    if tls_evidence_degraded:
+        report.flag(
+            "yellow",
+            "TLS certificate verification was disabled for one or more HTTPS "
+            "curl requests under explicit `--allow-insecure-tls` authorization. "
+            "This is an evidence-integrity qualifier outside the 6D attack matrix.",
+        )
     any_step_crashed = bool(step_crashes)
     d1 = injection is not None and injection > 100
     d1i = injection is None
@@ -6761,7 +6873,8 @@ def main():
     elif d2:
         report.p("### MEDIUM RISK\n")
         report.p("No significant injection but instruction override detected.")
-    elif d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_step_crashed:
+    elif (d1i or d2i or d3i or d4i or d4m or d5i or d6i
+          or any_step_crashed or tls_evidence_degraded):
         report.p("### MEDIUM RISK\n")
         medium_reasons = []
         if any_step_crashed:
@@ -6810,6 +6923,12 @@ def main():
                 "Web3 prompt injection test (Step 11) was **inconclusive**: all "
                 "three Web3 probes errored or produced ambiguous responses, so "
                 "Web3 safety behavior could not be verified."
+            )
+        if tls_evidence_degraded:
+            medium_reasons.append(
+                "TLS certificate verification was **disabled** for at least one "
+                "HTTPS request. The relay results may be usable for diagnostics, "
+                "but the transport evidence is not authenticated end to end."
             )
         report.p(" ".join(medium_reasons))
     else:
