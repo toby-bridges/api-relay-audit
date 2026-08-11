@@ -24,7 +24,7 @@ metadata:
 
 # API Relay Security Audit (API 中转站安全审计)
 
-A self-contained 14-step security audit for third-party AI API relay/proxy services (中转站). One script, zero config, full report. Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407. Infrastructure fingerprinting, latency variance, and upstream channel classification are sourced from Zhang et al., *Real Money, Fake Models*, arXiv:2603.01919.
+A self-contained 14-step security audit for third-party AI API relay/proxy services (中转站). One script, zero config, full report. Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407. Infrastructure fingerprinting, latency variance, and upstream channel classification are sourced from Zhang et al., *Real Money, Fake Models*, arXiv:2603.01919. Explicit relay-evidence and transport trust boundaries are informed by Xie et al., *The Proxy Knows Too Much*, arXiv:2606.16358; the tool does not implement TEE attestation.
 
 ## Quick Start (快速开始)
 
@@ -55,7 +55,7 @@ Runs a 14-step automated audit against any OpenAI-compatible or Anthropic-compat
 | 7 | Context length (上下文长度测试) | Canary markers at intervals, coarse scan then binary search for truncation boundary |
 | 8 | Tool-call substitution (工具调用改写, AC-1.a) | Pinned `pip install` / `npm install` / `cargo add` / `go get` probes; character-level diff against expected to detect package-name rewriting on the return path (`requests` -> `reqeusts` typosquat) |
 | 9 | Error response leakage (错误响应泄漏, AC-2 adjacent) | 7-8 deterministic broken requests (malformed JSON, invalid model, wrong content-type, missing fields, unknown endpoint, force_upstream_error, auth_probe, optional 256 KB oversized body); scans the error body and response headers for echoed credentials, upstream URLs, env var names, filesystem paths, stack traces, LiteLLM internal field leaks, and Bedrock guardrail PII echoes |
-| 10 | Stream integrity (流完整性, AC-1 SSE-level) | Opens an Anthropic streaming request with thinking enabled, captures every SSE event, and verifies 4 invariants: all event types are in the known set (ping/message_start/content_block_start/content_block_delta/content_block_stop/message_delta/message_stop); `output_tokens` is monotonically non-decreasing; `input_tokens` is consistent across message_start and message_delta; `signature_delta` events have non-empty signatures. Also checks `message_start.message.model` contains `claude`. Concept sourced from hvoy.ai `claude_detector.py`. |
+| 10 | Stream integrity (流完整性, AC-1 SSE-level) | Opens an Anthropic streaming request with thinking enabled, captures every SSE event, and verifies 5 invariants: known event types; monotonic `output_tokens`; consistent `input_tokens`; non-empty `signature_delta`; and exactly one terminal `message_stop` after `message_start` (trailing `ping` allowed). Also checks `message_start.message.model` contains `claude`. The first four concepts are sourced from hvoy.ai `claude_detector.py`; the completeness gate is local hardening informed by arXiv:2606.16358's trust-boundary analysis. |
 | 11 | Web3 prompt injection (Web3 注入, `--profile web3` only) | 3 SlowMist signature-isolation probes targeting wallet safety: ETH transfer guidance, sign-transaction refusal, private-key leak refusal. Safe-priority classifier with hard-injection override for contradictory responses. |
 | 12 | Infrastructure fingerprint (基础设施指纹) | Unauthenticated `GET /`, `/v1/models`, and nonexistent-endpoint probes classify known relay frameworks such as One API / New API, LobeChat, FastGPT, Cloudflare, nginx, and Caddy. Informational only. |
 | 13 | Latency variance (延迟方差指纹) | Repeated identical low-token requests measure latency distribution and flag variable or bimodal routing patterns that may suggest queue multiplexing or silent model/provider substitution. Informational only. |
@@ -293,6 +293,7 @@ python audit.py [OPTIONS]
 | `--transparent-log` | No | -- | Path to append-only JSONL forensic log (arXiv §7.3 取证日志) |
 | `--warmup` | No | 0 | Send N benign requests before the audit to mitigate AC-1.b request-count gates (审计前预热次数) |
 | `--timeout` | No | 120 | Request timeout in seconds (请求超时秒数) |
+| `--allow-insecure-tls` | No | false | Allow HTTPS curl requests to skip certificate verification; actual use is warned, logged, and prevents a LOW rating (显式授权不安全 TLS) |
 | `--output` | No | stdout | Path for the Markdown report (报告输出路径) |
 
 ## Troubleshooting (常见问题)
@@ -303,7 +304,7 @@ python audit.py [OPTIONS]
 httpx.ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED]
 ```
 
-The script has built-in `curl` fallback. Look for `[Transport] Python SSL error, switching to curl` in output. No action needed -- it self-recovers.
+The modular client has a built-in curl fallback. Look for `[transport] Python SSL/connect error, switching to curl` in output. The retry still verifies TLS certificates by default. If the relay intentionally uses a self-signed certificate and you have independently verified the endpoint, rerun with `--allow-insecure-tls`; the first actual HTTPS curl use prints a warning and degrades an otherwise LOW full-audit verdict to MEDIUM.
 
 ### API Format Detection Failure (API 格式检测失败)
 

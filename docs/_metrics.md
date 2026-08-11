@@ -16,23 +16,23 @@
 | 单文件版版本 | `v2.3` | `audit.py` docstring |
 | 步骤数 (Step N) | **14** | grep `Step N` in `scripts/audit.py` |
 | 步骤数 (单文件版) | 14 | grep `Step N` in `audit.py` |
-| 测试数 (pytest) | **778** | `pytest --collect-only` |
-| 测试数 (static) | 754 | grep `def test_*` in tests/ |
-| CLI flag 数 | 21 | grep `add_argument("--*")` |
+| 测试数 (pytest) | **800** | `pytest --collect-only` |
+| 测试数 (static) | 773 | grep `def test_*` in tests/ |
+| CLI flag 数 | 22 | grep `add_argument("--*")` |
 | profile 选项 | general, web3, full | argparse choices |
-| ROADMAP 上次更新 | 2026-06-07 | `ROADMAP.md` 头部 |
+| ROADMAP 上次更新 | 2026-08-12 | `ROADMAP.md` 头部 |
 | Codex review 提及次数 | 4 | grep `Codex review (cycle\|round)` 在 Shipped 节 |
 | Codex review 已编号轮次（最大） | 6 | grep `Nth Codex review round` |
 | Codex bug 累计（最新声称） | 18 | grep `cumulative N real bug` |
-| 测试数演进 (ROADMAP) | [546, 560, 562, 586, 642, 700, 778] | grep `Final test count: N/N passing` |
-| Recorded commit SHA | `eeb9a2c` | recent reachable commit; `--check` allows follow-up metrics commits |
+| 测试数演进 (ROADMAP) | [546, 560, 562, 586, 642, 700, 778, 800] | grep `Final test count: N/N passing` |
+| Recorded commit SHA | `a8db16a` | recent reachable commit; `--check` allows follow-up metrics commits |
 | Recorded commit date | 2026-06-07 | recent reachable commit; `--check` allows follow-up metrics commits |
 
 ## 一致性自检
 
 - ✅ 版本一致：两份都是 `v2.3`。
 - ✅ 步骤数一致：14。
-- ℹ️ pytest (778) vs 静态 (754) 差距 >20，多出来的来自 parametrize/fixture——以 pytest 为准。
+- ℹ️ pytest (800) vs 静态 (773) 差距 >20，多出来的来自 parametrize/fixture——以 pytest 为准。
 
 ## 人工 review 边界（脚本抓不到，每次发布要人工核对）
 

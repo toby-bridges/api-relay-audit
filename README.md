@@ -32,6 +32,7 @@ Use it when you rely on a third-party AI API relay, OpenAI-compatible proxy, Cla
 - **Detect relay tampering:** prompt injection, prompt extraction, identity consistency signals, context truncation, tool-call rewriting, error-response leakage, and SSE stream anomalies.
 - **Run locally:** the standalone `audit.py` uses only Python stdlib plus `curl`; your API key is sent only to the relay URL you choose.
 - **Produce reviewable evidence:** each run generates a structured Markdown report with per-step findings and a final `LOW / MEDIUM / HIGH` verdict.
+- **Keep transport trust explicit:** curl verifies TLS certificates by default. `--allow-insecure-tls` is an opt-in diagnostic escape hatch; actual HTTPS use is reported and prevents a LOW verdict.
 
 ## Query Family Boundaries
 
@@ -142,8 +143,8 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 | Version | `v2.3` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
-| pytest collected tests | 778 |
-| CLI flags | 21 |
+| pytest collected tests | 800 |
+| CLI flags | 22 |
 | Runtime profiles | `general`, `web3`, `full` |
 
 ## Example Report And Live Page
@@ -187,7 +188,11 @@ Tool-call rewriting means the relay modifies package-install commands or tool-li
 
 ### What are SSE anomalies?
 
-SSE anomalies are stream-level integrity issues in Anthropic-style streaming responses. API Relay Audit checks event types, usage monotonicity, thinking signatures, and stream model identity when the relay supports that format.
+SSE anomalies are stream-level integrity issues in Anthropic-style streaming responses. API Relay Audit checks event types, usage monotonicity, thinking signatures, stream model identity, and terminal completeness. A clean stream must contain exactly one `message_stop` after `message_start`; only trailing `ping` events are allowed.
+
+### What if the relay uses a self-signed TLS certificate?
+
+The modular client may retry SSL/connect failures through curl, but curl still verifies the certificate by default. If you have independently verified that a self-signed relay is the intended target, opt in with `--allow-insecure-tls`. The flag only takes effect for HTTPS requests that actually use curl; such use is logged, shown in the report, and raises an otherwise LOW audit to MEDIUM because the evidence path was not authenticated end to end.
 
 ### What Web3 wallet risks does it check?
 
@@ -209,7 +214,7 @@ This keeps modified network-service deployments accountable to the same public s
 
 ## Citation
 
-If you use API Relay Audit in research, security reports, or public relay evaluations, please cite the software with [CITATION.cff](./CITATION.cff). The citation file also records the two academic papers that inform the audit model: Liu et al., *Your Agent Is Mine* (arXiv:2604.08407) and Zhang et al., *Real Money, Fake Models* (arXiv:2603.01919).
+If you use API Relay Audit in research, security reports, or public relay evaluations, please cite the software with [CITATION.cff](./CITATION.cff). The citation file also records three academic papers that inform the project: Liu et al., *Your Agent Is Mine* (arXiv:2604.08407), Zhang et al., *Real Money, Fake Models* (arXiv:2603.01919), and Xie et al., *The Proxy Knows Too Much* (arXiv:2606.16358). The Xie et al. paper motivates the explicit evidence and transport trust boundaries in this hardening; this tool does not implement or claim TEE attestation.
 
 ## How to Contribute
 
@@ -328,8 +333,8 @@ API Relay Audit 也可以作为 agent skill 使用。
 | 版本 | `v2.3` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 778 |
-| CLI flags | 21 |
+| pytest collected tests | 800 |
+| CLI flags | 22 |
 | Runtime profiles | `general`, `web3`, `full` |
 
 ## 如何贡献

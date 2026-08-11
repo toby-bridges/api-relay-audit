@@ -159,6 +159,12 @@ def parse_args():
                    help="Send N benign requests before the audit to mitigate "
                         "request-count-gated backdoors (AC-1.b). Default: 0")
     p.add_argument("--timeout", type=int, default=120, help="Request timeout in seconds")
+    p.add_argument("--allow-insecure-tls",
+        action="store_true",
+        help="Explicitly allow HTTPS curl requests to disable certificate "
+             "verification. Use only for relays with a known self-signed "
+             "certificate; actual use raises a LOW audit to MEDIUM.",
+    )
     p.add_argument("--output", default=None, help="Report output path (markdown)")
     p.add_argument("--transparent-log", default=None, metavar="PATH",
                    help="Path to an append-only JSONL forensic log (arXiv §7.3). "
@@ -984,15 +990,19 @@ def test_stream_integrity(client, report):
         "Open an Anthropic streaming request with thinking enabled and "
         "inspect every SSE event for structural anomalies. A relay that "
         "rewrites or downgrades the streamed response often fails one "
-        "of four invariants: (1) all event types belong to Anthropic's "
+        "of five invariants: (1) all event types belong to Anthropic's "
         "known set (ping / message_start / content_block_start / "
         "content_block_delta / content_block_stop / message_delta / "
         "message_stop); (2) ``input_tokens`` is consistent across "
         "``message_start`` and ``message_delta``; (3) ``output_tokens`` "
         "is monotonically non-decreasing; (4) ``signature_delta`` events "
-        "carry non-empty signature values. Detection concept sourced from "
+        "carry non-empty signature values; (5) exactly one terminal "
+        "``message_stop`` follows ``message_start`` (trailing pings are "
+        "allowed). The first four detection concepts are sourced from "
         "hvoy.ai's claude_detector.py, verified against source on "
-        "2026-04-11. See reference_hvoy_relayapi memory for details.\n"
+        "2026-04-11. The explicit completeness gate is a local hardening "
+        "motivated by the trust-boundary analysis in Xie et al., *The Proxy "
+        "Knows Too Much* (arXiv:2606.16358); it is not TEE attestation.\n"
     )
 
     signals = client.stream_call(
@@ -1015,6 +1025,7 @@ def test_stream_integrity(client, report):
     report.p(f"| Usage monotonic | {'yes' if analysis['usage_monotonic'] else 'NO'} |")
     report.p(f"| Usage consistent | {'yes' if analysis['usage_consistent'] else 'NO'} |")
     report.p(f"| Signature valid | {'yes' if analysis['signature_valid'] else 'NO'} |")
+    report.p(f"| Terminal message_stop | {'yes' if analysis['stream_complete'] else 'NO'} |")
     report.p(
         f"| Stream model | {analysis['stream_model_name'] or '—'} "
         f"({'claude' if analysis['stream_model_is_claude'] else 'NOT claude'}) |"
@@ -1049,7 +1060,8 @@ def test_stream_integrity(client, report):
         report.flag(
             "green",
             "Stream integrity clean: SSE whitelist + usage monotonicity "
-            "+ signature validity + stream model identity all passed",
+            "+ signature validity + terminal message_stop + stream model "
+            "identity all passed",
         )
 
     print(f"  Done: stream integrity ({verdict})")
@@ -1581,7 +1593,13 @@ def _run_step(name, reporter, step_fn, *args, default=None, crashes=None):
 
 def main():
     args = parse_args()
-    client = APIClient(args.url, args.key, args.model, timeout=args.timeout)
+    client = APIClient(
+        args.url,
+        args.key,
+        args.model,
+        timeout=args.timeout,
+        allow_insecure_tls=args.allow_insecure_tls,
+    )
 
     # v1.7.7: transparent forensic log (arXiv §7.3)
     _transparent_logger = None
@@ -1798,6 +1816,14 @@ def main():
     #   d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_crashed -> MEDIUM
     #   else                                        -> LOW
     report.h2("14. Overall Rating")
+    tls_evidence_degraded = client.insecure_tls_used
+    if tls_evidence_degraded:
+        report.flag(
+            "yellow",
+            "TLS certificate verification was disabled for one or more HTTPS "
+            "curl requests under explicit `--allow-insecure-tls` authorization. "
+            "This is an evidence-integrity qualifier outside the 6D attack matrix.",
+        )
     any_step_crashed = bool(step_crashes)
     d1 = injection is not None and injection > 100
     d1i = injection is None
@@ -1838,8 +1864,8 @@ def main():
                 "**Stream integrity anomaly detected (AC-1 SSE-level).** "
                 "The relay's streaming response fails one or more structural "
                 "invariants: unknown SSE event types, non-monotonic usage fields, "
-                "rewritten input_tokens, empty thinking signatures, or a "
-                "non-Claude stream model name."
+                "rewritten input_tokens, empty thinking signatures, incomplete "
+                "message termination, or a non-Claude stream model name."
             )
         if d6:
             reasons.append(
@@ -1861,7 +1887,8 @@ def main():
     elif d2:
         report.p("### MEDIUM RISK\n")
         report.p("No significant injection but instruction override detected.")
-    elif d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_step_crashed:
+    elif (d1i or d2i or d3i or d4i or d4m or d5i or d6i
+          or any_step_crashed or tls_evidence_degraded):
         report.p("### MEDIUM RISK\n")
         medium_reasons = []
         if any_step_crashed:
@@ -1910,6 +1937,12 @@ def main():
                 "Web3 prompt injection test (Step 11) was **inconclusive**: all "
                 "three Web3 probes errored or produced ambiguous responses, so "
                 "Web3 safety behavior could not be verified."
+            )
+        if tls_evidence_degraded:
+            medium_reasons.append(
+                "TLS certificate verification was **disabled** for at least one "
+                "HTTPS request. The relay results may be usable for diagnostics, "
+                "but the transport evidence is not authenticated end to end."
             )
         report.p(" ".join(medium_reasons))
     else:

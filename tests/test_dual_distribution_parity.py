@@ -12,6 +12,7 @@ focused behavior/constant regression tests for public standalone semantics.
 """
 
 import ast
+import importlib.util
 import sys
 import re
 import subprocess
@@ -450,7 +451,41 @@ def test_public_help_flags_parity():
     modular_flags = _help_option_set(REPO_ROOT / "scripts" / "audit.py")
     standalone_flags = _help_option_set(REPO_ROOT / "audit.py")
     assert "--connectivity" in modular_flags
+    assert "--allow-insecure-tls" in modular_flags
     assert modular_flags == standalone_flags
+
+    context_help = _help_text(REPO_ROOT / "scripts" / "context-test.py")
+    assert "--allow-insecure-tls" in context_help
+
+
+def test_context_test_allow_insecure_tls_wiring(monkeypatch):
+    spec = importlib.util.spec_from_file_location(
+        "context_test_cli", REPO_ROOT / "scripts" / "context-test.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, base_url, api_key, model, timeout=120,
+                     allow_insecure_tls=False):
+            seen["allow_insecure_tls"] = allow_insecure_tls
+            self.base_url = base_url
+
+    monkeypatch.setattr(module, "APIClient", FakeClient)
+    monkeypatch.setattr(module, "run_context_scan", lambda client: [])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "context-test.py", "--key", "sk-test", "--url",
+            "https://relay.example.com/v1", "--allow-insecure-tls",
+        ],
+    )
+
+    module.main()
+
+    assert seen["allow_insecure_tls"] is True
 
 
 def test_profile_help_matches_current_14_step_contract():
@@ -494,11 +529,13 @@ def test_connectivity_mode_exits_before_full_audit(monkeypatch, tmp_path):
     ]
 
     class FakeClient:
-        def __init__(self, base_url, api_key, model, timeout=120):
+        def __init__(self, base_url, api_key, model, timeout=120,
+                     allow_insecure_tls=False):
             self.base_url = base_url.rstrip("/")
             self.api_key = api_key
             self.model = model
             self.timeout = timeout
+            self.insecure_tls_used = False
 
         def set_transparent_logger(self, logger):
             pass
@@ -570,7 +607,10 @@ def _run_stubbed_audit_and_rating(module, monkeypatch, tmp_path, case_name, scen
         model = "claude-test"
 
         def __init__(self, *args, **kwargs):
-            pass
+            assert kwargs.get("allow_insecure_tls") is bool(
+                scenario.get("grant_insecure_tls", False)
+            )
+            self.insecure_tls_used = scenario.get("insecure_tls_used", False)
 
         def set_transparent_logger(self, logger):
             pass
@@ -636,23 +676,22 @@ def _run_stubbed_audit_and_rating(module, monkeypatch, tmp_path, case_name, scen
     )
 
     output = tmp_path / f"{module.__name__.replace('.', '_')}-{case_name}.md"
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "audit.py",
-            "--key",
-            "sk-test",
-            "--url",
-            "https://relay.example.com/v1",
-            "--model",
-            "claude-test",
-            "--profile",
-            "full",
-            "--output",
-            str(output),
-        ],
-    )
+    argv = [
+        "audit.py",
+        "--key",
+        "sk-test",
+        "--url",
+        "https://relay.example.com/v1",
+        "--model",
+        "claude-test",
+        "--profile",
+        "full",
+        "--output",
+        str(output),
+    ]
+    if scenario.get("grant_insecure_tls"):
+        argv.append("--allow-insecure-tls")
+    monkeypatch.setattr(sys, "argv", argv)
 
     module.main()
     return _extract_overall_rating(output.read_text(encoding="utf-8"))
@@ -662,12 +701,17 @@ def _run_stubbed_audit_and_rating(module, monkeypatch, tmp_path, case_name, scen
     ("case_name", "scenario", "expected"),
     [
         ("clean", {}, "LOW"),
+        ("insecure_tls_granted_not_used", {"grant_insecure_tls": True}, "LOW"),
         ("d1_only", {"injection": 101}, "MEDIUM"),
         ("d1_and_d2", {"injection": 101, "overridden": True}, "HIGH"),
         ("d3_substitution", {"substitution_detected": True}, "HIGH"),
         ("d4_medium", {"error_severity": "medium"}, "MEDIUM"),
         ("d4_high", {"error_severity": "high"}, "HIGH"),
         ("d5_anomaly", {"stream_verdict": "anomaly"}, "HIGH"),
+        ("insecure_tls_only", {"insecure_tls_used": True}, "MEDIUM"),
+        ("insecure_tls_with_d5", {
+            "insecure_tls_used": True, "stream_verdict": "anomaly",
+        }, "HIGH"),
         ("d6_inconclusive", {"web3_inconclusive": True}, "MEDIUM"),
         ("step_crash", {"crash_step": "test_models"}, "MEDIUM"),
     ],
@@ -794,6 +838,63 @@ def test_standalone_curl_post_keeps_large_body_out_of_argv(monkeypatch):
     assert "x" * 100 not in cmd_text
     assert "sk-test" not in cmd_text
     assert "x-api-key: sk-test" in kwargs["input"]
+    assert "-k" not in cmd
+    assert client.insecure_tls_used is False
+
+
+def test_standalone_authorised_https_curl_commands_use_k(monkeypatch):
+    """The generated curl-only artifact must wire explicit TLS permission
+    through POST, raw, and SSE paths without restoring unconditional -k."""
+    from io import BytesIO
+    from unittest.mock import MagicMock
+
+    standalone = _load_standalone_audit()
+    run_calls = []
+    popen_calls = []
+
+    class FakeRunResult:
+        returncode = 0
+        stdout = '{"ok": true}'
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        run_calls.append((cmd, kwargs))
+        if "-i" in cmd:
+            return type("RawResult", (), {
+                "returncode": 0,
+                "stdout": b"HTTP/1.1 400 Bad Request\r\n\r\nbad",
+                "stderr": b"",
+            })()
+        return FakeRunResult()
+
+    def fake_popen(cmd, *args, **kwargs):
+        popen_calls.append(cmd)
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.stdout = BytesIO(
+            b'data: {"type":"message_start","message":{"model":"claude"}}\n\n'
+            b'data: {"type":"message_stop"}\n\n'
+        )
+        proc.stderr = BytesIO(b"")
+        proc.wait = MagicMock(return_value=None)
+        proc.returncode = 0
+        return proc
+
+    monkeypatch.setattr(standalone.subprocess, "run", fake_run)
+    monkeypatch.setattr(standalone.subprocess, "Popen", fake_popen)
+    client = standalone.APIClient(
+        "https://relay.example.com/v1", "sk-test", "claude-opus-4-6",
+        verbose=False, allow_insecure_tls=True,
+    )
+
+    client._curl_post("https://relay.example.com/v1/messages", {}, {})
+    client.raw_request("POST", "/v1/messages", {}, b"{}")
+    client.stream_call([{"role": "user", "content": "hi"}])
+
+    assert "-k" in run_calls[0][0]
+    assert "-k" in run_calls[1][0]
+    assert "-k" in popen_calls[0]
+    assert client.insecure_tls_used is True
 
 
 def test_standalone_get_models_bypasses_proxy_for_loopback(monkeypatch):
@@ -826,6 +927,7 @@ def test_standalone_get_models_bypasses_proxy_for_loopback(monkeypatch):
     cmd, _kwargs = calls[0]
     assert "--noproxy" in cmd
     assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+    assert "-k" not in cmd
     assert standalone._transport.curl_loopback_no_proxy_args(
         "http://127.0.0.1:8765/v1/messages"
     ) == ["--noproxy", "localhost,127.0.0.1,::1"]
@@ -868,3 +970,33 @@ def test_standalone_stream_bypasses_proxy_for_loopback(monkeypatch):
     cmd = captured_cmds[0]
     assert "--noproxy" in cmd
     assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+    assert "-k" not in cmd
+
+
+def test_stream_completion_verdict_parity():
+    from api_relay_audit.stream_integrity import StreamSignals, analyze_stream
+
+    standalone = _load_standalone_audit()
+    event_sequences = [
+        ["message_start", "message_stop"],
+        ["message_start"],
+        ["message_start", "message_stop", "ping"],
+        ["message_start", "message_stop", "message_delta"],
+    ]
+    for events in event_sequences:
+        modular_signals = StreamSignals(
+            event_types=list(events),
+            has_message_start="message_start" in events,
+            has_message_stop="message_stop" in events,
+            message_start_model="claude-opus-4-6",
+        )
+        standalone_signals = standalone.StreamSignals(
+            event_types=list(events),
+            has_message_start="message_start" in events,
+            has_message_stop="message_stop" in events,
+            message_start_model="claude-opus-4-6",
+        )
+
+        assert analyze_stream(modular_signals) == standalone.analyze_stream(
+            standalone_signals
+        )

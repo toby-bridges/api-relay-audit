@@ -189,12 +189,14 @@ def _render_status(status: int) -> str:
 def _next_step(verdict: str, client) -> str:
     url = shlex.quote(client.base_url)
     model = shlex.quote(client.model)
+    insecure_tls_flag = " --allow-insecure-tls" if client.insecure_tls_used else ""
     if verdict in ("OK", "WARNING"):
         return (
             "Connectivity reached at least one chat format. For the full security audit, run:\n\n"
             "```bash\n"
             "export API_RELAY_AUDIT_KEY=sk-...\n"
-            f"python3 audit.py --key \"$API_RELAY_AUDIT_KEY\" --url {url} --model {model} --output report.md\n"
+            f"python3 audit.py --key \"$API_RELAY_AUDIT_KEY\" --url {url} "
+            f"--model {model}{insecure_tls_flag} --output report.md\n"
             "```"
         )
     return (
@@ -218,11 +220,20 @@ def render_connectivity_report(result: dict) -> str:
         "",
         "This is a quick connectivity check, not a security audit. It does not produce a LOW/MEDIUM/HIGH risk rating.",
         "",
+    ]
+    if client.insecure_tls_used:
+        lines.extend([
+            "> **WARNING:** TLS certificate verification was disabled for one or "
+            "more HTTPS requests under explicit `--allow-insecure-tls` authorization. "
+            "Connectivity was observed, but the transport was not authenticated end to end.",
+            "",
+        ])
+    lines.extend([
         "## Probe Results",
         "",
         "| Format | Endpoint | Auth style | HTTP status | Elapsed | Tokens | Text preview | Diagnostic |",
         "|---|---|---|---:|---:|---:|---|---|",
-    ]
+    ])
     for probe in result["probes"]:
         tokens = (
             f"{_render_token_count(probe.input_tokens)}/"

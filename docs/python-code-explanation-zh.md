@@ -120,7 +120,7 @@ client.call(messages, system=None, max_tokens=512)
 
 1. 统一不同供应商风格的请求格式。
 2. 自动探测 relay 究竟暴露的是 Anthropic 风格还是 OpenAI 风格。
-3. 在 Python HTTP 栈遇到 SSL/连接异常时，自动切换到 `curl -sk`。
+3. 在 Python HTTP 栈遇到 SSL/连接异常时，自动切换到仍验证证书的 `curl -s`；只有显式传入 `--allow-insecure-tls` 且实际请求为 HTTPS 时才追加 `-k`。
 4. 把两种协议的返回值归一化为同一数据结构。
 
 这几个目标叠在一起，形成了两个正交维度的状态：
@@ -139,8 +139,10 @@ client.call(messages, system=None, max_tokens=512)
 - `model`
 - `timeout`
 - `verbose`
+- `allow_insecure_tls = False`
 - `_format = None`
 - `_use_curl = False`
+- `_insecure_tls_used = False`
 
 其中 `_format` 的取值有三种：
 
@@ -155,7 +157,7 @@ client.call(messages, system=None, max_tokens=512)
 低层发送路径有两条：
 
 - `_post()`：常规路径，默认用 `httpx.post()`。
-- `_curl_post()`：降级路径，用子进程执行 `curl -sk`。
+- `_curl_post()`：降级路径，用子进程执行 `curl -s`，默认保持证书验证。
 
 #### `_post()` 的行为
 
@@ -171,17 +173,15 @@ client.call(messages, system=None, max_tokens=512)
 `_curl_post()` 构造的命令大致是：
 
 ```bash
-curl -sk -X POST URL --max-time TIMEOUT -H ... -d JSON
+curl -s [-k] -X POST URL --max-time TIMEOUT --config - --data-binary @BODY_FILE
 ```
 
-这里 `-sk` 的含义很关键：
+这里两个参数的边界很关键：
 
 - `-s`：静默输出。
-- `-k`：跳过证书校验。
+- `-k`：仅在 `--allow-insecure-tls` 已授权、目标是 HTTPS、且请求实际走 curl 时追加，用来跳过证书校验。
 
-这说明项目明确接受一个现实：很多被审计的 relay 可能挂在自签名证书、错误链路或者不规范 TLS 配置后面。审计工具的目标不是“严格拒绝不安全连接”，而是“尽可能继续把实验跑完”。
-
-这是典型的安全审计工具思维，而不是生产 SDK 思维。
+这使“换一种传输实现”和“降低 TLS 验证”成为两个独立决定：前者可以自动发生，后者必须由用户显式授权。仅仅传 flag 但没有实际走 HTTPS curl，不会把 `insecure_tls_used` 标为真。
 
 ### 3.4 协议适配：Anthropic 与 OpenAI 两套请求构造
 
@@ -284,7 +284,7 @@ OpenAI 也用同样的“非空文本”作为成功标准。
 
 代价是：如果 relay 在会话期间切换后端、或者不同路径支持不同协议，这个缓存结论可能不再成立。但对这个项目的目标来说，这个假设是合理的，因为审计对象通常是一个相对稳定的单个入口。
 
-### 3.7 SSL fallback：为什么是 `curl -sk`
+### 3.7 SSL fallback：安全 curl 重试与显式 `-k` 授权
 
 `_handle_ssl_error()` 的策略很简单：
 
@@ -303,9 +303,9 @@ OpenAI 也用同样的“非空文本”作为成功标准。
 
 换句话说，切到 curl 并不会自动决定“我要用 Anthropic 还是 OpenAI”，它只是在说：“同样的请求体，以另一种传输手段再试一次。”
 
-第三，这个回退本质上是“为了拿到结果而放松验证”。
+第三，这个回退只是“为了拿到结果而更换传输实现”，不会自动放松验证。
 
-生产 SDK 把证书校验关掉通常是坏实践；但安全审计工具面对的是“可疑系统”，核心目标是观测行为，而不是保障通信链的生产级可信性。因此这里更像一种故障旁路。
+Curl 默认继续验证证书。只有用户明确提供 `--allow-insecure-tls` 后，HTTPS curl 才使用 `-k`。第一次实际使用会告警，透明日志记录 `tls_verification_disabled: true`，完整审计的 LOW 结果至少提升为 MEDIUM；已有 HIGH 不受影响。这一状态属于证据完整性门，不新增 D7。
 
 ### 3.8 SSL fallback 的一个不对称细节
 
@@ -592,6 +592,7 @@ for k in range(lo, hi + 1, 10):
 - `--skip-infra`
 - `--skip-context`
 - `--timeout`
+- `--allow-insecure-tls`
 - `--output`
 
 其中：
@@ -1155,7 +1156,7 @@ pattern = rf"### {re.escape(test_name)}\s*\n\n(.*?)(?=\n###|\n##|$)"
 
 典型例子包括：
 
-- SSL 出问题就切 `curl -sk`
+- SSL/连接出问题可切换到安全 curl；跳过证书验证必须显式授权
 - token 注入用经验 delta，而不是严谨 tokenizer 校准
 - 报告用 Markdown，而不是正式 schema
 - 抽取靠正则，而不是 AST 或结构化中间表示

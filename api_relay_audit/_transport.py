@@ -24,7 +24,15 @@ def curl_loopback_no_proxy_args(url: str) -> list:
     return []
 
 
+def curl_insecure_tls_args(url: str, allow_insecure_tls: bool = False) -> list:
+    """Return ``-k`` only for explicitly authorised HTTPS requests."""
+    if allow_insecure_tls and urlparse(url).scheme.lower() == "https":
+        return ["-k"]
+    return []
+
+
 def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
+                   allow_insecure_tls: bool = False,
                    subprocess_module=subprocess) -> dict:
     """POST JSON through curl while keeping headers out of argv.
 
@@ -41,7 +49,8 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
             json.dump(body, tmp)
             body_path = tmp.name
 
-        cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-X", "POST", url,
+        cmd = ["curl", "-s", *curl_insecure_tls_args(url, allow_insecure_tls),
+               *curl_loopback_no_proxy_args(url), "-X", "POST", url,
                "--max-time", str(timeout), "--config", "-", "--data-binary", f"@{body_path}"]
         config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
         r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
@@ -68,9 +77,11 @@ def httpx_post_json(url: str, headers: dict, body: dict, timeout: int,
 
 
 def curl_get_json_data(url: str, headers: dict, timeout: int = 15,
+                       allow_insecure_tls: bool = False,
                        subprocess_module=subprocess) -> list:
     """GET JSON through curl and return the top-level ``data`` list."""
-    cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), url,
+    cmd = ["curl", "-s", *curl_insecure_tls_args(url, allow_insecure_tls),
+           *curl_loopback_no_proxy_args(url), url,
            "--max-time", str(timeout), "--config", "-"]
     config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
     r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
@@ -113,10 +124,12 @@ def httpx_raw_request(method: str, url: str, headers: dict, body: bytes,
 
 def curl_raw_request(method: str, url: str, headers: dict, body: bytes,
                      content_type: str, timeout: int, parser,
+                     allow_insecure_tls: bool = False,
                      subprocess_module=subprocess) -> dict:
     """Raw request through curl and parse ``curl -i`` output with ``parser``."""
     all_headers = {**headers, "content-type": content_type}
-    cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-i", "-X", method, url,
+    cmd = ["curl", "-s", *curl_insecure_tls_args(url, allow_insecure_tls),
+           *curl_loopback_no_proxy_args(url), "-i", "-X", method, url,
            "--max-time", str(timeout), "--data-binary", "@-"]
     for k, v in all_headers.items():
         cmd.extend(["-H", f"{k}: {v}"])

@@ -49,9 +49,15 @@ class TestInit:
         assert client._use_curl is False
         assert client.timeout == 30
         assert client.verbose is False
+        assert client.allow_insecure_tls is False
+        assert client.insecure_tls_used is False
 
     def test_detected_format_initially_none(self, client):
         assert client.detected_format is None
+
+    def test_insecure_tls_used_is_read_only(self, client):
+        with pytest.raises(AttributeError):
+            client.insecure_tls_used = True
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +324,8 @@ class TestCurlFallback:
 
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "curl"
-        assert "-sk" in cmd
+        assert "-s" in cmd
+        assert "-k" not in cmd
         assert "https://relay.example.com/v1/messages" in cmd
         assert "--config" in cmd
         assert "-" in cmd
@@ -329,6 +336,51 @@ class TestCurlFallback:
         assert '{"model": "test"}' not in cmd
         config_input = mock_run.call_args[1].get("input", "")
         assert "x-api-key: sk-test" in config_input
+
+    @patch("api_relay_audit.client.subprocess.run")
+    def test_curl_post_uses_k_only_for_authorised_https(self, mock_run):
+        client = APIClient(
+            "https://relay.example.com/v1", "key", "model",
+            verbose=True, allow_insecure_tls=True,
+        )
+        client._use_curl = True
+        mock_run.return_value = MagicMock(returncode=0, stdout='{"ok": true}')
+
+        client._curl_post("https://relay.example.com/v1/messages", {}, {})
+
+        cmd = mock_run.call_args[0][0]
+        assert "-s" in cmd
+        assert "-k" in cmd
+        assert client.insecure_tls_used is True
+
+    @patch("api_relay_audit.client.subprocess.run")
+    def test_insecure_tls_permission_is_not_used_for_http(self, mock_run):
+        client = APIClient(
+            "http://relay.example.com/v1", "key", "model",
+            verbose=False, allow_insecure_tls=True,
+        )
+        client._use_curl = True
+        mock_run.return_value = MagicMock(returncode=0, stdout='{"ok": true}')
+
+        client._curl_post("http://relay.example.com/v1/messages", {}, {})
+
+        assert "-k" not in mock_run.call_args[0][0]
+        assert client.insecure_tls_used is False
+
+    @patch("api_relay_audit.client.subprocess.run")
+    def test_insecure_tls_warning_is_emitted_once(self, mock_run, capsys):
+        client = APIClient(
+            "https://relay.example.com/v1", "key", "model",
+            verbose=True, allow_insecure_tls=True,
+        )
+        client._use_curl = True
+        mock_run.return_value = MagicMock(returncode=0, stdout='{"ok": true}')
+
+        client._curl_post("https://relay.example.com/v1/messages", {}, {})
+        client._curl_post("https://relay.example.com/v1/messages", {}, {})
+
+        output = capsys.readouterr().err
+        assert output.count("TLS certificate verification disabled") == 1
 
     @patch("api_relay_audit.client.subprocess.run")
     def test_curl_post_bypasses_proxy_for_loopback(self, mock_run, client):
@@ -368,6 +420,7 @@ class TestCurlFallback:
         cmd = mock_run.call_args[0][0]
         assert "--noproxy" in cmd
         assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+        assert "-k" not in cmd
 
     @patch("api_relay_audit.client.subprocess.run")
     def test_curl_raw_request_bypasses_proxy_for_loopback(self, mock_run):
@@ -393,6 +446,49 @@ class TestCurlFallback:
         cmd = mock_run.call_args[0][0]
         assert "--noproxy" in cmd
         assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+        assert "-k" not in cmd
+
+    @patch("api_relay_audit.client.subprocess.run")
+    def test_authorised_https_get_and_raw_commands_use_k(self, mock_run):
+        client = APIClient(
+            "https://relay.example.com/v1", "key", "model",
+            verbose=False, allow_insecure_tls=True,
+        )
+        client._use_curl = True
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=json.dumps({"data": [{"id": "m1"}]})),
+            MagicMock(
+                returncode=0,
+                stdout=b"HTTP/1.1 400 Bad Request\r\n\r\nbad",
+                stderr=b"",
+            ),
+        ]
+
+        assert client.get_models() == [{"id": "m1"}]
+        client.raw_request("POST", "/v1/messages", {}, b"{}")
+
+        assert "-k" in mock_run.call_args_list[0][0][0]
+        assert "-k" in mock_run.call_args_list[1][0][0]
+        assert client.insecure_tls_used is True
+
+    @patch("api_relay_audit.client.subprocess.run")
+    def test_https_get_and_raw_commands_verify_tls_by_default(self, mock_run, client):
+        client._use_curl = True
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=json.dumps({"data": [{"id": "m1"}]})),
+            MagicMock(
+                returncode=0,
+                stdout=b"HTTP/1.1 400 Bad Request\r\n\r\nbad",
+                stderr=b"",
+            ),
+        ]
+
+        client.get_models()
+        client.raw_request("POST", "/v1/messages", {}, b"{}")
+
+        assert "-k" not in mock_run.call_args_list[0][0][0]
+        assert "-k" not in mock_run.call_args_list[1][0][0]
+        assert client.insecure_tls_used is False
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +605,8 @@ class TestAutoDetection:
             result = verbose_client.call([{"role": "user", "content": "hi"}])
 
         assert verbose_client._use_curl is True
+        assert verbose_client.insecure_tls_used is False
+        assert "-k" not in mock_run.call_args[0][0]
 
     @patch("api_relay_audit.client.httpx.post")
     def test_exception_returns_error_with_time(self, mock_post, client):

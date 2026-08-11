@@ -25,7 +25,11 @@ from api_relay_audit.client import (
     _parse_sse_stream,
     _populate_stream_signals,
 )
-from api_relay_audit.stream_integrity import KNOWN_SSE_EVENT_TYPES, StreamSignals
+from api_relay_audit.stream_integrity import (
+    KNOWN_SSE_EVENT_TYPES,
+    StreamSignals,
+    analyze_stream,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -490,8 +494,10 @@ class TestCurlNonzeroExitHandling:
         """Regression guard: a clean curl exit (returncode 0) must NOT
         set transport_error, even for streams without any events."""
         from io import BytesIO
+        captured_cmds = []
 
-        def mock_popen_factory(*args, **kwargs):
+        def mock_popen_factory(cmd, *args, **kwargs):
+            captured_cmds.append(cmd)
             proc = MagicMock()
             proc.stdin = MagicMock()
             proc.stdout = BytesIO(
@@ -516,6 +522,7 @@ class TestCurlNonzeroExitHandling:
 
         assert signals.transport_error is None
         assert signals.has_message_start is True
+        assert "-k" not in captured_cmds[0]
 
     def test_curl_http_error_status_sets_transport_error_on_non_sse_body(self):
         from io import BytesIO
@@ -632,6 +639,53 @@ class TestCurlNonzeroExitHandling:
         cmd = captured_cmds[0]
         assert "--noproxy" in cmd
         assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+        assert "-k" not in cmd
+
+    def test_authorised_https_stream_uses_k(self):
+        captured_cmds = []
+
+        def mock_popen_factory(cmd, *args, **kwargs):
+            captured_cmds.append(cmd)
+            proc = MagicMock()
+            proc.stdin = MagicMock()
+            proc.stdout = BytesIO(
+                b'data: {"type":"message_start","message":{"model":"claude"}}\n\n'
+                b'data: {"type":"message_stop"}\n\n'
+            )
+            proc.stderr = BytesIO(b"")
+            proc.wait = MagicMock(return_value=None)
+            proc.returncode = 0
+            return proc
+
+        with patch("api_relay_audit.client.subprocess.Popen",
+                   side_effect=mock_popen_factory):
+            client = APIClient(
+                "https://relay.example.com/v1", "sk-test", "claude-opus-4-6",
+                verbose=False, allow_insecure_tls=True,
+            )
+            client._use_curl = True
+            signals = client.stream_call([{"role": "user", "content": "hi"}])
+
+        assert signals.transport_error is None
+        assert "-k" in captured_cmds[0]
+        assert client.insecure_tls_used is True
+
+
+def test_done_sentinel_does_not_replace_anthropic_message_stop():
+    signals = StreamSignals()
+    _parse_sse_stream(iter([sse_bytes(
+        {"type": "message_start", "message": {"model": "claude-opus-4-6"}},
+        {"type": "content_block_start", "content_block": {"type": "text"}},
+        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}},
+        {"type": "content_block_stop"},
+        {"type": "message_delta", "usage": {"output_tokens": 1}},
+    )]), signals)
+
+    verdict = analyze_stream(signals)
+
+    assert signals.has_message_stop is False
+    assert verdict["stream_complete"] is False
+    assert verdict["verdict"] == "anomaly"
 
 
 # ---------------------------------------------------------------------------

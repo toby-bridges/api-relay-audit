@@ -6,9 +6,8 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-06-07 (error diagnosis report layer added; roadmap
-hygiene pass: v1.9 follow-up test gaps, refusal/transport decouplings, and
-the protobuf-channel spike are no longer active near-term candidates)
+**Last updated**: 2026-08-12 (SSE terminal-completeness gate and explicit
+TLS downgrade authorization implemented without expanding the 6D matrix)
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -23,6 +22,28 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
 ---
 
 ## ✅ Shipped
+
+### 2026-08-12 hardening — SSE completeness + explicit TLS downgrade
+- **Anthropic terminal completeness gate**: Step 10 now requires
+  `message_start`, exactly one later `message_stop`, and no non-`ping` event
+  after the stop. Graceful close or `[DONE]` without `message_stop` is an
+  anomaly; transport errors remain inconclusive.
+- **Secure curl fallback by default**: modular SSL/connect fallback and the
+  curl-only standalone both verify certificates unless
+  `--allow-insecure-tls` explicitly authorizes `-k` for an HTTPS curl
+  request. Actual use is warned once and recorded per request in the
+  transparent log.
+- **Evidence-integrity qualifier, not D7**: actual unverified HTTPS raises an
+  otherwise LOW audit to MEDIUM while existing HIGH findings remain HIGH.
+  Connectivity mode has no risk rating but prominently marks the downgrade.
+- **Research boundary**: informed by Xie et al., *The Proxy Knows Too Much:
+  Sealing LLM API Routers with Attested TEEs* (arXiv:2606.16358). This client
+  hardening does not implement TEE attestation or claim end-to-end router
+  transparency.
+- **Boundary held**: no OpenAI streaming expansion, general event-order
+  validator, structured tool-call work, version bump, or release.
+- **Final test count**: 800/800 passing (778 baseline, +22 focused SSE,
+  TLS, CLI, logging, connectivity, rating, and dual-distribution regressions).
 
 ### 2026-06-07 follow-up — Error diagnosis report layer
 - **Productized operational error explanations**: added
