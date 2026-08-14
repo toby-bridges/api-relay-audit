@@ -16,6 +16,8 @@
 </p>
 
 <p align="center">
+  <a href="#deepseek-harness-dsh-plugin"><strong>DSH Plugin</strong></a>
+  ·
   <a href="./SKILL.md"><strong>OpenClaw Skill</strong></a>
   ·
   <a href="./skills/api-relay-audit/SKILL.md"><strong>Hermes Skill</strong></a>
@@ -96,6 +98,40 @@ Runtime profiles:
 - `web3`: wallet-safety probes for Web3 agent flows
 - `full`: general plus Web3 checks
 
+## DeepSeek Harness DSH Plugin
+
+The repository is also an installable `dsh-api-relay-audit` bundle for
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web and
+community TUI surfaces that use the official `@deepseek-ai/dsh-commands`
+registry. Pin an immutable commit or release tag:
+
+```bash
+DSH_PLUGIN_REF=<commit-sha-or-release-tag>
+dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
+
+# dsh-cc-tui and other compatible profile-based clients
+dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
+```
+
+The command reuses the current DSH provider's `baseURL`, model, and credential
+reference. The credential stays in DSH Credentials and is delivered to the
+local audit process through an environment variable, never through command
+arguments or the session log:
+
+```text
+/relay-audit
+/relay-audit --connectivity
+/relay-audit --profile web3 --fast-context
+/relay-audit --url <URL> --model <claude-model> --credential-ref <DSH_CREDENTIAL_REF>
+```
+
+No arguments preserves the existing full-audit default and may consume
+metered tokens. Use `--connectivity` for a lower-cost check. This distribution
+does not add a new model baseline: the selected route must identify as Claude,
+although the relay API itself may be Anthropic-compatible or OpenAI-compatible.
+Independent wrappers without DSH profiles and the DSH command registry are not
+compatible with this bundle. See [agent distribution notes](./docs/skill-distribution.md).
+
 ## Agent Skills: OpenClaw and Hermes
 
 API Relay Audit can also run as an agent skill when an agent workflow needs to
@@ -145,7 +181,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 | Audit steps | 14 |
 | Risk matrix | 6D |
 | pytest collected tests | 802 |
-| CLI flags | 21 |
+| CLI flags | 22 |
 | Runtime profiles | `general`, `web3`, `full` |
 
 ## Example Report And Live Page
@@ -221,7 +257,7 @@ reproducible, and evidence-focused:
 - Report a detector gap with a sanitized reproduction.
 - Share local run feedback for install, runtime, platform, or report-UX issues.
 - Add documentation examples for profiles, flags, or relay behavior.
-- Improve OpenClaw or Hermes install notes from a real local setup.
+- Improve DSH, OpenClaw, or Hermes install notes from a real local setup.
 - Translate Quick Start or clarify `clean`, `anomaly`, and `inconclusive`.
 
 Start with:
@@ -286,6 +322,34 @@ python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report
 - 模型身份: 非 Claude 身份泄漏、模型替换信号、Claude / OpenAI 兼容中转行为
 - Web3 风险: 转账指引、签名拒绝、私钥泄漏拒绝
 
+## DeepSeek Harness DSH Plugin
+
+本仓库同时提供 GitHub 可直装的 `dsh-api-relay-audit` bundle，支持官方 DSH
+Web，以及使用 `@deepseek-ai/dsh-commands` registry 的社区 TUI。安装时必须固定
+commit 或 release tag：
+
+```bash
+DSH_PLUGIN_REF=<commit-sha-or-release-tag>
+dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
+dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
+```
+
+插件默认复用当前 DSH provider 的 `baseURL`、model 和 credential reference；
+真实 API Key 只从 DSH Credentials 解析，并通过子进程环境变量传递，不进入命令
+参数或会话日志。
+
+```text
+/relay-audit
+/relay-audit --connectivity
+/relay-audit --profile web3 --fast-context
+/relay-audit --url <URL> --model <claude-model> --credential-ref <DSH_CREDENTIAL_REF>
+```
+
+无参数仍运行 master 现有完整审计，可能产生较高 token 消耗；低成本检查使用
+`--connectivity`。插件不增加新的模型基线：中转接口可以兼容 Anthropic 或
+OpenAI，但被审计线路必须明确为 Claude。没有 DSH profile/plugin 机制的独立
+wrapper 不在兼容范围内。
+
 ## Agent Skill 支持
 
 API Relay Audit 也可以作为 agent skill 使用。
@@ -334,12 +398,12 @@ API Relay Audit 也可以作为 agent skill 使用。
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
 | pytest collected tests | 802 |
-| CLI flags | 21 |
+| CLI flags | 22 |
 | Runtime profiles | `general`, `web3`, `full` |
 
 ## 如何贡献
 
-你不需要写代码也能帮忙：可以提交本地运行反馈、检测缺口、文档示例、翻译改进，或 OpenClaw / Hermes 安装反馈。
+你不需要写代码也能帮忙：可以提交本地运行反馈、检测缺口、文档示例、翻译改进，或 DSH / OpenClaw / Hermes 安装反馈。
 
 - [Local Run Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=local-run-feedback.yml)
 - [Detector Gap](https://github.com/toby-bridges/api-relay-audit/issues/new?template=detector-gap.yml)

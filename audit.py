@@ -4895,6 +4895,7 @@ Usage:
 """
 
 import argparse
+import os
 import re
 import shutil
 import socket
@@ -5007,7 +5008,10 @@ def _tool_commit_from_checkout():
 
 def parse_args():
     p = argparse.ArgumentParser(description="API Relay Security Audit Tool")
-    p.add_argument("--key", required=True, help="API Key")
+    key_source = p.add_mutually_exclusive_group(required=True)
+    key_source.add_argument("--key", help="API Key")
+    key_source.add_argument("--key-env", metavar="NAME",
+                            help="Read the API Key from environment variable NAME")
     p.add_argument("--url", required=True, help="Base URL (e.g. https://xxx.com/v1)")
     p.add_argument("--model", default="claude-opus-4-6", help="Model name")
     p.add_argument("--connectivity", action="store_true",
@@ -5069,7 +5073,15 @@ def parse_args():
                    help="Path to an append-only JSONL forensic log (arXiv §7.3). "
                         "Every API request is recorded with timestamp, URL, "
                         "SHA-256 of request/response, and status code.")
-    return p.parse_args()
+    args = p.parse_args()
+    if args.key_env is not None:
+        value = os.environ.get(args.key_env)
+        if not value:
+            p.error(
+                f"environment variable {args.key_env!r} is missing or empty"
+            )
+        args.key = value
+    return args
 
 
 def run_warmup(client, n):

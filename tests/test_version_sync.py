@@ -1,6 +1,7 @@
 """Regression checks for VERSION-derived release surfaces."""
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -130,3 +131,10 @@ def test_modular_metadata_reads_version_only_for_project_checkout_shape(tmp_path
     module.__file__ = str(checkout / "scripts" / "audit.py")
 
     assert module._tool_version() == "3.4.5"
+
+
+def test_dsh_package_version_comes_from_root_version():
+    version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
+
+    assert package["version"] == version

@@ -1,0 +1,46 @@
+{
+  "name": "dsh-api-relay-audit",
+  "version": "2.3.0",
+  "private": true,
+  "description": "DeepSeek Harness bundle for running API Relay Audit locally",
+  "type": "module",
+  "main": "./dsh/index.js",
+  "exports": {
+    ".": "./dsh/index.js",
+    "./audit.py": "./audit.py",
+    "./cordis.patch.yml": "./dsh/cordis.patch.yml"
+  },
+  "files": [
+    "audit.py",
+    "dsh/index.js",
+    "dsh/cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "VERSION"
+  ],
+  "scripts": {
+    "test:dsh": "node --test dsh/test/*.test.js"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-commands": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-credentials": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-settings": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subprocess": "0.1.0-rc.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toby-bridges/api-relay-audit.git"
+  },
+  "license": "AGPL-3.0-only",
+  "dsh": {
+    "bundle": {
+      "patch": "./dsh/cordis.patch.yml"
+    }
+  }
+}

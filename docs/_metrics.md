@@ -18,7 +18,7 @@
 | 步骤数 (单文件版) | 14 | grep `Step N` in `audit.py` |
 | 测试数 (pytest) | **802** | `pytest --collect-only` |
 | 测试数 (static) | 774 | grep `def test_*` in tests/ |
-| CLI flag 数 | 21 | grep `add_argument("--*")` |
+| CLI flag 数 | 22 | grep `add_argument("--*")` |
 | profile 选项 | general, web3, full | argparse choices |
 | ROADMAP 上次更新 | 2026-08-16 | `ROADMAP.md` 头部 |
 | Codex review 提及次数 | 4 | grep `Codex review (cycle\|round)` 在 Shipped 节 |

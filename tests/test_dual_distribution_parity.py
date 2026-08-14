@@ -450,7 +450,97 @@ def test_public_help_flags_parity():
     modular_flags = _help_option_set(REPO_ROOT / "scripts" / "audit.py")
     standalone_flags = _help_option_set(REPO_ROOT / "audit.py")
     assert "--connectivity" in modular_flags
+    assert "--key-env" in modular_flags
     assert modular_flags == standalone_flags
+
+
+def test_api_key_cli_sources_are_safe_and_dual_distributed(monkeypatch, capsys):
+    """Both entrypoints accept exactly one API-key source without echoing it."""
+    import scripts.audit as modular
+
+    standalone = _load_standalone_audit()
+    secret = "sk-dsh-secret-must-not-appear"
+
+    for module in (modular, standalone):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key",
+                secret,
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        assert module.parse_args().key == secret
+
+        monkeypatch.setenv("API_RELAY_AUDIT_TEST_KEY", secret)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key-env",
+                "API_RELAY_AUDIT_TEST_KEY",
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        parsed = module.parse_args()
+        assert parsed.key == secret
+        assert parsed.key_env == "API_RELAY_AUDIT_TEST_KEY"
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key",
+                secret,
+                "--key-env",
+                "API_RELAY_AUDIT_TEST_KEY",
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        with pytest.raises(SystemExit) as conflict:
+            module.parse_args()
+        assert conflict.value.code == 2
+        assert secret not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_key_env_rejects_missing_or_empty_values_without_leaking(
+    monkeypatch, capsys, value
+):
+    import scripts.audit as modular
+
+    standalone = _load_standalone_audit()
+    name = "API_RELAY_AUDIT_EMPTY_TEST_KEY"
+    if value is None:
+        monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(name, value)
+
+    for module in (modular, standalone):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key-env",
+                name,
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        with pytest.raises(SystemExit) as exc:
+            module.parse_args()
+        assert exc.value.code == 2
+        error = capsys.readouterr().err
+        assert name in error
+        assert "missing or empty" in error
 
 
 def test_profile_help_matches_current_14_step_contract():

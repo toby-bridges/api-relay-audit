@@ -1,12 +1,13 @@
-# OpenClaw and Hermes Skill Distribution
+# DSH, OpenClaw, and Hermes Distribution
 
-This document tracks the publish path for API Relay Audit as an agent skill.
+This document tracks the distribution paths for API Relay Audit integrations.
 It is operational release documentation, not a user-facing safety claim.
 
-## Current Skill Files
+## Current Distribution Files
 
 | Target | File | Role |
 | --- | --- | --- |
+| DeepSeek Harness | `package.json`, `dsh/` | GitHub-installable bundle that registers `/relay-audit` on DSH command-compatible clients and carries the generated standalone `audit.py`. |
 | OpenClaw / ClawHub | `SKILL.md` | Root skill file used for ClawHub publish. `.clawhubignore` keeps the published bundle to this file. |
 | Hermes Agent | `skills/api-relay-audit/SKILL.md` | Hermes skill folder for GitHub tap, direct install, and Skills Hub publish. |
 
@@ -23,9 +24,46 @@ Both files must stay aligned with the current audit surface:
   the one-shot recipe; direct local `python audit.py ...` commands can also run
   from PowerShell.
 
-The skill files are versioned distribution artifacts, so their `audit.py`
+The skill files and DSH package are versioned distribution artifacts, so their `audit.py`
 download commands must use an immutable tag or commit SHA. Do not publish a
 versioned skill that downloads mutable `master/audit.py`.
+
+## DeepSeek Harness
+
+The DSH bundle is deliberately prebuilt JavaScript with no `prepare` or build
+hook. A Git install therefore does not require pnpm's install-time build
+allowlist. Install an immutable repository revision into each intended
+profile:
+
+```bash
+DSH_PLUGIN_REF=<commit-sha-or-release-tag>
+dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
+dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
+```
+
+Compatibility contract:
+
+- tested with DSH `0.1.0-rc.6` and `dsh-cc-tui` `0.4.1`;
+- requires the DSH profile/bundle loader and `@deepseek-ai/dsh-commands`;
+- resolves `baseURL`, model, and `apiKeyEnv` from the current configurable
+  provider, with explicit command overrides for missing facts;
+- resolves the credential per invocation and never puts the value in argv or
+  the recorded command input;
+- accepts Claude routes over either Anthropic-compatible or OpenAI-compatible
+  APIs, but refuses non-Claude model families because the current identity and
+  stream-integrity baselines are Claude-specific;
+- writes reports under the current session workspace by default.
+
+Post-install verification:
+
+```bash
+dsh --profile web --dump-config
+dsh --profile cc-tui --dump-config
+```
+
+Both dumps must contain the `api-relay-audit` row. In a configured session,
+`/relay-audit --connectivity` should create a local Markdown report without
+placing the API key in the command input, result, process argv, or logs.
 
 ## OpenClaw / ClawHub
 
@@ -127,10 +165,12 @@ Do not merge these project-level query families into one marketplace slogan:
 
 Skill-specific long-tail phrases:
 
+- DSH plugin for AI API relay audit
+- DeepSeek Harness Claude relay security audit
 - OpenClaw skill for AI API relay audit
 - OpenClaw prompt injection relay audit
 - Hermes skill for LLM proxy security
 - Hermes Agent API key relay audit
 
 Use these phrases naturally in README and Pages. Do not rename the project or
-make OpenClaw / Hermes the primary concept.
+make DSH / OpenClaw / Hermes the primary concept.
