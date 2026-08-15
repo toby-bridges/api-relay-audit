@@ -25,12 +25,23 @@ def parse_args():
     p.add_argument("--url", required=True, help="Base URL (e.g. https://xxx.com/v1)")
     p.add_argument("--model", default="claude-opus-4-6", help="Model name")
     p.add_argument("--timeout", type=int, default=120, help="Request timeout (seconds)")
+    p.add_argument(
+        "--allow-insecure-tls",
+        action="store_true",
+        help="Explicitly allow HTTPS curl requests to disable certificate verification.",
+    )
     return p.parse_args()
 
 
 def main():
     args = parse_args()
-    client = APIClient(args.url, args.key, args.model, timeout=args.timeout)
+    client = APIClient(
+        args.url,
+        args.key,
+        args.model,
+        timeout=args.timeout,
+        allow_insecure_tls=args.allow_insecure_tls,
+    )
 
     print(f"Context truncation test | {client.base_url} | {args.model}")
     print("=" * 50)

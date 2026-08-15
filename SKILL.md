@@ -24,7 +24,7 @@ metadata:
 
 # API Relay Security Audit (API 中转站安全审计)
 
-A self-contained 14-step security audit for third-party AI API relay/proxy services (中转站). One script, zero config, full report. Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407. Infrastructure fingerprinting, latency variance, and upstream channel classification are sourced from Zhang et al., *Real Money, Fake Models*, arXiv:2603.01919.
+A self-contained 14-step security audit for third-party AI API relay/proxy services (中转站). One script, zero config, full report. Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407. Infrastructure fingerprinting, latency variance, and upstream channel classification are sourced from Zhang et al., *Real Money, Fake Models*, arXiv:2603.01919. Explicit relay-evidence and transport trust boundaries are informed by Xie et al., *The Proxy Knows Too Much*, arXiv:2606.16358; the tool does not implement TEE attestation.
 
 ## Quick Start (快速开始)
 
@@ -293,6 +293,7 @@ python audit.py [OPTIONS]
 | `--transparent-log` | No | -- | Path to append-only JSONL forensic log (arXiv §7.3 取证日志) |
 | `--warmup` | No | 0 | Send N benign requests before the audit to mitigate AC-1.b request-count gates (审计前预热次数) |
 | `--timeout` | No | 120 | Request timeout in seconds (请求超时秒数) |
+| `--allow-insecure-tls` | No | false | Allow HTTPS curl requests to skip certificate verification; actual use is warned, logged, and prevents a LOW rating (显式授权不安全 TLS) |
 | `--output` | No | stdout | Path for the Markdown report (报告输出路径) |
 
 ## Troubleshooting (常见问题)
@@ -303,7 +304,7 @@ python audit.py [OPTIONS]
 httpx.ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED]
 ```
 
-The script has built-in `curl` fallback. Look for `[Transport] Python SSL error, switching to curl` in output. No action needed -- it self-recovers.
+The modular client has a built-in curl fallback. Look for `[transport] Python SSL/connect error, switching to curl` in output. The retry still verifies TLS certificates by default. If the relay intentionally uses a self-signed certificate and you have independently verified the endpoint, rerun with `--allow-insecure-tls`; the first actual HTTPS curl use prints a warning and degrades an otherwise LOW full-audit verdict to MEDIUM.
 
 ### API Format Detection Failure (API 格式检测失败)
 

@@ -193,6 +193,7 @@ class TestClientLogIntegration:
         assert len(entry["request_body_sha256"]) == 64
         assert len(entry["response_body_sha256"]) == 64
         assert entry["error"] is None
+        assert entry["tls_verification_disabled"] is False
 
     def test_call_error_logs_entry(self, tmp_path):
         """A failed call() still logs with error field set."""
@@ -290,9 +291,32 @@ class TestClientLogIntegration:
             "timestamp", "method", "url", "http_method",
             "request_body_sha256", "response_body_sha256",
             "status_code", "response_headers", "tls_version",
-            "tls_cipher", "elapsed_seconds", "transport", "error",
+            "tls_cipher", "tls_verification_disabled", "elapsed_seconds",
+            "transport", "error",
         }
         assert required.issubset(entry.keys())
+
+    def test_actual_insecure_curl_request_is_recorded(self, tmp_path):
+        client = APIClient(
+            "https://relay.example.com/v1", "sk-test-key", "claude-test",
+            timeout=10, verbose=False, allow_insecure_tls=True,
+        )
+        client._use_curl = True
+        path = str(tmp_path / "audit.jsonl")
+        logger = TransparentLogger(path)
+        client.set_transparent_logger(logger)
+        with patch("api_relay_audit.client.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=b"HTTP/1.1 400 Bad Request\r\n\r\nbad",
+                stderr=b"",
+            )
+            client.raw_request("POST", "/v1/messages", {}, b"{}")
+        logger.close()
+
+        entry = json.loads(open(path).readline())
+        assert entry["transport"] == "curl"
+        assert entry["tls_verification_disabled"] is True
 
 
 # ---------------------------------------------------------------------------

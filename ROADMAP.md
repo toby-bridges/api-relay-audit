@@ -6,8 +6,8 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-08-16 (Step 10 terminal completeness added without
-changing the 6D risk matrix or TLS behavior)
+**Last updated**: 2026-08-16 (Step 10 terminal completeness shipped; explicit
+TLS downgrade authorization is isolated in a release:major v3 draft)
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -309,6 +309,19 @@ Pick one of these to start the next session. Each is scoped to fit in a
 single session, has a clear spec, and does not require new infrastructure.
 Items marked ✅ closed or historical are retained for auditability only; do
 not pick them as new work unless new evidence reopens the decision.
+
+### v3 draft — explicit TLS downgrade authorization
+**Status**: implemented in a `release:major` draft and excluded from v2.4.
+The modular SSL/connect fallback and curl-only standalone verify certificates
+by default; `--allow-insecure-tls` is required before an HTTPS curl request
+may use `-k`. Actual use is warned once, recorded in the transparent log, and
+raises an otherwise LOW full-audit verdict to MEDIUM without adding D7.
+Connectivity mode reports the evidence downgrade but has no risk rating.
+This changes the historical self-signed-relay fallback behavior, so it must
+ship only with major-version migration notes and dedicated release validation.
+The implementation does not add TEE attestation, OpenAI stream parsing, or a
+new threat-taxonomy dimension.
+**Final test count**: 816/816 passing on the pre-v2.4 draft base.
 
 ### 0. v1.8.1 — app-layer vs edge-layer framework separation
 **Status**: deferred from v1.8 Codex review HIGH finding (2026-04-18)
