@@ -1,0 +1,74 @@
+name: API Relay Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Relay model name to audit"
+        required: true
+        default: "claude-opus-4-6"
+      profile:
+        description: "Audit profile"
+        required: true
+        type: choice
+        options:
+          - general
+          - web3
+          - full
+        default: general
+      upload_private_report:
+        description: "Upload raw report.md as a private artifact"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit-relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AUDIT_SCRIPT_REF: v2.3.0
+      API_RELAY_AUDIT_KEY: ${{ secrets.API_RELAY_AUDIT_KEY }}
+      API_RELAY_AUDIT_URL: ${{ secrets.API_RELAY_AUDIT_URL }}
+    steps:
+      - name: Download pinned standalone audit script
+        run: |
+          set -euo pipefail
+          base_url="https://github.com/toby-bridges/api-relay-audit/releases/download/${AUDIT_SCRIPT_REF}"
+          curl -fsSLO "${base_url}/audit.py"
+          curl -fsSLO "${base_url}/audit.py.sha256"
+          sha256sum -c audit.py.sha256
+          python3 -S audit.py --help >/dev/null
+
+      - name: Run local relay audit
+        run: |
+          set -euo pipefail
+          test -n "${API_RELAY_AUDIT_KEY}"
+          test -n "${API_RELAY_AUDIT_URL}"
+          python3 audit.py \
+            --key "${API_RELAY_AUDIT_KEY}" \
+            --url "${API_RELAY_AUDIT_URL}" \
+            --model "${{ inputs.model }}" \
+            --profile "${{ inputs.profile }}" \
+            --output report.md
+          sha256sum report.md > report.md.sha256
+
+      - name: Upload report checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-relay-audit-report-sha256
+          path: report.md.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload private report artifact
+        if: ${{ inputs.upload_private_report }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-relay-audit-private-report
+          path: report.md
+          if-no-files-found: error
+          retention-days: 7

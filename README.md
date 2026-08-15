@@ -160,6 +160,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
   [prompt injection in proxies](https://toby-bridges.github.io/api-relay-audit/guides/detect-prompt-injection-llm-api-proxies.html),
   [Web3 wallet prompt injection](https://toby-bridges.github.io/api-relay-audit/guides/web3-wallet-prompt-injection-ai-agents.html),
   [OpenClaw and Hermes skill](https://toby-bridges.github.io/api-relay-audit/guides/openclaw-hermes-skill-api-relay-audit.html)
+- Integrations: [GitHub Actions example](./docs/integrations/github-actions.md)
 - Contributors / Credits: [CONTRIBUTORS.md](./CONTRIBUTORS.md)
 - Security policy: [SECURITY.md](./SECURITY.md)
 - Contributing guide: [CONTRIBUTING.md](./CONTRIBUTING.md)
@@ -356,6 +357,7 @@ API Relay Audit 也可以作为 agent skill 使用。
 - 贡献者 / Credits: [CONTRIBUTORS.md](./CONTRIBUTORS.md)
 - 安全政策: [SECURITY.md](./SECURITY.md)
 - 贡献指南: [CONTRIBUTING.md](./CONTRIBUTING.md)
+- 集成示例: [GitHub Actions example](./docs/integrations/github-actions.md)
 - 社交媒体: [X @li9292](https://x.com/li9292)
 
 </details>
