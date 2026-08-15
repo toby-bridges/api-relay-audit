@@ -17,10 +17,6 @@
 
 <p align="center">
   <a href="#deepseek-harness-dsh-plugin"><strong>DSH Plugin</strong></a>
-  ·
-  <a href="./SKILL.md"><strong>OpenClaw Skill</strong></a>
-  ·
-  <a href="./skills/api-relay-audit/SKILL.md"><strong>Hermes Skill</strong></a>
 </p>
 
 ## What Is API Relay Audit?
@@ -106,7 +102,7 @@ community TUI surfaces that use the official `@deepseek-ai/dsh-commands`
 registry. Pin an immutable commit or release tag:
 
 ```bash
-DSH_PLUGIN_REF=<commit-sha-or-release-tag>
+DSH_PLUGIN_REF=v2.4.0
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 
 # dsh-cc-tui and other compatible profile-based clients
@@ -131,18 +127,22 @@ does not add a new model baseline: the selected route must identify as Claude,
 although the relay API itself may be Anthropic-compatible or OpenAI-compatible.
 Independent wrappers without DSH profiles and the DSH command registry are not
 compatible with this bundle. See [agent distribution notes](./docs/skill-distribution.md).
+The exact v2.4.0 installation, runtime, and secret-scan results are recorded in
+[the DSH distribution verification](./docs/distribution-verification-v2.4.0.md).
 
-## Agent Skills: OpenClaw and Hermes
+## Retained Agent Skill Files
 
-API Relay Audit can also run as an agent skill when an agent workflow needs to
-audit a relay before trusting it with coding, tool, or wallet-related traffic.
+The repository retains its existing OpenClaw and Hermes skill files for direct
+users and downstream compatibility. They are not current registry distribution
+targets; active distribution and release verification focus on the DeepSeek
+Harness plugin.
 
 - **OpenClaw Skill:** run a local AI API relay audit before an OpenClaw agent
   depends on a third-party relay, proxy API, or resale key.
 - **Hermes Skill:** install API Relay Audit as a Hermes Agent skill and run the
   same local 14-step LLM proxy security audit from an agent workflow.
 
-These skills do not certify that a relay is safe. They help agents generate a
+These files do not certify that a relay is safe. They help agents generate a
 local, reviewable Markdown report before trusting a relay path.
 
 ## Evidence Boundaries
@@ -195,7 +195,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
   [tool comparison](https://toby-bridges.github.io/api-relay-audit/guides/compare-api-relay-audit-hvoy-cctest.html),
   [prompt injection in proxies](https://toby-bridges.github.io/api-relay-audit/guides/detect-prompt-injection-llm-api-proxies.html),
   [Web3 wallet prompt injection](https://toby-bridges.github.io/api-relay-audit/guides/web3-wallet-prompt-injection-ai-agents.html),
-  [OpenClaw and Hermes skill](https://toby-bridges.github.io/api-relay-audit/guides/openclaw-hermes-skill-api-relay-audit.html)
+  [DeepSeek Harness plugin](https://toby-bridges.github.io/api-relay-audit/guides/deepseek-harness-plugin-api-relay-audit.html)
 - Contributors / Credits: [CONTRIBUTORS.md](./CONTRIBUTORS.md)
 - Security policy: [SECURITY.md](./SECURITY.md)
 - Contributing guide: [CONTRIBUTING.md](./CONTRIBUTING.md)
@@ -329,7 +329,7 @@ Web，以及使用 `@deepseek-ai/dsh-commands` registry 的社区 TUI。安装�
 commit 或 release tag：
 
 ```bash
-DSH_PLUGIN_REF=<commit-sha-or-release-tag>
+DSH_PLUGIN_REF=v2.4.0
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 ```
@@ -345,19 +345,20 @@ dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGI
 /relay-audit --url <URL> --model <claude-model> --credential-ref <DSH_CREDENTIAL_REF>
 ```
 
-无参数仍运行 master 现有完整审计，可能产生较高 token 消耗；低成本检查使用
+无参数运行现有完整审计，可能产生较高 token 消耗；低成本检查使用
 `--connectivity`。插件不增加新的模型基线：中转接口可以兼容 Anthropic 或
 OpenAI，但被审计线路必须明确为 Claude。没有 DSH profile/plugin 机制的独立
 wrapper 不在兼容范围内。
 
-## Agent Skill 支持
+## 保留的 Agent Skill 文件
 
-API Relay Audit 也可以作为 agent skill 使用。
+仓库保留 OpenClaw 和 Hermes skill 文件，供已有直接用户和下游兼容使用；当前
+registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 
 - **OpenClaw Skill:** 在 OpenClaw agent 把 coding、tool 或钱包相关流量交给第三方 relay 前，先运行本地审计。
 - **Hermes Skill:** 作为 Hermes Agent skill 安装，在 agent workflow 中运行同一套本地 14 步审计。
 
-这些 skill 不给中转站颁发安全认证，只帮助 agent 在信任 relay 前生成本地、可复查的 Markdown 报告。
+这些文件不代表 registry 已发布，也不给中转站颁发安全认证；它们只帮助 agent 在信任 relay 前生成本地、可复查的 Markdown 报告。
 
 ## 什么时候使用
 
@@ -403,12 +404,12 @@ API Relay Audit 也可以作为 agent skill 使用。
 
 ## 如何贡献
 
-你不需要写代码也能帮忙：可以提交本地运行反馈、检测缺口、文档示例、翻译改进，或 DSH / OpenClaw / Hermes 安装反馈。
+你不需要写代码也能帮忙：可以提交本地运行反馈、检测缺口、文档示例、翻译改进，或 DSH plugin 安装反馈。保留的 OpenClaw / Hermes 集成反馈也会被接受。
 
 - [Local Run Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=local-run-feedback.yml)
 - [Detector Gap](https://github.com/toby-bridges/api-relay-audit/issues/new?template=detector-gap.yml)
 - [Documentation Example](https://github.com/toby-bridges/api-relay-audit/issues/new?template=documentation-example.yml)
-- [Agent Skill Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=agent-skill-feedback.yml)
+- [DSH Plugin Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=agent-skill-feedback.yml)
 - [Community Evidence Guide](./docs/community-evidence.md)
 
 请不要提交真实 API Key、私有中转站流量、钱包材料或未脱敏审计报告。

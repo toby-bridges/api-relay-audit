@@ -26,8 +26,9 @@ body:
       options:
         - standalone curl download
         - git checkout
-        - OpenClaw skill
-        - Hermes Agent skill
+        - DeepSeek Harness plugin
+        - retained OpenClaw integration
+        - retained Hermes Agent integration
         - other
     validations:
       required: true

@@ -545,42 +545,42 @@ footer a:hover{color:var(--text)}
 
   <!-- Tab: Agent -->
   <div class="tab-panel" id="tab-agent">
-    <p class="agent-pitch" data-i18n="agent_pitch">Install as an OpenClaw or Hermes skill — let an agent run the local 14-step audit from a secure environment.</p>
+    <p class="agent-pitch" data-i18n="agent_pitch">Install the DeepSeek Harness plugin and run the local 14-step audit from your configured DSH profile.</p>
 
     <div class="agent-steps">
       <div class="agent-step">
         <div class="agent-step-head">
           <div class="agent-step-num">1</div>
-          <div class="agent-step-title" data-i18n="agent_step1_title">Install the Skill</div>
+          <div class="agent-step-title" data-i18n="agent_step1_title">Install the DSH Plugin</div>
         </div>
-        <p data-i18n="agent_step1_desc">Use Hermes direct install now, or OpenClaw after ClawHub publication:</p>
-        <div class="agent-cmd" data-cmd="hermes skills install toby-bridges/api-relay-audit/skills/api-relay-audit">
+        <p data-i18n="agent_step1_desc">Pin the verified v2.4.0 bundle in your web profile:</p>
+        <div class="agent-cmd" data-cmd='dsh plugin --profile web add "github:toby-bridges/api-relay-audit#v2.4.0"'>
           <button class="copy-btn" onclick="copyAgentCmd(this)" data-i18n="copy_btn">Copy</button>
-          hermes skills install toby-bridges/api-relay-audit/skills/api-relay-audit
+          dsh plugin --profile web add "github:toby-bridges/api-relay-audit#v2.4.0"
         </div>
       </div>
 
       <div class="agent-step">
         <div class="agent-step-head">
           <div class="agent-step-num">2</div>
-          <div class="agent-step-title" data-i18n="agent_step2_title">Trigger with one sentence</div>
+          <div class="agent-step-title" data-i18n="agent_step2_title">Run a Connectivity Check</div>
         </div>
-        <p data-i18n="agent_step2_desc">Set the key through the agent's secure environment, then say:</p>
-        <div class="agent-trigger" data-i18n="agent_trigger">"Audit this relay: https://your-relay.com/v1 using API_RELAY_AUDIT_KEY"</div>
+        <p data-i18n="agent_step2_desc">Select a configured Claude route, then run the lower-cost check:</p>
+        <div class="agent-trigger" data-i18n="agent_trigger">/relay-audit --connectivity</div>
       </div>
 
       <div class="agent-step">
         <div class="agent-step-head">
           <div class="agent-step-num">3</div>
-          <div class="agent-step-title" data-i18n="agent_step3_title">Agent does everything</div>
+          <div class="agent-step-title" data-i18n="agent_step3_title">Review the Local Report</div>
         </div>
-        <p data-i18n="agent_step3_desc">The agent downloads the pinned script, runs the 14-step audit locally, and presents the findings — you read the report.</p>
+        <p data-i18n="agent_step3_desc">Run /relay-audit for the full 14-step audit after connectivity passes; reports stay in the session workspace.</p>
       </div>
     </div>
 
     <p class="agent-note">
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" style="vertical-align:middle"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      <span data-i18n="agent_security">Same security model — the agent runs locally on your machine, and the key is sent only to your chosen relay URL.</span>
+      <span data-i18n="agent_security">The plugin resolves the DSH credential per invocation and passes it to the local audit process through the API_RELAY_AUDIT_KEY environment variable, never through command arguments.</span>
     </p>
   </div><!-- /tab-agent -->
 
@@ -719,9 +719,9 @@ footer a:hover{color:var(--text)}
       <h3>Web3 wallet prompt injection through AI agents</h3>
       <p>Check transfer guidance, signed-transaction refusal, and private-key refusal.</p>
     </a>
-    <a class="guide-card" href="guides/openclaw-hermes-skill-api-relay-audit.html">
-      <h3>OpenClaw and Hermes skill for relay audits</h3>
-      <p>Run local AI API relay audits from agent workflows without adding a web checker.</p>
+    <a class="guide-card" href="guides/deepseek-harness-plugin-api-relay-audit.html">
+      <h3>DeepSeek Harness plugin for relay audits</h3>
+      <p>Install the pinned DSH bundle and keep relay credentials out of command arguments.</p>
     </a>
   </div>
 </section>
@@ -1096,12 +1096,12 @@ const i18n={
     cmd_comment:"下载审计脚本并运行 14 步审计",
     cmd_history_hint:"Tip: 命令中的 Key 会留在 shell history 中。如需更安全，可改用环境变量: export KEY=sk-... 然后 --key $KEY",
     tab_human:"手动运行",tab_agent:"Agent 自动运行",
-    agent_pitch:"安装为 OpenClaw 或 Hermes skill — 让 agent 从安全环境中运行本地 14 步审计。",
-    agent_step1_title:"安装 Skill",agent_step1_desc:"现在可用 Hermes 直接安装；OpenClaw 在 ClawHub 发布后安装：",
-    agent_step2_title:"一句话触发",agent_step2_desc:"先通过 agent 的安全环境配置 Key，然后说：",
-    agent_trigger:'\u201c帮我审计这个中转站：https://your-relay.com/v1，使用 API_RELAY_AUDIT_KEY\u201d',
-    agent_step3_title:"Agent 全自动执行",agent_step3_desc:"Agent 下载固定版本脚本、在本地运行 14 步审计、呈现结果 — 你只需要看报告。",
-    agent_security:"同样的安全模型 — agent 在你的本地机器上运行，Key 只会发送到你指定的中转站 URL。",
+    agent_pitch:"安装 DeepSeek Harness 插件，从已配置的 DSH profile 运行本地 14 步审计。",
+    agent_step1_title:"安装 DSH 插件",agent_step1_desc:"将已验证的 v2.4.0 bundle 固定安装到 web profile：",
+    agent_step2_title:"运行连通性检查",agent_step2_desc:"选择已配置的 Claude route，然后运行低成本检查：",
+    agent_trigger:"/relay-audit --connectivity",
+    agent_step3_title:"查看本地报告",agent_step3_desc:"连通性通过后运行 /relay-audit 完成 14 步审计；报告保留在 session workspace。",
+    agent_security:"插件在每次调用时解析 DSH credential，并通过 API_RELAY_AUDIT_KEY 环境变量交给本地审计进程，不放入命令参数。",
     term_downloading:"audit.py 已下载 (零 Python 包依赖)",
     term_step1:"[Step 1/14] 基础设施侦察...",
     term_step1_out:"  CDN: Cloudflare | 系统: New API | SSL: Let's Encrypt",
@@ -1197,12 +1197,12 @@ const i18n={
     cmd_comment:"Download audit script and run full 14-step audit",
     cmd_history_hint:"Tip: The Key in this command will persist in shell history. For better hygiene: export KEY=sk-... then use --key $KEY",
     tab_human:"Run Manually",tab_agent:"Agent Auto-Run",
-    agent_pitch:"Install as an OpenClaw or Hermes skill — let an agent run the local 14-step audit from a secure environment.",
-    agent_step1_title:"Install the Skill",agent_step1_desc:"Use Hermes direct install now, or OpenClaw after ClawHub publication:",
-    agent_step2_title:"Trigger with one sentence",agent_step2_desc:"Set the key through the agent's secure environment, then say:",
-    agent_trigger:'"Audit this relay: https://your-relay.com/v1 using API_RELAY_AUDIT_KEY"',
-    agent_step3_title:"Agent does everything",agent_step3_desc:"The agent downloads the pinned script, runs the 14-step audit locally, and presents the findings — you read the report.",
-    agent_security:"Same security model — the agent runs locally on your machine, and the key is sent only to your chosen relay URL.",
+    agent_pitch:"Install the DeepSeek Harness plugin and run the local 14-step audit from your configured DSH profile.",
+    agent_step1_title:"Install the DSH Plugin",agent_step1_desc:"Pin the verified v2.4.0 bundle in your web profile:",
+    agent_step2_title:"Run a Connectivity Check",agent_step2_desc:"Select a configured Claude route, then run the lower-cost check:",
+    agent_trigger:"/relay-audit --connectivity",
+    agent_step3_title:"Review the Local Report",agent_step3_desc:"Run /relay-audit for the full 14-step audit after connectivity passes; reports stay in the session workspace.",
+    agent_security:"The plugin resolves the DSH credential per invocation and passes it to the local audit process through the API_RELAY_AUDIT_KEY environment variable, never through command arguments.",
     term_downloading:"audit.py downloaded (zero Python package dependencies)",
     term_step1:"[Step 1/14] Infrastructure recon...",
     term_step1_out:"  CDN: Cloudflare | System: New API | SSL: Let's Encrypt",

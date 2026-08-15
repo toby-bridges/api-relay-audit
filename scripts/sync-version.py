@@ -189,8 +189,8 @@ def sync_skill_distribution(version: Version, path: Path) -> str:
     )
     text = replace_regex(
         text,
-        rf"--version {FULL_VERSION_RE} \\",
-        f"--version {version.full} \\",
+        rf"^DSH_PLUGIN_REF=v{FULL_VERSION_RE}$",
+        f"DSH_PLUGIN_REF={version.tag}",
         path,
     )
     return text
