@@ -12,8 +12,8 @@
 
 | 项 | 值 | 来源 |
 |---|---|---|
-| 模块版版本 | `v2.3.1` | `scripts/audit.py` docstring |
-| 单文件版版本 | `v2.3.1` | `audit.py` docstring |
+| 模块版版本 | `v2.4` | `scripts/audit.py` docstring |
+| 单文件版版本 | `v2.4` | `audit.py` docstring |
 | 步骤数 (Step N) | **14** | grep `Step N` in `scripts/audit.py` |
 | 步骤数 (单文件版) | 14 | grep `Step N` in `audit.py` |
 | 测试数 (pytest) | **808** | `pytest --collect-only` |
@@ -25,12 +25,12 @@
 | Codex review 已编号轮次（最大） | 6 | grep `Nth Codex review round` |
 | Codex bug 累计（最新声称） | 18 | grep `cumulative N real bug` |
 | 测试数演进 (ROADMAP) | [546, 560, 562, 586, 642, 700, 808] | grep `Final test count: N/N passing` |
-| Recorded commit SHA | `211e537` | recent reachable commit; `--check` allows follow-up metrics commits |
+| Recorded commit SHA | `ef3a15b` | recent reachable commit; `--check` allows follow-up metrics commits |
 | Recorded commit date | 2026-08-16 | recent reachable commit; `--check` allows follow-up metrics commits |
 
 ## 一致性自检
 
-- ✅ 版本一致：两份都是 `v2.3.1`。
+- ✅ 版本一致：两份都是 `v2.4`。
 - ✅ 步骤数一致：14。
 - ℹ️ pytest (808) vs 静态 (778) 差距 >20，多出来的来自 parametrize/fixture——以 pytest 为准。
 

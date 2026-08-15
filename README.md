@@ -38,7 +38,7 @@ Use it when you rely on a third-party AI API relay, OpenAI-compatible proxy, Cla
 ## Quick Start
 
 ```bash
-AUDIT_SCRIPT_REF=v2.3.1
+AUDIT_SCRIPT_REF=v2.4.0
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
@@ -177,7 +177,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 
 | Metric | Current value |
 |---|---:|
-| Version | `v2.3` |
+| Version | `v2.4` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
 | pytest collected tests | 808 |
@@ -306,7 +306,7 @@ to one behavior or document.
 ## 30 秒快速开始
 
 ```bash
-AUDIT_SCRIPT_REF=v2.3.1
+AUDIT_SCRIPT_REF=v2.4.0
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
@@ -394,7 +394,7 @@ API Relay Audit 也可以作为 agent skill 使用。
 
 | 指标 | 当前值 |
 |---|---:|
-| 版本 | `v2.3` |
+| 版本 | `v2.4` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
 | pytest collected tests | 808 |

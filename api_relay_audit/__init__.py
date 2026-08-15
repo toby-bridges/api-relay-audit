@@ -1,3 +1,3 @@
 """API Relay Audit - Security audit tool for AI API relay services."""
 
-__version__ = "2.3.1"
+__version__ = "2.4.0"

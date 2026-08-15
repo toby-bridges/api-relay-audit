@@ -1,7 +1,7 @@
 ---
 name: api-relay-audit
 description: Use when auditing third-party AI API relays, LLM proxies, gateways, or API-key resale services locally before trusting coding, tool, production, or wallet-sensitive traffic.
-version: 2.3.1
+version: 2.4.0
 author: Toby Bridges
 license: AGPL-3.0-only
 platforms: [linux, macos, windows]
@@ -94,7 +94,7 @@ MODEL="${API_RELAY_AUDIT_MODEL:-claude-opus-4-6}"
 PROFILE="${API_RELAY_AUDIT_PROFILE:-general}"
 WORKDIR="$(mktemp -d)"
 REPORT="$PWD/api-relay-audit-report.md"
-AUDIT_SCRIPT_REF=v2.3.1
+AUDIT_SCRIPT_REF=v2.4.0
 
 curl -fsSL \
   "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" \

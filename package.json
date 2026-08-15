@@ -1,6 +1,6 @@
 {
   "name": "dsh-api-relay-audit",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "private": true,
   "description": "DeepSeek Harness bundle for running API Relay Audit locally",
   "type": "module",
