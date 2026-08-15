@@ -26,6 +26,7 @@ const OWNED_OPTIONS = new Set([
   '--transparent-log',
 ])
 const FORBIDDEN_OPTIONS = new Set(['--key', '--key-env'])
+const CONTROLLED_OPTIONS = new Set([...OWNED_OPTIONS, ...FORBIDDEN_OPTIONS])
 const AUDIT_SCRIPT = fileURLToPath(new URL('../audit.py', import.meta.url))
 
 const USAGE = `Usage: /relay-audit [audit options]
@@ -52,6 +53,11 @@ function optionName(token) {
 function optionInlineValue(token) {
   const equals = token.indexOf('=')
   return equals === -1 ? undefined : token.slice(equals + 1)
+}
+
+function abbreviatedControlledOptions(name) {
+  if (!name.startsWith('--')) return []
+  return [...CONTROLLED_OPTIONS].filter(option => option !== name && option.startsWith(name))
 }
 
 /** Split human-command input without invoking a shell. */
@@ -126,6 +132,12 @@ export function parseCommandInput(rawInput) {
     const name = optionName(token)
     if (FORBIDDEN_OPTIONS.has(name)) {
       throw new Error(`${name} is not accepted; store the key in DSH Credentials`)
+    }
+    const abbreviations = abbreviatedControlledOptions(name)
+    if (abbreviations.length > 0) {
+      throw new Error(
+        `${name} is an abbreviation of adapter-controlled option ${abbreviations.join(' or ')}`,
+      )
     }
     if (token === '--help' || token === '-h') {
       help = true

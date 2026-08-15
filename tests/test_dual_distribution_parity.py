@@ -12,6 +12,7 @@ focused behavior/constant regression tests for public standalone semantics.
 """
 
 import ast
+import importlib.util
 import sys
 import re
 import subprocess
@@ -22,6 +23,58 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_audit_module(path, name):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _long_options(path):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_argument"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and node.args[0].value.startswith("--")
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "module_name"),
+    [
+        (REPO_ROOT / "scripts" / "audit.py", "modular_audit_no_abbrev"),
+        (REPO_ROOT / "audit.py", "standalone_audit_no_abbrev"),
+    ],
+)
+def test_all_long_option_abbreviations_are_rejected(path, module_name, monkeypatch, capsys):
+    module = _load_audit_module(path, module_name)
+    options = _long_options(path)
+    abbreviations = {
+        option[:length]
+        for option in options
+        for length in range(3, len(option))
+        if option[:length] not in options
+    }
+
+    for abbreviation in sorted(abbreviations):
+        for token in (abbreviation, f"{abbreviation}=value"):
+            monkeypatch.setattr(
+                sys,
+                "argv",
+                ["audit.py", "--key", "test-key", "--url", "https://example.invalid", token],
+            )
+            with pytest.raises(SystemExit) as exc_info:
+                module.parse_args()
+            assert exc_info.value.code == 2
+            assert "unrecognized arguments" in capsys.readouterr().err
 
 
 def test_standalone_artifact_generated_from_sources():

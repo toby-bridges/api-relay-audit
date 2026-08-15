@@ -110,37 +110,20 @@ openclaw skills check
 
 ## Hermes Agent
 
-Hermes supports direct install, GitHub taps, Skills Hub publishing, and
-well-known discovery endpoints. The repo currently supports GitHub tap install
-from `skills/api-relay-audit/SKILL.md`.
-
-Direct install:
-
-```bash
-hermes skills install toby-bridges/api-relay-audit/skills/api-relay-audit
-```
-
-Tap install:
+The supported Hermes distribution entrypoint is this repository's GitHub tap.
+It installs `skills/api-relay-audit/SKILL.md` without opening a pull request
+against the source repository:
 
 ```bash
 hermes skills tap add toby-bridges/api-relay-audit
 hermes skills install toby-bridges/api-relay-audit/api-relay-audit
 ```
 
-Skills Hub publish after merge:
-
-```bash
-hermes --version
-hermes auth status
-hermes skills publish skills/api-relay-audit \
-  --to github \
-  --repo toby-bridges/api-relay-audit
-```
-
-Post-publish verification:
+Post-install verification:
 
 ```bash
 hermes skills list | grep api-relay-audit
+hermes skills audit api-relay-audit
 hermes chat --toolsets skills -q "Use the api-relay-audit skill to explain how to audit a relay without exposing my API key."
 ```
 

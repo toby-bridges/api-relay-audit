@@ -167,7 +167,10 @@ def _tool_commit_from_checkout():
 # ============================================================
 
 def parse_args():
-    p = argparse.ArgumentParser(description="API Relay Security Audit Tool")
+    p = argparse.ArgumentParser(
+        description="API Relay Security Audit Tool",
+        allow_abbrev=False,
+    )
     key_source = p.add_mutually_exclusive_group(required=True)
     key_source.add_argument("--key", help="API Key")
     key_source.add_argument("--key-env", metavar="NAME",

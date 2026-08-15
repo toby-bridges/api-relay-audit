@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 722d1c65bf44ee9c8dff2a62a826800db09f2d3419396c739d6d19fcec63190a
-# standalone_body_sha256: 8040f23082bd40681bfdefc52a52af0d3657de5567df51fef3b05d1fab7cd54a
+# source_sha256: 158e497652fa21d37033481f65ba1585ce821f47c058886d7399d1a3baa6645f
+# standalone_body_sha256: b42f856efce9cc66821ef5511022f3fcc43965dc4caca479d058107f77beaefc
 # END GENERATED STANDALONE HEADER
 
 """
@@ -5007,7 +5007,10 @@ def _tool_commit_from_checkout():
 # ============================================================
 
 def parse_args():
-    p = argparse.ArgumentParser(description="API Relay Security Audit Tool")
+    p = argparse.ArgumentParser(
+        description="API Relay Security Audit Tool",
+        allow_abbrev=False,
+    )
     key_source = p.add_mutually_exclusive_group(required=True)
     key_source.add_argument("--key", help="API Key")
     key_source.add_argument("--key-env", metavar="NAME",

@@ -6,8 +6,8 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-08-16 (Step 10 terminal completeness added without
-changing the 6D risk matrix or TLS behavior)
+**Last updated**: 2026-08-16 (DSH bundle added with strict adapter/runtime
+boundaries; Step 10 completeness remains in the existing 6D risk matrix)
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -22,6 +22,17 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
 ---
 
 ## ✅ Shipped
+
+### 2026-08-16 distribution — DeepSeek Harness bundle
+- **Two-profile bundle**: the repository package installs into DSH web and
+  cc-tui profiles while continuing to execute the generated standalone audit.
+- **Credential boundary**: the adapter resolves the configured key on every
+  invocation and passes it through a child-only environment variable, never
+  argv or command output.
+- **Runtime boundary**: non-Claude routes are rejected before credential or
+  subprocess use. Adapter-controlled long-option abbreviations, including
+  `--flag=value` forms, are rejected in JavaScript and both Python
+  distributions disable argparse abbreviation.
 
 ### 2026-08-16 hardening — SSE terminal completeness
 - **Terminal protocol gate**: Step 10 requires exactly one `message_stop`
@@ -49,12 +60,13 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
   detector, not a hosted preflight service, not a new API family, and not a
   change to LOW/MEDIUM/HIGH semantics. `inconclusive` remains
   `inconclusive`.
-- **Final test count**: 802/802 passing (733 baseline → 764 after current
+- **Final test count**: 808/808 passing (733 baseline → 764 after current
   master follow-ups → 769 after release-engineering version sync coverage →
   775 after query-family growth contracts → 778 after release-hardening
   public verification regressions → 789 after report reproducibility metadata
   and metadata source-boundary regressions → 796 after resumable release
-  provenance verification → 802 after SSE terminal-completeness regressions).
+  provenance verification → 802 after SSE terminal-completeness regressions →
+  808 after DSH/version and dual-distribution abbreviation regressions).
 
 ### v1.9 — Dual-distribution full generation (2026-06-01)
 - **Standalone product promise preserved**: root `audit.py` stays committed,

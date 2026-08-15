@@ -136,6 +136,32 @@ test('extracts adapter options and preserves audit options', () => {
   }
 })
 
+test('rejects every abbreviation of adapter-controlled long options', () => {
+  const controlledOptions = [
+    '--url',
+    '--model',
+    '--credential-ref',
+    '--output',
+    '--transparent-log',
+    '--key',
+    '--key-env',
+  ]
+  const exactOptions = new Set(controlledOptions)
+  const abbreviations = new Set()
+
+  for (const option of controlledOptions) {
+    for (let length = 3; length < option.length; length += 1) {
+      const prefix = option.slice(0, length)
+      if (!exactOptions.has(prefix)) abbreviations.add(prefix)
+    }
+  }
+
+  for (const abbreviation of abbreviations) {
+    assert.throws(() => parseCommandInput(abbreviation), /abbreviation/u)
+    assert.throws(() => parseCommandInput(`${abbreviation}=value`), /abbreviation/u)
+  }
+})
+
 test('resolves nested DSH provider settings and partial overrides', async () => {
   const testHarness = harness()
   try {
