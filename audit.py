@@ -4,16 +4,16 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 37c3771e36eca7ee2df5d561a7c586d6fbad7420d8e2ce74ad7f7b31744d27c5
-# standalone_body_sha256: d6f11c6798ad765eb8c59daf1e273440a9a6afdc500167cee4617e6b4f039b3e
+# source_sha256: 29098d59def1f325bc6c75efe2f96013c3c2056ca27277c01b1d6d5fb6d2ba28
+# standalone_body_sha256: c717d12b15a3d66b053ac5d600f35761504b1da5424ee6c4cffb444289e7ce24
 # END GENERATED STANDALONE HEADER
 
 """
-API Relay Security Audit Tool v2.3 --- Standalone Edition
+API Relay Security Audit Tool v2.3.1 --- Standalone Edition
 
 Generated curl-only artifact for users who want:
 
-  AUDIT_SCRIPT_REF=v2.3.0
+  AUDIT_SCRIPT_REF=v2.3.1
   curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
   python audit.py --key YOUR_KEY --url https://relay.example.com/v1
 
@@ -4810,7 +4810,7 @@ def run_channel_classifier(client):
 # ============================================================
 
 """
-API Relay Security Audit Tool v2.3
+API Relay Security Audit Tool v2.3.1
 
 Full 14-step audit: infrastructure recon, model list, token injection,
 prompt extraction, instruction conflict + identity, jailbreak, context

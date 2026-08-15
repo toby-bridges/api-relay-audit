@@ -12,8 +12,8 @@ It is operational release documentation, not a user-facing safety claim.
 
 Both files must stay aligned with the current audit surface:
 
-- version `2.3.0`
-- audit script ref `v2.3.0`
+- version `2.3.1`
+- audit script ref `v2.3.1`
 - 14 audit steps
 - local-first execution
 - API key not repeated in chat, logs, filenames, or public comments
@@ -44,7 +44,7 @@ clawhub whoami
 clawhub skill publish . \
   --slug api-relay-audit \
   --name "API Relay Audit" \
-  --version 2.3.0 \
+  --version 2.3.1 \
   --changelog "Local 14-step AI API relay and LLM proxy security audit skill."
 ```
 

@@ -36,7 +36,7 @@ Use it when you rely on a third-party AI API relay, OpenAI-compatible proxy, Cla
 ## Quick Start
 
 ```bash
-AUDIT_SCRIPT_REF=v2.3.0
+AUDIT_SCRIPT_REF=v2.3.1
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
@@ -267,7 +267,7 @@ to one behavior or document.
 ## 30 秒快速开始
 
 ```bash
-AUDIT_SCRIPT_REF=v2.3.0
+AUDIT_SCRIPT_REF=v2.3.1
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-API Relay Security Audit Tool v2.3
+API Relay Security Audit Tool v2.3.1
 
 Full 14-step audit: infrastructure recon, model list, token injection,
 prompt extraction, instruction conflict + identity, jailbreak, context
