@@ -107,7 +107,10 @@ def _strip_markdown_code_fence(text: str) -> str:
 
 def _looks_like_refusal(text_lower: str) -> bool:
     """Return True if ``text_lower`` contains any refusal phrase."""
-    return any(m in text_lower for m in REFUSAL_MARKERS)
+    normalized = text_lower.translate(
+        str.maketrans({"\u2018": "'", "\u2019": "'", "\u02bc": "'"})
+    )
+    return any(marker in normalized for marker in REFUSAL_MARKERS)
 
 
 def _contains_claude_self_id(text_lower: str) -> bool:
