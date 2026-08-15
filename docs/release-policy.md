@@ -54,19 +54,23 @@ release tag. The GitHub Release asset `audit.py` must be byte-identical to that
 tagged file, and `audit.py.sha256` must be the SHA-256 digest of the uploaded
 asset.
 
-The draft-release workflow enforces this after creating the draft release:
+The draft-release workflow enforces this after creating or resuming the draft
+release:
 
 ```bash
-python3 scripts/verify-release-artifact.py --tag vX.Y.Z
+python3 scripts/verify-release-artifact.py --tag vX.Y.Z --source-ref <release-commit>
 ```
 
 The verifier checks all three links in the chain:
 
-1. `git show vX.Y.Z:audit.py`
+1. `git show <release-commit>:audit.py` while the release is draft, and
+   `git show vX.Y.Z:audit.py` after publication
 2. the generated standalone artifact for the checked-out source
 3. the downloaded GitHub Release `audit.py` and `audit.py.sha256` assets
 
 If any byte differs, the release is not reproducible and must not be published.
-Do not manually replace release assets to paper over drift. Fix the source,
-regenerate `audit.py`, rerun the draft-release workflow, and preserve the failed
-draft as audit trail if it was already visible to collaborators.
+Do not manually replace release assets to paper over drift. Fix the source and
+regenerate `audit.py`. A rerun may replace assets only when the existing release
+is still a draft targeting the exact same commit. Published releases, draft
+target mismatches, and orphaned tag-only states fail closed and require explicit
+maintainer recovery.

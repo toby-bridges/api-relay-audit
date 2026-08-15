@@ -41,8 +41,8 @@ def run(args: list[str], *, cwd: Path = REPO_ROOT) -> subprocess.CompletedProces
     return subprocess.run(args, cwd=cwd, check=True, capture_output=True)
 
 
-def git_show_bytes(tag: str, path: str) -> bytes:
-    return run(["git", "show", f"{tag}:{path}"]).stdout
+def git_show_bytes(ref: str, path: str) -> bytes:
+    return run(["git", "show", f"{ref}:{path}"]).stdout
 
 
 def generated_standalone_bytes() -> bytes:
@@ -69,14 +69,14 @@ def require_equal(left_label: str, left: bytes, right_label: str, right: bytes) 
     )
 
 
-def verify_local(tag: str) -> bytes:
-    tag_bytes = git_show_bytes(tag, "audit.py")
+def verify_local(source_ref: str) -> bytes:
+    source_bytes = git_show_bytes(source_ref, "audit.py")
     head_bytes = git_show_bytes("HEAD", "audit.py")
     generated_bytes = generated_standalone_bytes()
 
-    require_equal(f"{tag}:audit.py", tag_bytes, "HEAD:audit.py", head_bytes)
+    require_equal(f"{source_ref}:audit.py", source_bytes, "HEAD:audit.py", head_bytes)
     require_equal("HEAD:audit.py", head_bytes, "generated standalone", generated_bytes)
-    return tag_bytes
+    return source_bytes
 
 
 def download_release_assets(tag: str, repo: str | None, dest: Path) -> tuple[Path, Path]:
@@ -94,7 +94,12 @@ def download_release_assets(tag: str, repo: str | None, dest: Path) -> tuple[Pat
     return audit_asset, sha_asset
 
 
-def verify_release_assets(tag: str, expected_bytes: bytes, repo: str | None) -> None:
+def verify_release_assets(
+    tag: str,
+    expected_bytes: bytes,
+    repo: str | None,
+    source_ref: str,
+) -> None:
     with tempfile.TemporaryDirectory(prefix="api-relay-audit-release-") as tmp:
         audit_asset, sha_asset = download_release_assets(tag, repo, Path(tmp))
         asset_bytes = audit_asset.read_bytes()
@@ -107,7 +112,12 @@ def verify_release_assets(tag: str, expected_bytes: bytes, repo: str | None) -> 
                 f"({published_digest}) != audit.py asset ({actual_digest})"
             )
         print(f"OK: audit.py.sha256 matches release asset ({actual_digest})")
-        require_equal("release asset audit.py", asset_bytes, f"{tag}:audit.py", expected_bytes)
+        require_equal(
+            "release asset audit.py",
+            asset_bytes,
+            f"{source_ref}:audit.py",
+            expected_bytes,
+        )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -115,6 +125,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Verify that a release audit.py asset matches the tagged generated artifact."
     )
     parser.add_argument("--tag", required=True, help="Release tag, e.g. v2.3.1")
+    parser.add_argument(
+        "--source-ref",
+        default=None,
+        help=(
+            "Git ref that owns the expected audit.py bytes. Defaults to --tag. "
+            "Draft-release workflows should pass the exact release commit SHA."
+        ),
+    )
     parser.add_argument(
         "--repo",
         default=os.environ.get("GITHUB_REPOSITORY"),
@@ -130,9 +148,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    expected_bytes = verify_local(args.tag)
+    source_ref = args.source_ref or args.tag
+    expected_bytes = verify_local(source_ref)
     if not args.skip_release_download:
-        verify_release_assets(args.tag, expected_bytes, args.repo)
+        verify_release_assets(args.tag, expected_bytes, args.repo, source_ref)
     return 0
 
 

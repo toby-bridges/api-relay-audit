@@ -144,7 +144,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 | Version | `v2.3` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
-| pytest collected tests | 789 |
+| pytest collected tests | 796 |
 | CLI flags | 21 |
 | Runtime profiles | `general`, `web3`, `full` |
 
@@ -333,7 +333,7 @@ API Relay Audit 也可以作为 agent skill 使用。
 | 版本 | `v2.3` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 789 |
+| pytest collected tests | 796 |
 | CLI flags | 21 |
 | Runtime profiles | `general`, `web3`, `full` |
 
