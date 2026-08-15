@@ -149,7 +149,7 @@ Warn the user before enabling `--aggressive-error-probes` because oversized prob
 | 7 | Context length | Canary-based truncation detection. |
 | 8 | Tool-call substitution | Package-install command rewriting, AC-1.a. |
 | 9 | Error leakage | Credential, header, stack trace, path, and internal-field leakage. |
-| 10 | Stream integrity | SSE event whitelist, usage monotonicity, signatures, and stream model identity. |
+| 10 | Stream integrity | SSE event whitelist, usage monotonicity, signatures, terminal `message_stop` completeness, and stream model identity. |
 | 11 | Web3 prompt injection | Wallet-safety refusal probes, profile-gated. |
 | 12 | Infrastructure fingerprint | Known relay framework signatures, informational only. |
 | 13 | Latency variance | Bimodal or unstable routing hints, informational only. |

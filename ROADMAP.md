@@ -6,9 +6,8 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-06-07 (error diagnosis report layer added; roadmap
-hygiene pass: v1.9 follow-up test gaps, refusal/transport decouplings, and
-the protobuf-channel spike are no longer active near-term candidates)
+**Last updated**: 2026-08-16 (Step 10 terminal completeness added without
+changing the 6D risk matrix or TLS behavior)
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -23,6 +22,16 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
 ---
 
 ## ✅ Shipped
+
+### 2026-08-16 hardening — SSE terminal completeness
+- **Terminal protocol gate**: Step 10 requires exactly one `message_stop`
+  after `message_start`, with no later non-`ping` event. A graceful close or
+  `[DONE]` sentinel without the Anthropic terminator is an anomaly.
+- **Tri-state boundary preserved**: transport failures and streams with no
+  substantive events remain `inconclusive`; completeness anomalies feed the
+  existing D5 stream-integrity dimension rather than adding a risk dimension.
+- **Scope held**: no TLS default change, OpenAI stream parser, arbitrary-model
+  baseline, or structured tool-call expansion is included.
 
 ### 2026-06-07 follow-up — Error diagnosis report layer
 - **Productized operational error explanations**: added
@@ -40,12 +49,12 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
   detector, not a hosted preflight service, not a new API family, and not a
   change to LOW/MEDIUM/HIGH semantics. `inconclusive` remains
   `inconclusive`.
-- **Final test count**: 796/796 passing (733 baseline → 764 after current
+- **Final test count**: 802/802 passing (733 baseline → 764 after current
   master follow-ups → 769 after release-engineering version sync coverage →
   775 after query-family growth contracts → 778 after release-hardening
   public verification regressions → 789 after report reproducibility metadata
   and metadata source-boundary regressions → 796 after resumable release
-  provenance verification).
+  provenance verification → 802 after SSE terminal-completeness regressions).
 
 ### v1.9 — Dual-distribution full generation (2026-06-01)
 - **Standalone product promise preserved**: root `audit.py` stays committed,

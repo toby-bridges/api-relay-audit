@@ -383,7 +383,7 @@ footer a:hover{color:var(--text)}
   <div class="hero-stats">
     <div class="stat"><div class="stat-num">14</div><div class="stat-label" data-i18n="stat_steps">Audit Steps</div></div>
     <div class="stat"><div class="stat-num">6D</div><div class="stat-label" data-i18n="stat_matrix">Risk Matrix</div></div>
-    <div class="stat"><div class="stat-num">796</div><div class="stat-label" data-i18n="stat_tests">Unit Tests</div></div>
+    <div class="stat"><div class="stat-num">802</div><div class="stat-label" data-i18n="stat_tests">Unit Tests</div></div>
     <div class="stat"><div class="stat-num">0</div><div class="stat-label" data-i18n="stat_deps">Dependencies (standalone)</div></div>
   </div>
   <div class="hero-cta">
@@ -655,7 +655,7 @@ footer a:hover{color:var(--text)}
     <div class="step">
       <div class="step-num" data-i18n="step_sse_label">Step 10-11</div>
       <h3 data-i18n="step_sse_title">Stream Integrity &amp; Web3</h3>
-      <p data-i18n="step_sse_desc">SSE event whitelist, usage monotonicity, thinking signature validity, model identity check. Plus Web3 signature-isolation probes (profile-gated).</p>
+      <p data-i18n="step_sse_desc">SSE event whitelist, usage monotonicity, thinking signature validity, terminal completeness, and model identity. Plus Web3 signature-isolation probes (profile-gated).</p>
     </div>
   </div>
 </section>
@@ -1075,7 +1075,7 @@ const i18n={
     step_ctx_label:"Step 7",step_ctx_title:"上下文截断",step_ctx_desc:"5 个 canary 标记 + 二分查找精确定位真实上下文窗口边界。你的 200K context 真的有 200K 吗？",
     step_tool_label:"Step 8 (AC-1.a)",step_tool_title:"工具调用改写",step_tool_desc:"检测中转站是否在返回路径上偷改包安装命令 — 代理层面的拼写投毒供应链攻击。",
     step_err_label:"Step 9 (AC-2)",step_err_title:"错误响应泄漏",step_err_desc:"7 种故意破坏的请求探测 API Key、环境变量、文件路径、LiteLLM 内部字段是否在错误响应中泄漏。",
-    step_sse_label:"Step 10-11",step_sse_title:"流完整性 & Web3",step_sse_desc:"SSE 事件白名单、usage 单调性、thinking 签名有效性、模型身份检查。加上 Web3 签名隔离探针（profile-gated）。",
+    step_sse_label:"Step 10-11",step_sse_title:"流完整性 & Web3",step_sse_desc:"SSE 事件白名单、usage 单调性、thinking 签名有效性、终止事件完整性和模型身份检查。加上 Web3 签名隔离探针（profile-gated）。",
     cmp_title:"横向对比",cmp_sub:"三个工具，三种思路 — 根据需求选择",
     cmp_col_dim:"维度",
     cmp_inject:"Token 注入",cmp_prompt:"Prompt 提取",cmp_identity:"身份替换",cmp_jailbreak:"越狱防护",
@@ -1176,7 +1176,7 @@ const i18n={
     step_ctx_label:"Step 7",step_ctx_title:"Context Truncation",step_ctx_desc:"5 canary markers + binary search pinpoint the real context window boundary. Is your 200K context really 200K?",
     step_tool_label:"Step 8 (AC-1.a)",step_tool_title:"Tool-Call Rewriting",step_tool_desc:"Checks if the relay silently modifies package install commands in responses — typosquatting supply-chain attacks at the proxy layer.",
     step_err_label:"Step 9 (AC-2)",step_err_title:"Error Response Leakage",step_err_desc:"7 deliberately broken requests probe for API key, env vars, file paths, and LiteLLM internals leaking in error responses.",
-    step_sse_label:"Step 10-11",step_sse_title:"Stream Integrity & Web3",step_sse_desc:"SSE event whitelist, usage monotonicity, thinking signature validity, model identity check. Plus Web3 signature-isolation probes (profile-gated).",
+    step_sse_label:"Step 10-11",step_sse_title:"Stream Integrity & Web3",step_sse_desc:"SSE event whitelist, usage monotonicity, thinking signature validity, terminal completeness, and model identity. Plus Web3 signature-isolation probes (profile-gated).",
     cmp_title:"How We Compare",cmp_sub:"Three tools, three approaches — pick the right one for your needs",
     cmp_col_dim:"Dimension",
     cmp_inject:"Token Injection",cmp_prompt:"Prompt Extraction",cmp_identity:"Identity Substitution",cmp_jailbreak:"Jailbreak Resistance",

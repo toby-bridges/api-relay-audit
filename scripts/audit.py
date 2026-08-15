@@ -1041,13 +1041,15 @@ def test_stream_integrity(client, report):
         "Open an Anthropic streaming request with thinking enabled and "
         "inspect every SSE event for structural anomalies. A relay that "
         "rewrites or downgrades the streamed response often fails one "
-        "of four invariants: (1) all event types belong to Anthropic's "
+        "of five invariants: (1) all event types belong to Anthropic's "
         "known set (ping / message_start / content_block_start / "
         "content_block_delta / content_block_stop / message_delta / "
         "message_stop); (2) ``input_tokens`` is consistent across "
         "``message_start`` and ``message_delta``; (3) ``output_tokens`` "
         "is monotonically non-decreasing; (4) ``signature_delta`` events "
-        "carry non-empty signature values. Detection concept sourced from "
+        "carry non-empty signature values; (5) exactly one terminal "
+        "``message_stop`` follows ``message_start`` with no later non-ping "
+        "events. Detection concept sourced from "
         "hvoy.ai's claude_detector.py, verified against source on "
         "2026-04-11. See reference_hvoy_relayapi memory for details.\n"
     )
@@ -1072,6 +1074,7 @@ def test_stream_integrity(client, report):
     report.p(f"| Usage monotonic | {'yes' if analysis['usage_monotonic'] else 'NO'} |")
     report.p(f"| Usage consistent | {'yes' if analysis['usage_consistent'] else 'NO'} |")
     report.p(f"| Signature valid | {'yes' if analysis['signature_valid'] else 'NO'} |")
+    report.p(f"| Stream complete | {'yes' if analysis['stream_complete'] else 'NO'} |")
     report.p(
         f"| Stream model | {analysis['stream_model_name'] or '—'} "
         f"({'claude' if analysis['stream_model_is_claude'] else 'NOT claude'}) |"
@@ -1106,7 +1109,8 @@ def test_stream_integrity(client, report):
         report.flag(
             "green",
             "Stream integrity clean: SSE whitelist + usage monotonicity "
-            "+ signature validity + stream model identity all passed",
+            "+ signature validity + terminal completeness + stream model "
+            "identity all passed",
         )
 
     print(f"  Done: stream integrity ({verdict})")

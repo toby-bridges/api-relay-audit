@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: e477b62621b1403b5788e19cda25ad3a0e9dc64acd85b8505ad34bf137ee7efc
-# standalone_body_sha256: 871029077edf2107f07d91223324a4d252a5d6bc8c795cc7d0c25ead85a27c00
+# source_sha256: 722d1c65bf44ee9c8dff2a62a826800db09f2d3419396c739d6d19fcec63190a
+# standalone_body_sha256: 8040f23082bd40681bfdefc52a52af0d3657de5567df51fef3b05d1fab7cd54a
 # END GENERATED STANDALONE HEADER
 
 """
@@ -159,7 +159,7 @@ has something to populate.
 ## Detection approach
 
 A malicious relay that rewrites or proxies Claude's streaming
-responses can be caught at three distinct layers, even if the final
+responses can be caught at four distinct layers, even if the final
 text the user sees looks correct:
 
 1. **SSE event whitelist.** Anthropic's stream schema uses exactly
@@ -180,6 +180,10 @@ text the user sees looks correct:
    a non-thinking model and fakes the surrounding stream events may
    leave the signatures empty. :attr:`StreamSignals.empty_signature_delta_count`
    counts these.
+4. **Terminal completeness.** A valid Anthropic message has exactly one
+   ``message_stop`` after ``message_start``, with no later content event.
+   Trailing ``ping`` keepalives are allowed. A graceful HTTP close or a
+   generic ``[DONE]`` sentinel does not replace this protocol terminator.
 
 ## Attribution
 
@@ -390,6 +394,18 @@ def _check_stream_model(signals: "StreamSignals") -> bool:
     return "claude" in signals.message_start_model.lower()
 
 
+def _check_stream_complete(signals: "StreamSignals") -> bool:
+    """Require one terminal ``message_stop`` after ``message_start``."""
+    non_ping_events = [event for event in signals.event_types if event != "ping"]
+    if non_ping_events.count("message_stop") != 1:
+        return False
+    if "message_start" not in non_ping_events:
+        return False
+    start_index = non_ping_events.index("message_start")
+    stop_index = non_ping_events.index("message_stop")
+    return start_index < stop_index == len(non_ping_events) - 1
+
+
 def analyze_stream(signals: "StreamSignals") -> dict:
     """Analyze a populated :class:`StreamSignals` for integrity anomalies.
 
@@ -402,6 +418,8 @@ def analyze_stream(signals: "StreamSignals") -> dict:
     - ``usage_monotonic``: bool
     - ``usage_consistent``: bool
     - ``signature_valid``: bool
+    - ``stream_complete``: bool; exactly one terminal ``message_stop`` was
+      observed after ``message_start`` (trailing pings are allowed)
     - ``stream_model_name``: ``message_start.message.model`` or ``None``
     - ``stream_model_is_claude``: bool
     - ``findings``: list of human-readable reasons (empty on clean)
@@ -414,7 +432,8 @@ def analyze_stream(signals: "StreamSignals") -> dict:
        either broken or non-Anthropic; we have no basis to judge).
     2. **anomaly** — at least one of: unknown event types present,
        usage non-monotonic, usage inconsistent, empty
-       ``signature_delta`` count > 0, stream model name non-Claude.
+       ``signature_delta`` count > 0, missing/duplicate/misordered terminal
+       ``message_stop``, stream model name non-Claude.
     3. **clean** — none of the above triggered.
 
     The function is pure and deterministic: identical input always
@@ -429,6 +448,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
             "usage_monotonic": True,
             "usage_consistent": True,
             "signature_valid": True,
+            "stream_complete": False,
             "stream_model_name": signals.message_start_model,
             "stream_model_is_claude": True,
             "findings": [f"Stream transport error: {signals.transport_error}"],
@@ -444,6 +464,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
             "usage_monotonic": True,
             "usage_consistent": True,
             "signature_valid": True,
+            "stream_complete": False,
             "stream_model_name": signals.message_start_model,
             "stream_model_is_claude": True,
             "findings": [
@@ -462,6 +483,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
     usage_monotonic = _check_usage_monotonic(signals)
     usage_consistent = _check_usage_consistent(signals)
     signature_valid = signals.empty_signature_delta_count == 0
+    stream_complete = _check_stream_complete(signals)
     stream_model_is_claude = _check_stream_model(signals)
 
     findings = []
@@ -487,6 +509,32 @@ def analyze_stream(signals: "StreamSignals") -> dict:
             f"{signals.empty_signature_delta_count} signature_delta event(s) "
             "had empty signatures — thinking block downgrade or rewriter"
         )
+    if not stream_complete:
+        stop_count = signals.event_types.count("message_stop")
+        non_ping_events = [event for event in signals.event_types if event != "ping"]
+        if stop_count == 0:
+            findings.append(
+                "Stream ended without message_stop — a truncated Anthropic "
+                "response was not completed"
+            )
+        elif stop_count > 1:
+            findings.append(
+                f"Stream contained {stop_count} message_stop events — "
+                "the terminal marker must appear exactly once"
+            )
+        elif "message_start" not in non_ping_events or (
+            non_ping_events.index("message_stop")
+            < non_ping_events.index("message_start")
+        ):
+            findings.append(
+                "message_stop appeared before message_start — invalid "
+                "Anthropic stream ordering"
+            )
+        else:
+            findings.append(
+                "Non-ping SSE events appeared after message_stop — the "
+                "terminal marker was not final"
+            )
     if not stream_model_is_claude:
         if signals.message_start_model:
             findings.append(
@@ -505,6 +553,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
         or not usage_monotonic
         or not usage_consistent
         or not signature_valid
+        or not stream_complete
         or not stream_model_is_claude
     )
 
@@ -516,7 +565,12 @@ def analyze_stream(signals: "StreamSignals") -> dict:
         signals.has_message_delta,
         signals.has_message_stop,
     ])
-    if shape_flags_seen >= 4 and signals.has_text_delta and not unknown_events:
+    if (
+        shape_flags_seen >= 4
+        and signals.has_text_delta
+        and not unknown_events
+        and stream_complete
+    ):
         event_shape = "pass"
     elif shape_flags_seen >= 2:
         event_shape = "partial"
@@ -530,6 +584,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
         "usage_monotonic": usage_monotonic,
         "usage_consistent": usage_consistent,
         "signature_valid": signature_valid,
+        "stream_complete": stream_complete,
         "stream_model_name": signals.message_start_model,
         "stream_model_is_claude": stream_model_is_claude,
         "findings": findings,
@@ -5826,13 +5881,15 @@ def test_stream_integrity(client, report):
         "Open an Anthropic streaming request with thinking enabled and "
         "inspect every SSE event for structural anomalies. A relay that "
         "rewrites or downgrades the streamed response often fails one "
-        "of four invariants: (1) all event types belong to Anthropic's "
+        "of five invariants: (1) all event types belong to Anthropic's "
         "known set (ping / message_start / content_block_start / "
         "content_block_delta / content_block_stop / message_delta / "
         "message_stop); (2) ``input_tokens`` is consistent across "
         "``message_start`` and ``message_delta``; (3) ``output_tokens`` "
         "is monotonically non-decreasing; (4) ``signature_delta`` events "
-        "carry non-empty signature values. Detection concept sourced from "
+        "carry non-empty signature values; (5) exactly one terminal "
+        "``message_stop`` follows ``message_start`` with no later non-ping "
+        "events. Detection concept sourced from "
         "hvoy.ai's claude_detector.py, verified against source on "
         "2026-04-11. See reference_hvoy_relayapi memory for details.\n"
     )
@@ -5857,6 +5914,7 @@ def test_stream_integrity(client, report):
     report.p(f"| Usage monotonic | {'yes' if analysis['usage_monotonic'] else 'NO'} |")
     report.p(f"| Usage consistent | {'yes' if analysis['usage_consistent'] else 'NO'} |")
     report.p(f"| Signature valid | {'yes' if analysis['signature_valid'] else 'NO'} |")
+    report.p(f"| Stream complete | {'yes' if analysis['stream_complete'] else 'NO'} |")
     report.p(
         f"| Stream model | {analysis['stream_model_name'] or '—'} "
         f"({'claude' if analysis['stream_model_is_claude'] else 'NOT claude'}) |"
@@ -5891,7 +5949,8 @@ def test_stream_integrity(client, report):
         report.flag(
             "green",
             "Stream integrity clean: SSE whitelist + usage monotonicity "
-            "+ signature validity + stream model identity all passed",
+            "+ signature validity + terminal completeness + stream model "
+            "identity all passed",
         )
 
     print(f"  Done: stream integrity ({verdict})")
