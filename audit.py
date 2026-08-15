@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 29098d59def1f325bc6c75efe2f96013c3c2056ca27277c01b1d6d5fb6d2ba28
-# standalone_body_sha256: c717d12b15a3d66b053ac5d600f35761504b1da5424ee6c4cffb444289e7ce24
+# source_sha256: e477b62621b1403b5788e19cda25ad3a0e9dc64acd85b8505ad34bf137ee7efc
+# standalone_body_sha256: 871029077edf2107f07d91223324a4d252a5d6bc8c795cc7d0c25ead85a27c00
 # END GENERATED STANDALONE HEADER
 
 """
@@ -4854,7 +4854,7 @@ from urllib.request import Request, urlopen
 
 
 
-TOOL_VERSION_FALLBACK = "2.3.0"
+TOOL_VERSION_FALLBACK = "2.3.1"
 
 
 def _api_relay_audit_checkout_root(script_path):

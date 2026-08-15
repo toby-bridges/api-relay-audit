@@ -69,7 +69,7 @@ from api_relay_audit.stream_integrity import analyze_stream
 from api_relay_audit.tool_substitution import run_tool_substitution_test
 from api_relay_audit.web3.injection_probes import run_web3_injection_probes
 
-TOOL_VERSION_FALLBACK = "2.3.0"
+TOOL_VERSION_FALLBACK = "2.3.1"
 
 
 def _api_relay_audit_checkout_root(script_path):
