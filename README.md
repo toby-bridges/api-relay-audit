@@ -274,7 +274,7 @@ to one behavior or document.
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=toby-bridges/api-relay-audit&type=Date)](https://www.star-history.com/#toby-bridges/api-relay-audit&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=toby-bridges/api-relay-audit&type=Date)](https://star-history.dera.page/#toby-bridges/api-relay-audit&Date)
 
 <details id="chinese-readme">
 <summary>中文 README</summary>
