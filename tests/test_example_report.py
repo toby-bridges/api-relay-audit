@@ -129,7 +129,7 @@ def test_fixture_steps_cover_report_surface_and_verdicts():
         assert step["verdict"] in VERDICTS
         assert step["severity"] in SEVERITIES
     assert any("Web3" in step["step_name"] for step in steps)
-    assert any("Tool-call rewriting" == step["step_name"] for step in steps)
+    assert any("Tool-call integrity" == step["step_name"] for step in steps)
     assert any("SSE" in step["step_name"] for step in steps)
 
 

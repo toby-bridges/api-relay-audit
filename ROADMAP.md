@@ -6,8 +6,9 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-08-16 (DSH bundle added with strict adapter/runtime
-boundaries; Step 10 completeness remains in the existing 6D risk matrix)
+**Last updated**: 2026-08-24 (Step 8 gained non-streaming Anthropic/OpenAI
+structured Tool Call integrity while preserving standalone generation,
+tri-state verdicts, the 14-step contract, and D3 risk semantics)
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -22,6 +23,25 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
 ---
 
 ## ✅ Shipped
+
+### 2026-08-24 follow-up — Structured Tool Call integrity
+- **Step 8 deepened without adding a step**: the four AC-1.a package-command
+  text probes remain, followed by one forced, non-streaming structured Tool
+  Call using a randomized tool name and canary arguments.
+- **Anthropic/OpenAI adapters**: `APIClient.call_tool_probe()` emits strict
+  one-tool schemas, disables parallel calls, normalizes both response shapes,
+  and records a hash-only transparent-log entry as `tool_call_probe`.
+- **No execution surface**: the audit exposes no executor callback, sends no
+  `tool_result`, and never runs returned tool names or arguments.
+- **Tri-state and D3 semantics preserved**: exact name/arguments/count is
+  `clean`; any mutation is `anomaly` and D3/HIGH; unsupported strict tools,
+  HTTP/format errors, or zero calls are D3i/MEDIUM. An anomaly always takes
+  priority over an inconclusive sibling path.
+- **Dual distribution preserved**: `tool_call_integrity.py` is a standalone
+  generator section, with curl-path and modular/standalone risk-parity tests.
+  Streaming Tool Call fragment reassembly remains a future Step 10 extension.
+- **Final test count**: 840/840 passing (808 baseline, +32 structured probe,
+  client adapter, orchestration, extractor, and standalone parity cases).
 
 ### 2026-08-16 distribution — DeepSeek Harness bundle
 - **Two-profile bundle**: the repository package installs into DSH web and
@@ -790,19 +810,16 @@ modular-only, with `--profile full` gate.
 
 ## 🛠 Medium-term ideas (1-3 month horizon)
 
-### 6. Full AC-1 tool_call support (as opposed to AC-1.a text echo)
-**Status**: backlog item from Step 8
-**Scope**: ~150 LOC — `APIClient.tool_call()` method + structured
-tool_call payload inspection + matching probe set
-**Why**: Step 8 currently catches AC-1.a (typosquat on plain text echoes)
-via text-level comparison. A more specific attack — rewriting the
-`tool_calls` JSON payload but leaving plain text alone — is not caught.
-Paper §4.2.1 notes: "the compromised dependency is cached locally and
-re-imported across future sessions, giving the attacker a durable
-supply-chain foothold."
-**Cost vs benefit**: marginal coverage uplift over AC-1.a (all observed
-wild samples were AC-1.a). Defer until the first wild AC-1 case is
-reported.
+### 6. Full non-streaming AC-1 tool_call support ✅ shipped 2026-08-24
+**Status**: completed in Step 8
+**Delivered**: `APIClient.call_tool_probe()` plus
+`api_relay_audit/tool_call_integrity.py` now inspect strict Anthropic and
+OpenAI structured Tool Calls for name, JSON-argument, type, and call-count
+mutation. The existing AC-1.a text probes remain as a complementary path.
+**Boundary**: this probe is deliberately non-streaming and observe-only; it
+does not execute calls or submit tool results. Anthropic/OpenAI streaming
+fragment reassembly belongs to a future Step 10 enhancement rather than this
+completed item.
 
 ### 7. Schema deviation anomaly detection (paper §7.2)
 **Status**: paper lists it as a detection dimension; we don't implement

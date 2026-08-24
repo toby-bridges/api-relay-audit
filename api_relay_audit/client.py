@@ -403,6 +403,169 @@ class APIClient:
             "raw": data,
         }
 
+    def _prepare_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256):
+        url = self.base_url
+        if url.endswith("/v1"):
+            url = url[:-3]
+        url += "/v1/messages"
+
+        body = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+            "tools": [{**tool_spec, "strict": True}],
+            "tool_choice": {
+                "type": "tool",
+                "name": tool_spec["name"],
+                "disable_parallel_tool_use": True,
+            },
+        }
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        return url, headers, body
+
+    def _call_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256,
+                                   prepared=None):
+        url, headers, body = prepared or self._prepare_tool_probe_anthropic(
+            messages, tool_spec, max_tokens=max_tokens)
+        data = self._post(url, headers, body)
+        if "_http_error" in data:
+            return self._error_result(data["_http_error"])
+
+        tool_calls = []
+        content = data.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type")
+                tool_like = block_type == "tool_use" or any(
+                    key in block for key in ("id", "name", "input")
+                )
+                if not tool_like:
+                    continue
+                arguments = block.get("input")
+                arguments_error = None
+                if not isinstance(arguments, dict):
+                    arguments_error = "Anthropic tool input was not a JSON object"
+                    arguments = None
+                tool_calls.append({
+                    "type": "function" if block_type == "tool_use" else block_type,
+                    "id": block.get("id"),
+                    "name": block.get("name"),
+                    "arguments": arguments,
+                    "arguments_error": arguments_error,
+                })
+
+        usage = data.get("usage", {})
+        return {
+            "tool_calls": tool_calls,
+            "stop_reason": data.get("stop_reason"),
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "raw": data,
+        }
+
+    def _prepare_tool_probe_openai(self, messages, tool_spec, max_tokens=256):
+        url = self.base_url
+        if not url.endswith("/v1"):
+            url += "/v1"
+        url += "/chat/completions"
+
+        body = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": tool_spec["name"],
+                    "description": tool_spec["description"],
+                    "parameters": tool_spec["input_schema"],
+                    "strict": True,
+                },
+            }],
+            "tool_choice": {
+                "type": "function",
+                "function": {"name": tool_spec["name"]},
+            },
+            "parallel_tool_calls": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "content-type": "application/json",
+        }
+        return url, headers, body
+
+    def _call_tool_probe_openai(self, messages, tool_spec, max_tokens=256,
+                                prepared=None):
+        url, headers, body = prepared or self._prepare_tool_probe_openai(
+            messages, tool_spec, max_tokens=max_tokens)
+        data = self._post(url, headers, body)
+        if "_http_error" in data:
+            return self._error_result(data["_http_error"])
+
+        choices = data.get("choices", [])
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        if not isinstance(choice, dict):
+            choice = {}
+        message = choice.get("message", {})
+        if not isinstance(message, dict):
+            message = {}
+        raw_calls = message.get("tool_calls", [])
+        if not isinstance(raw_calls, list):
+            raw_calls = []
+
+        tool_calls = []
+        for raw_call in raw_calls:
+            if not isinstance(raw_call, dict):
+                continue
+            call_type = raw_call.get("type")
+            if call_type == "function":
+                function = raw_call.get("function", {})
+                if not isinstance(function, dict):
+                    function = {}
+                raw_arguments = function.get("arguments")
+                arguments = None
+                arguments_error = None
+                if not isinstance(raw_arguments, str):
+                    arguments_error = "OpenAI tool arguments were not a JSON string"
+                else:
+                    try:
+                        arguments = json.loads(raw_arguments)
+                    except (TypeError, ValueError):
+                        arguments_error = "invalid JSON arguments"
+                    if arguments_error is None and not isinstance(arguments, dict):
+                        arguments_error = "OpenAI tool arguments were not a JSON object"
+                        arguments = None
+                name = function.get("name")
+            else:
+                custom = raw_call.get("custom", {})
+                if not isinstance(custom, dict):
+                    custom = {}
+                name = custom.get("name")
+                arguments = None
+                arguments_error = "Unexpected non-function Tool Call type"
+            tool_calls.append({
+                "type": call_type,
+                "id": raw_call.get("id"),
+                "name": name,
+                "arguments": arguments,
+                "arguments_error": arguments_error,
+            })
+
+        usage = data.get("usage", {})
+        return {
+            "tool_calls": tool_calls,
+            "stop_reason": choice.get("finish_reason"),
+            "input_tokens": usage.get("prompt_tokens", 0),
+            "output_tokens": usage.get("completion_tokens", 0),
+            "raw": data,
+        }
+
     # -- Public API -----------------------------------------------------------
 
     def ensure_format(self):
@@ -478,6 +641,54 @@ class APIClient:
             elapsed = time.time() - start
             self._log_transparent(
                 "call", self._resolve_call_url(), "POST",
+                request_body, None, 0, None, elapsed, str(e))
+            return self._error_result(e, time=elapsed)
+
+    def call_tool_probe(self, messages, tool_spec, max_tokens=256):
+        """Request one inert client Tool Call without ever executing it.
+
+        ``tool_spec`` uses the protocol-neutral Anthropic shape (``name``,
+        ``description``, ``input_schema``). The client forces that tool,
+        disables parallel calls, and normalizes Anthropic/OpenAI responses
+        into a shared ``tool_calls`` list. No executor callback exists and no
+        ``tool_result`` follow-up request is sent.
+        """
+        start = time.time()
+        request_url = self._resolve_call_url()
+        request_body = json.dumps({})
+        try:
+            if self._format is None:
+                self.ensure_format()
+            if self._format == "anthropic":
+                prepared = self._prepare_tool_probe_anthropic(
+                    messages, tool_spec, max_tokens=max_tokens)
+                request_url, _, wire_body = prepared
+                request_body = json.dumps(wire_body)
+                result = self._call_tool_probe_anthropic(
+                    messages, tool_spec, max_tokens=max_tokens,
+                    prepared=prepared)
+            elif self._format == "openai":
+                prepared = self._prepare_tool_probe_openai(
+                    messages, tool_spec, max_tokens=max_tokens)
+                request_url, _, wire_body = prepared
+                request_body = json.dumps(wire_body)
+                result = self._call_tool_probe_openai(
+                    messages, tool_spec, max_tokens=max_tokens,
+                    prepared=prepared)
+            else:
+                result = self._error_result(
+                    "Could not detect API format for structured Tool Call probe")
+            result["time"] = time.time() - start
+            self._log_transparent(
+                "tool_call_probe", request_url, "POST",
+                request_body, json.dumps(result.get("raw", {})),
+                200 if "error" not in result else 0,
+                None, result["time"], result.get("error"))
+            return result
+        except Exception as e:
+            elapsed = time.time() - start
+            self._log_transparent(
+                "tool_call_probe", request_url, "POST",
                 request_body, None, 0, None, elapsed, str(e))
             return self._error_result(e, time=elapsed)
 
