@@ -72,12 +72,12 @@
     },
     {
       "step_number": 8,
-      "step_name": "Tool-call rewriting",
+      "step_name": "Tool-call integrity",
       "step_status": "run",
       "verdict": "clean",
       "severity": "none",
-      "summary": "Pinned package-command probes remain unchanged in the fixture.",
-      "evidence_redacted": "pip, npm, cargo, and go command echoes match expected fixture text."
+      "summary": "Four pinned package commands plus one inert structured call match the expected tool name, arguments, and count.",
+      "evidence_redacted": "pip, npm, cargo, and go command echoes match; structured verdict=clean, expectedCount=1, receivedCount=1, nameMatch=true, argumentsMatch=true."
     },
     {
       "step_number": 9,

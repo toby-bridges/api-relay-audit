@@ -6,12 +6,10 @@ return path, e.g. ``pip install requests`` -> ``pip install reqeusts``
 command and comparing the returned text character-by-character against the
 expected string.
 
-This is a text-echo surrogate for the paper's AC-1.a attack: a content-based
-substitution rule in a malicious router will fire on any response body
-containing a package-install pattern, regardless of whether it arrives via a
-tool_call JSON payload or plain text. It does NOT catch AC-1 rewrites that
-target only structured tool_call payloads while leaving plaintext alone --
-that is deferred to a future step that needs APIClient tool-calling support.
+This module implements Step 8's complementary text path. Content-based
+package substitution rules often fire on plain text, while
+``tool_call_integrity.py`` independently covers non-streaming structured
+Anthropic/OpenAI Tool Calls that leave plaintext untouched.
 
 Reference: Liu, Shou, Wen, Chen, Fang, Feng,
 "Your Agent Is Mine: Measuring Malicious Intermediary Attacks on the

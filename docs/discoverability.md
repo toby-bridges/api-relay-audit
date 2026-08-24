@@ -61,7 +61,7 @@ Observed at: 2026-06-01T06:27:04Z
 | Issue | Labels | Discovery role |
 | --- | --- | --- |
 | [#31 Track relay prompt injection examples and detection gaps](https://github.com/toby-bridges/api-relay-audit/issues/31) | `documentation`, `enhancement` | Long-tail prompt injection landing surface. |
-| [#32 Improve tool-call rewriting detection for structured tool payloads](https://github.com/toby-bridges/api-relay-audit/issues/32) | `enhancement`, `help wanted` | Tool-call rewriting contributor task. |
+| [#32 Improve tool-call rewriting detection for structured tool payloads](https://github.com/toby-bridges/api-relay-audit/issues/32) | `enhancement`, `help wanted` | Implemented by the Step 8 structured Tool Call integrity probe; closes when this change merges. |
 | [#33 Document Web3 wallet prompt injection threat model](https://github.com/toby-bridges/api-relay-audit/issues/33) | `documentation`, `help wanted` | Web3 wallet prompt injection landing surface. |
 | [#34 Track LLM proxy security test cases](https://github.com/toby-bridges/api-relay-audit/issues/34) | `documentation`, `enhancement` | LLM proxy security landing surface. |
 | [#35 SSE stream integrity: known relay anomaly patterns](https://github.com/toby-bridges/api-relay-audit/issues/35) | `documentation`, `enhancement` | SSE anomaly landing surface. |

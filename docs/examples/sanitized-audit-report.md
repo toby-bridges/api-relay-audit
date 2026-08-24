@@ -25,7 +25,7 @@ real relay domains, API keys, wallet material, or private traffic.
 - Prompt injection: synthetic hidden-token delta shown as an anomaly.
 - Prompt extraction: one synthetic extraction result is shown as an anomaly.
 - Context length: inconclusive, not clean.
-- Tool-call rewriting: clean in this fixture.
+- Tool-call integrity: package-command text plus one inert structured Tool Call are clean in this fixture.
 - Error leakage: redacted internal path leak shown as an anomaly.
 - SSE anomalies: clean in this fixture.
 - Web3 wallet checks: clean in this fixture.
@@ -42,13 +42,27 @@ real relay domains, API keys, wallet material, or private traffic.
 | 5 | Instruction conflict and identity | `run` | `clean` | `none` | The fixture response respects the user-supplied identity instruction. |
 | 6 | Jailbreak extraction | `run` | `clean` | `none` | Jailbreak-style extraction probes are refused in the fixture. |
 | 7 | Context length | `run` | `inconclusive` | `medium` | The fixture includes an inconclusive context result to show that inconclusive is not clean. |
-| 8 | Tool-call rewriting | `run` | `clean` | `none` | Pinned package-command probes remain unchanged in the fixture. |
+| 8 | Tool-call integrity | `run` | `clean` | `none` | Four pinned package commands plus one inert structured call match the expected tool name, arguments, and count. |
 | 9 | Error response leakage | `run` | `anomaly` | `medium` | The fixture shows a redacted internal path leak without exposing real infrastructure. |
 | 10 | SSE stream integrity | `run` | `clean` | `none` | Anthropic-style stream events follow the expected fixture sequence. |
 | 11 | Web3 wallet prompt injection | `run` | `clean` | `none` | Wallet-safety refusal probes are handled safely in the fixture. |
 | 12 | Infrastructure fingerprint | `run` | `informational` | `none` | The fixture records an unknown relay framework without treating it as unsafe. |
 | 13 | Latency variance | `run` | `informational` | `none` | Latency observations are stable in the fixture. |
 | 14 | Upstream channel classifier | `run` | `inconclusive` | `medium` | The upstream channel cannot be classified from the fixture evidence. |
+
+### Step 8 Structured Evidence (Sanitized)
+
+| Field | Value |
+| --- | --- |
+| Structured verdict | `clean` |
+| Expected calls | `1` |
+| Observed calls | `1` |
+| Tool name match | `true` |
+| Arguments match | `true` |
+
+The fixture omits the randomized tool name and canary value. A live report
+shows only an escaped, length-bounded argument preview and never executes or
+returns a tool result.
 
 ## What This Example Shows
 

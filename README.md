@@ -31,8 +31,8 @@ relay behavior and generates a Markdown report covering:
 
 - **Prompt and context signals:** hidden prompt injection, instruction override,
   and context truncation.
-- **Response integrity:** changes to pinned package-command text, error-response
-  leakage, and SSE stream anomalies.
+- **Response integrity:** changes to structured Tool Calls and pinned
+  package-command text, error-response leakage, and SSE stream anomalies.
 - **Reviewable findings:** per-step evidence and `LOW / MEDIUM / HIGH` summaries;
   inconclusive probes remain visible.
 
@@ -108,7 +108,7 @@ The canonical contract lives in [docs/query-families.md](./docs/query-families.m
 API Relay Audit checks whether a relay modifies the request or response path between you and the model:
 
 - Prompt safety: token injection, prompt extraction, instruction override, jailbreak resistance
-- Relay integrity: context truncation, tool-call substitution, error leakage, stream integrity
+- Relay integrity: context truncation, structured Tool Call and package-command substitution, error leakage, stream integrity
 - Model identity: non-Claude identity leaks, model substitution signals, Claude/OpenAI-compatible relay behavior
 - Web3 wallet safety: transfer guidance, signed-transaction refusal, private-key refusal
 
@@ -221,7 +221,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 | Version | `v2.5.0` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
-| pytest collected tests | 885 |
+| pytest collected tests | 925 |
 | CLI flags | 23 |
 | Runtime profiles | `general`, `web3`, `full` |
 
@@ -262,7 +262,7 @@ Model substitution means the relay claims to provide one model but may expose ev
 
 ### What is tool-call rewriting?
 
-Tool-call rewriting means the relay modifies package-install commands or tool-like output in the model response. API Relay Audit sends pinned package commands and compares the returned text to detect proxy-layer supply-chain tampering.
+Tool-call rewriting means the relay modifies a structured tool name, JSON arguments, call count, or package-install command in the model response. Step 8 checks four pinned text commands plus one forced, non-streaming Anthropic/OpenAI Tool Call. The structured call is inspected only: the audit provides no executor, sends no tool result, and never executes returned content.
 
 ### What are SSE anomalies?
 
@@ -363,7 +363,7 @@ JSON 包含完整证据，并非公开分享前已脱敏的报告。参见 [JSON
 ## 核心覆盖
 
 - Prompt 安全: token injection、prompt extraction、instruction override、jailbreak
-- Relay 完整性: context truncation、tool-call substitution、error leakage、stream integrity
+- Relay 完整性: context truncation、结构化 Tool Call 与 package-command substitution、error leakage、stream integrity
 - 模型身份: 非 Claude 身份泄漏、模型替换信号、Claude / OpenAI 兼容中转行为
 - Web3 风险: 转账指引、签名拒绝、私钥泄漏拒绝
 
@@ -449,7 +449,7 @@ registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 | 版本 | `v2.5.0` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 885 |
+| pytest collected tests | 925 |
 | CLI flags | 23 |
 | Runtime profiles | `general`, `web3`, `full` |
 
