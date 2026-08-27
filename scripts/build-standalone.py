@@ -405,6 +405,7 @@ SECTIONS = (
     Section(
         "Structured Tool Call integrity detector",
         "api_relay_audit/tool_call_integrity.py",
+        drop_import_prefixes=("from api_relay_audit.error_leakage import ",),
     ),
     Section(
         "Tool-call substitution detector",

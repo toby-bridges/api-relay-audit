@@ -40,7 +40,7 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
 - **Dual distribution preserved**: `tool_call_integrity.py` is a standalone
   generator section, with curl-path and modular/standalone risk-parity tests.
   Streaming Tool Call fragment reassembly remains a future Step 10 extension.
-- **Final test count**: 840/840 passing (808 baseline, +32 structured probe,
+- **Final test count**: 843/843 passing (808 baseline, +35 structured probe,
   client adapter, orchestration, extractor, and standalone parity cases).
 
 ### 2026-08-16 distribution — DeepSeek Harness bundle

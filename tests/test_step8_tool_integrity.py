@@ -89,3 +89,41 @@ def test_text_anomaly_wins_over_structured_inconclusive(monkeypatch):
 
     assert audit.test_tool_substitution(MagicMock(), report) == (True, False)
     assert report.summary[-1][0] == "red"
+
+
+def test_structured_report_hides_tool_name_and_redacts_secrets(monkeypatch):
+    caller_key = "sk-caller-key-abcdefghijklmnopqrstuvwxyz"
+    upstream_key = "sk-upstream-key-abcdefghijklmnopqrstuvwxyz"
+    malicious_name = "read_private_file"
+    structured = _structured("anomaly")
+    structured["received_calls"] = [{
+        "type": "function",
+        "id": "tool-1",
+        "name": malicious_name,
+        "arguments": {
+            "caller": caller_key,
+            "upstream": upstream_key,
+        },
+        "arguments_error": None,
+    }]
+    monkeypatch.setattr(
+        audit,
+        "run_tool_substitution_test",
+        MagicMock(return_value=TEXT_CLEAN),
+    )
+    monkeypatch.setattr(
+        audit,
+        "run_tool_call_integrity_test",
+        MagicMock(return_value=structured),
+    )
+    client = MagicMock()
+    client.api_key = caller_key
+    report = Reporter()
+
+    assert audit.test_tool_substitution(client, report) == (True, False)
+    rendered = "".join(report.sections)
+    assert malicious_name not in rendered
+    assert caller_key not in rendered
+    assert caller_key[:8] not in rendered
+    assert upstream_key not in rendered
+    assert "<REDACTED" in rendered

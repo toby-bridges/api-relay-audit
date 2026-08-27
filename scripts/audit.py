@@ -928,14 +928,16 @@ def test_tool_substitution(client, report):
     report.h3("Structured Tool Call probe (non-streaming)")
     try:
         structured = run_tool_call_integrity_test(client)
-    except Exception as exc:
+    except Exception:
         structured = {
             "verdict": "inconclusive",
             "expected_count": 1,
             "received_count": 0,
             "name_match": None,
             "arguments_match": None,
-            "findings": [f"Structured probe failed: {exc}"],
+            "findings": [
+                "Structured Tool Call probe failed; support could not be verified"
+            ],
             "received_calls": [],
         }
 
@@ -953,7 +955,10 @@ def test_tool_substitution(client, report):
         f"**Tool name match**: `{_match_label(structured.get('name_match'))}` | "
         f"**Arguments match**: `{_match_label(structured.get('arguments_match'))}`"
     )
-    preview = format_tool_calls_preview(structured.get("received_calls", []))
+    preview = format_tool_calls_preview(
+        structured.get("received_calls", []),
+        api_key=getattr(client, "api_key", ""),
+    )
     report.p(f"**Received arguments preview**: `{preview}`")
     if structured.get("findings"):
         report.p("\n**Structured findings:**")

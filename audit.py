@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 49bb2b7d0ec531ddd7b6c7deafd233a5554578687203e667398b195c9b3e8f9c
-# standalone_body_sha256: 6dc89c322e3dffebe16db29d869bc2281f0609fe395c625648a3e2ac9217ba64
+# source_sha256: 080a946c55345e6c3a82b26976b8c13fdd39228efb5bc831deaeadb166e58db9
+# standalone_body_sha256: 974a59b8083b38e56119e3fe5abda52f83a6a212491ac416eaefc2ac8cfad06e
 # END GENERATED STANDALONE HEADER
 
 """
@@ -2462,6 +2462,7 @@ import json
 import uuid
 
 
+
 PROBE_PROMPT = (
     "Call the provided record tool exactly once with the exact arguments "
     "encoded in its schema. Do not answer in text."
@@ -2489,8 +2490,8 @@ def _json_deep_equal(left, right):
     return left == right
 
 
-def format_tool_calls_preview(calls, max_chars=240):
-    """Return a Markdown-safe, bounded preview of arguments only."""
+def format_tool_calls_preview(calls, max_chars=240, api_key=""):
+    """Return a redacted, Markdown-safe, bounded preview of arguments only."""
     arguments = [
         call.get("arguments") if isinstance(call, dict) else None
         for call in calls
@@ -2501,6 +2502,7 @@ def format_tool_calls_preview(calls, max_chars=240):
         separators=(",", ":"),
         default=str,
     )
+    text = redact_sensitive_text(text, api_key)
     text = text.replace("|", "\\|").replace("`", "\\`")
     limit = max(3, int(max_chars))
     if len(text) > limit:
@@ -2513,14 +2515,15 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments):
     if not isinstance(response, dict):
         response = {}
     if "error" in response:
-        error = str(response.get("error", ""))[:200]
         return {
             "verdict": "inconclusive",
             "expected_count": 1,
             "received_count": 0,
             "name_match": None,
             "arguments_match": None,
-            "findings": [f"Structured Tool Call probe failed: {error}"],
+            "findings": [
+                "Structured Tool Call probe failed; support could not be verified"
+            ],
         }
     calls = response.get("tool_calls", [])
     if not isinstance(calls, list) or any(not isinstance(call, dict) for call in calls):
@@ -2561,15 +2564,9 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments):
             f"Tool call count changed: expected 1, received {len(calls)}"
         )
     if not type_match:
-        findings.append(
-            f"Tool call type changed: expected 'function', "
-            f"received {call.get('type')!r}"
-        )
+        findings.append("Tool call type differed from the forced function type")
     if not name_match:
-        findings.append(
-            f"Tool name changed: expected {expected_name!r}, "
-            f"received {call.get('name')!r}"
-        )
+        findings.append("Tool name differed from the forced canary name")
     if call.get("arguments_error"):
         findings.append(
             f"Tool arguments could not be parsed: {call['arguments_error']}"
@@ -3798,6 +3795,18 @@ def _redact_api_key(text: str, api_key: str) -> str:
             "<REDACTED_PREFIX>",
             text,
         )
+    return text
+
+
+def redact_sensitive_text(text: str, api_key: str = "") -> str:
+    """Redact the caller credential and known secret shapes from report text."""
+    if not isinstance(text, str):
+        text = str(text)
+    if not isinstance(api_key, str):
+        api_key = ""
+    text = _redact_api_key(text, api_key)
+    for pattern, _kind in SECRET_REGEX_PATTERNS:
+        text = pattern.sub("<REDACTED_SECRET>", text)
     return text
 
 
@@ -6165,14 +6174,16 @@ def test_tool_substitution(client, report):
     report.h3("Structured Tool Call probe (non-streaming)")
     try:
         structured = run_tool_call_integrity_test(client)
-    except Exception as exc:
+    except Exception:
         structured = {
             "verdict": "inconclusive",
             "expected_count": 1,
             "received_count": 0,
             "name_match": None,
             "arguments_match": None,
-            "findings": [f"Structured probe failed: {exc}"],
+            "findings": [
+                "Structured Tool Call probe failed; support could not be verified"
+            ],
             "received_calls": [],
         }
 
@@ -6190,7 +6201,10 @@ def test_tool_substitution(client, report):
         f"**Tool name match**: `{_match_label(structured.get('name_match'))}` | "
         f"**Arguments match**: `{_match_label(structured.get('arguments_match'))}`"
     )
-    preview = format_tool_calls_preview(structured.get("received_calls", []))
+    preview = format_tool_calls_preview(
+        structured.get("received_calls", []),
+        api_key=getattr(client, "api_key", ""),
+    )
     report.p(f"**Received arguments preview**: `{preview}`")
     if structured.get("findings"):
         report.p("\n**Structured findings:**")

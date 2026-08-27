@@ -7,6 +7,8 @@ returned tool call and never sends a ``tool_result`` follow-up request.
 import json
 import uuid
 
+from api_relay_audit.error_leakage import redact_sensitive_text
+
 
 PROBE_PROMPT = (
     "Call the provided record tool exactly once with the exact arguments "
@@ -35,8 +37,8 @@ def _json_deep_equal(left, right):
     return left == right
 
 
-def format_tool_calls_preview(calls, max_chars=240):
-    """Return a Markdown-safe, bounded preview of arguments only."""
+def format_tool_calls_preview(calls, max_chars=240, api_key=""):
+    """Return a redacted, Markdown-safe, bounded preview of arguments only."""
     arguments = [
         call.get("arguments") if isinstance(call, dict) else None
         for call in calls
@@ -47,6 +49,7 @@ def format_tool_calls_preview(calls, max_chars=240):
         separators=(",", ":"),
         default=str,
     )
+    text = redact_sensitive_text(text, api_key)
     text = text.replace("|", "\\|").replace("`", "\\`")
     limit = max(3, int(max_chars))
     if len(text) > limit:
@@ -59,14 +62,15 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments):
     if not isinstance(response, dict):
         response = {}
     if "error" in response:
-        error = str(response.get("error", ""))[:200]
         return {
             "verdict": "inconclusive",
             "expected_count": 1,
             "received_count": 0,
             "name_match": None,
             "arguments_match": None,
-            "findings": [f"Structured Tool Call probe failed: {error}"],
+            "findings": [
+                "Structured Tool Call probe failed; support could not be verified"
+            ],
         }
     calls = response.get("tool_calls", [])
     if not isinstance(calls, list) or any(not isinstance(call, dict) for call in calls):
@@ -107,15 +111,9 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments):
             f"Tool call count changed: expected 1, received {len(calls)}"
         )
     if not type_match:
-        findings.append(
-            f"Tool call type changed: expected 'function', "
-            f"received {call.get('type')!r}"
-        )
+        findings.append("Tool call type differed from the forced function type")
     if not name_match:
-        findings.append(
-            f"Tool name changed: expected {expected_name!r}, "
-            f"received {call.get('name')!r}"
-        )
+        findings.append("Tool name differed from the forced canary name")
     if call.get("arguments_error"):
         findings.append(
             f"Tool arguments could not be parsed: {call['arguments_error']}"
