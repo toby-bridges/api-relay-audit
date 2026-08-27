@@ -65,8 +65,10 @@ def test_changed_tool_name_is_anomaly():
     assert result["name_match"] is False
     assert result["arguments_match"] is True
     assert result["findings"] == [
-        "Tool name changed: expected 'record_probe_fixed', received 'read_private_file'"
+        "Tool name differed from the forced canary name"
     ]
+    assert "record_probe_fixed" not in result["findings"][0]
+    assert "read_private_file" not in result["findings"][0]
 
 
 def test_changed_arguments_are_anomaly_even_when_json_key_order_is_irrelevant():
@@ -232,8 +234,9 @@ def test_probe_error_is_inconclusive():
     assert result["name_match"] is None
     assert result["arguments_match"] is None
     assert result["findings"] == [
-        "Structured Tool Call probe failed: HTTP 400 strict tools unsupported"
+        "Structured Tool Call probe failed; support could not be verified"
     ]
+    assert "strict tools unsupported" not in result["findings"][0]
 
 
 def test_malformed_normalized_response_is_inconclusive():
@@ -291,7 +294,7 @@ def test_non_function_tool_type_is_anomaly():
 
     assert result["verdict"] == "anomaly"
     assert result["findings"] == [
-        "Tool call type changed: expected 'function', received 'custom'"
+        "Tool call type differed from the forced function type"
     ]
 
 
@@ -380,3 +383,27 @@ def test_tool_call_preview_is_escaped_and_bounded():
     assert "\\`" in preview
     assert "must-not-be-rendered" not in preview
     assert preview.endswith("...")
+
+
+def test_tool_call_preview_redacts_caller_key_and_secret_shapes():
+    caller_key = "sk-caller-key-abcdefghijklmnopqrstuvwxyz"
+    leaked_key = "sk-upstream-key-abcdefghijklmnopqrstuvwxyz"
+
+    preview = format_tool_calls_preview(
+        [{
+            "type": "function",
+            "name": "must-not-be-rendered",
+            "arguments": {
+                "caller": caller_key,
+                "upstream": leaked_key,
+            },
+            "arguments_error": None,
+        }],
+        max_chars=500,
+        api_key=caller_key,
+    )
+
+    assert caller_key not in preview
+    assert caller_key[:8] not in preview
+    assert leaked_key not in preview
+    assert "<REDACTED" in preview

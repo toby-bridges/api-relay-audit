@@ -526,6 +526,32 @@ def test_standalone_tool_probe_uses_curl_adapter_and_normalizes_call(monkeypatch
     assert calls[0][2]["tool_choice"]["disable_parallel_tool_use"] is True
 
 
+def test_standalone_tool_call_preview_redacts_secret_values():
+    standalone = _load_standalone_audit()
+    caller_key = "sk-caller-key-abcdefghijklmnopqrstuvwxyz"
+    upstream_key = "sk-upstream-key-abcdefghijklmnopqrstuvwxyz"
+
+    preview = standalone.format_tool_calls_preview(
+        [{
+            "type": "function",
+            "name": "must-not-be-rendered",
+            "arguments": {
+                "caller": caller_key,
+                "upstream": upstream_key,
+            },
+            "arguments_error": None,
+        }],
+        max_chars=500,
+        api_key=caller_key,
+    )
+
+    assert caller_key not in preview
+    assert caller_key[:8] not in preview
+    assert upstream_key not in preview
+    assert "must-not-be-rendered" not in preview
+    assert "<REDACTED" in preview
+
+
 def _help_option_set(path):
     text = _help_text(path)
     return set(re.findall(r"--[a-z0-9-]+", text))
