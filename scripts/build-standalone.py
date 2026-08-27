@@ -46,6 +46,7 @@ SOURCE_PATHS = (
     "api_relay_audit/refusal.py",
     "api_relay_audit/reporter.py",
     "api_relay_audit/stream_integrity.py",
+    "api_relay_audit/tool_call_integrity.py",
     "api_relay_audit/tool_substitution.py",
     "api_relay_audit/transparent_log.py",
     "api_relay_audit/web3/injection_probes.py",
@@ -400,6 +401,11 @@ SECTIONS = (
     Section(
         "Context length scan",
         "api_relay_audit/context.py",
+    ),
+    Section(
+        "Structured Tool Call integrity detector",
+        "api_relay_audit/tool_call_integrity.py",
+        drop_import_prefixes=("from api_relay_audit.error_leakage import ",),
     ),
     Section(
         "Tool-call substitution detector",

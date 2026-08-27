@@ -290,6 +290,18 @@ def _redact_api_key(text: str, api_key: str) -> str:
     return text
 
 
+def redact_sensitive_text(text: str, api_key: str = "") -> str:
+    """Redact the caller credential and known secret shapes from report text."""
+    if not isinstance(text, str):
+        text = str(text)
+    if not isinstance(api_key, str):
+        api_key = ""
+    text = _redact_api_key(text, api_key)
+    for pattern, _kind in SECRET_REGEX_PATTERNS:
+        text = pattern.sub("<REDACTED_SECRET>", text)
+    return text
+
+
 def _mk_hit(severity: str, kind: str, snippet: str, where: str, api_key: str) -> dict:
     """Build a single hit dict with snippet redaction applied unconditionally.
 

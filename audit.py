@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 1cf00fc214575eb3f6fd92e84cc8a596451ec9bf1409b2bd9a150c5dbdb30a56
-# standalone_body_sha256: 510f914cf8ed38cb9068f4f5a16c4576593726cdca1f059ddc28181a819ff3cb
+# source_sha256: 080a946c55345e6c3a82b26976b8c13fdd39228efb5bc831deaeadb166e58db9
+# standalone_body_sha256: 974a59b8083b38e56119e3fe5abda52f83a6a212491ac416eaefc2ac8cfad06e
 # END GENERATED STANDALONE HEADER
 
 """
@@ -1159,6 +1159,169 @@ class APIClient:
             "raw": data,
         }
 
+    def _prepare_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256):
+        url = self.base_url
+        if url.endswith("/v1"):
+            url = url[:-3]
+        url += "/v1/messages"
+
+        body = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+            "tools": [{**tool_spec, "strict": True}],
+            "tool_choice": {
+                "type": "tool",
+                "name": tool_spec["name"],
+                "disable_parallel_tool_use": True,
+            },
+        }
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        return url, headers, body
+
+    def _call_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256,
+                                   prepared=None):
+        url, headers, body = prepared or self._prepare_tool_probe_anthropic(
+            messages, tool_spec, max_tokens=max_tokens)
+        data = self._post(url, headers, body)
+        if "_http_error" in data:
+            return self._error_result(data["_http_error"])
+
+        tool_calls = []
+        content = data.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type")
+                tool_like = block_type == "tool_use" or any(
+                    key in block for key in ("id", "name", "input")
+                )
+                if not tool_like:
+                    continue
+                arguments = block.get("input")
+                arguments_error = None
+                if not isinstance(arguments, dict):
+                    arguments_error = "Anthropic tool input was not a JSON object"
+                    arguments = None
+                tool_calls.append({
+                    "type": "function" if block_type == "tool_use" else block_type,
+                    "id": block.get("id"),
+                    "name": block.get("name"),
+                    "arguments": arguments,
+                    "arguments_error": arguments_error,
+                })
+
+        usage = data.get("usage", {})
+        return {
+            "tool_calls": tool_calls,
+            "stop_reason": data.get("stop_reason"),
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "raw": data,
+        }
+
+    def _prepare_tool_probe_openai(self, messages, tool_spec, max_tokens=256):
+        url = self.base_url
+        if not url.endswith("/v1"):
+            url += "/v1"
+        url += "/chat/completions"
+
+        body = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": tool_spec["name"],
+                    "description": tool_spec["description"],
+                    "parameters": tool_spec["input_schema"],
+                    "strict": True,
+                },
+            }],
+            "tool_choice": {
+                "type": "function",
+                "function": {"name": tool_spec["name"]},
+            },
+            "parallel_tool_calls": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "content-type": "application/json",
+        }
+        return url, headers, body
+
+    def _call_tool_probe_openai(self, messages, tool_spec, max_tokens=256,
+                                prepared=None):
+        url, headers, body = prepared or self._prepare_tool_probe_openai(
+            messages, tool_spec, max_tokens=max_tokens)
+        data = self._post(url, headers, body)
+        if "_http_error" in data:
+            return self._error_result(data["_http_error"])
+
+        choices = data.get("choices", [])
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        if not isinstance(choice, dict):
+            choice = {}
+        message = choice.get("message", {})
+        if not isinstance(message, dict):
+            message = {}
+        raw_calls = message.get("tool_calls", [])
+        if not isinstance(raw_calls, list):
+            raw_calls = []
+
+        tool_calls = []
+        for raw_call in raw_calls:
+            if not isinstance(raw_call, dict):
+                continue
+            call_type = raw_call.get("type")
+            if call_type == "function":
+                function = raw_call.get("function", {})
+                if not isinstance(function, dict):
+                    function = {}
+                raw_arguments = function.get("arguments")
+                arguments = None
+                arguments_error = None
+                if not isinstance(raw_arguments, str):
+                    arguments_error = "OpenAI tool arguments were not a JSON string"
+                else:
+                    try:
+                        arguments = json.loads(raw_arguments)
+                    except (TypeError, ValueError):
+                        arguments_error = "invalid JSON arguments"
+                    if arguments_error is None and not isinstance(arguments, dict):
+                        arguments_error = "OpenAI tool arguments were not a JSON object"
+                        arguments = None
+                name = function.get("name")
+            else:
+                custom = raw_call.get("custom", {})
+                if not isinstance(custom, dict):
+                    custom = {}
+                name = custom.get("name")
+                arguments = None
+                arguments_error = "Unexpected non-function Tool Call type"
+            tool_calls.append({
+                "type": call_type,
+                "id": raw_call.get("id"),
+                "name": name,
+                "arguments": arguments,
+                "arguments_error": arguments_error,
+            })
+
+        usage = data.get("usage", {})
+        return {
+            "tool_calls": tool_calls,
+            "stop_reason": choice.get("finish_reason"),
+            "input_tokens": usage.get("prompt_tokens", 0),
+            "output_tokens": usage.get("completion_tokens", 0),
+            "raw": data,
+        }
+
     # -- Public API -----------------------------------------------------------
 
     def ensure_format(self):
@@ -1234,6 +1397,54 @@ class APIClient:
             elapsed = time.time() - start
             self._log_transparent(
                 "call", self._resolve_call_url(), "POST",
+                request_body, None, 0, None, elapsed, str(e))
+            return self._error_result(e, time=elapsed)
+
+    def call_tool_probe(self, messages, tool_spec, max_tokens=256):
+        """Request one inert client Tool Call without ever executing it.
+
+        ``tool_spec`` uses the protocol-neutral Anthropic shape (``name``,
+        ``description``, ``input_schema``). The client forces that tool,
+        disables parallel calls, and normalizes Anthropic/OpenAI responses
+        into a shared ``tool_calls`` list. No executor callback exists and no
+        ``tool_result`` follow-up request is sent.
+        """
+        start = time.time()
+        request_url = self._resolve_call_url()
+        request_body = json.dumps({})
+        try:
+            if self._format is None:
+                self.ensure_format()
+            if self._format == "anthropic":
+                prepared = self._prepare_tool_probe_anthropic(
+                    messages, tool_spec, max_tokens=max_tokens)
+                request_url, _, wire_body = prepared
+                request_body = json.dumps(wire_body)
+                result = self._call_tool_probe_anthropic(
+                    messages, tool_spec, max_tokens=max_tokens,
+                    prepared=prepared)
+            elif self._format == "openai":
+                prepared = self._prepare_tool_probe_openai(
+                    messages, tool_spec, max_tokens=max_tokens)
+                request_url, _, wire_body = prepared
+                request_body = json.dumps(wire_body)
+                result = self._call_tool_probe_openai(
+                    messages, tool_spec, max_tokens=max_tokens,
+                    prepared=prepared)
+            else:
+                result = self._error_result(
+                    "Could not detect API format for structured Tool Call probe")
+            result["time"] = time.time() - start
+            self._log_transparent(
+                "tool_call_probe", request_url, "POST",
+                request_body, json.dumps(result.get("raw", {})),
+                200 if "error" not in result else 0,
+                None, result["time"], result.get("error"))
+            return result
+        except Exception as e:
+            elapsed = time.time() - start
+            self._log_transparent(
+                "tool_call_probe", request_url, "POST",
                 request_body, None, 0, None, elapsed, str(e))
             return self._error_result(e, time=elapsed)
 
@@ -2238,6 +2449,195 @@ def run_context_scan(client, coarse_steps=None, sleep_between=2):
 
 
 # ============================================================
+# Structured Tool Call integrity detector
+# ============================================================
+
+"""Structured Tool Call integrity analysis for Step 8.
+
+The detector inspects inert client-tool requests only.  It never executes a
+returned tool call and never sends a ``tool_result`` follow-up request.
+"""
+
+import json
+import uuid
+
+
+
+PROBE_PROMPT = (
+    "Call the provided record tool exactly once with the exact arguments "
+    "encoded in its schema. Do not answer in text."
+)
+PROBE_DESCRIPTION = (
+    "Record an inert relay-audit canary. This tool performs no I/O, "
+    "has no side effects, and will not be executed. Call it exactly once."
+)
+
+
+def _json_deep_equal(left, right):
+    """Compare parsed JSON values without Python's bool/int coercion."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return (
+            left.keys() == right.keys()
+            and all(_json_deep_equal(left[key], right[key]) for key in left)
+        )
+    if isinstance(left, list):
+        return (
+            len(left) == len(right)
+            and all(_json_deep_equal(a, b) for a, b in zip(left, right))
+        )
+    return left == right
+
+
+def format_tool_calls_preview(calls, max_chars=240, api_key=""):
+    """Return a redacted, Markdown-safe, bounded preview of arguments only."""
+    arguments = [
+        call.get("arguments") if isinstance(call, dict) else None
+        for call in calls
+    ]
+    text = json.dumps(
+        arguments,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    )
+    text = redact_sensitive_text(text, api_key)
+    text = text.replace("|", "\\|").replace("`", "\\`")
+    limit = max(3, int(max_chars))
+    if len(text) > limit:
+        return text[:limit - 3] + "..."
+    return text
+
+
+def analyze_tool_call_integrity(response, expected_name, expected_arguments):
+    """Compare a normalized Tool Call response with the forced expectation."""
+    if not isinstance(response, dict):
+        response = {}
+    if "error" in response:
+        return {
+            "verdict": "inconclusive",
+            "expected_count": 1,
+            "received_count": 0,
+            "name_match": None,
+            "arguments_match": None,
+            "findings": [
+                "Structured Tool Call probe failed; support could not be verified"
+            ],
+        }
+    calls = response.get("tool_calls", [])
+    if not isinstance(calls, list) or any(not isinstance(call, dict) for call in calls):
+        return {
+            "verdict": "inconclusive",
+            "expected_count": 1,
+            "received_count": 0,
+            "name_match": None,
+            "arguments_match": None,
+            "findings": ["Structured Tool Call response format was invalid"],
+        }
+    if not calls:
+        claimed_tool_stop = response.get("stop_reason") in {"tool_use", "tool_calls"}
+        return {
+            "verdict": "anomaly" if claimed_tool_stop else "inconclusive",
+            "expected_count": 1,
+            "received_count": 0,
+            "name_match": None,
+            "arguments_match": None,
+            "findings": ([
+                "Response claimed a Tool Call stop reason but contained zero Tool Calls"
+            ] if claimed_tool_stop else [
+                "Forced tool request returned no structured Tool Call; "
+                "support could not be verified"
+            ]),
+        }
+    call = calls[0]
+    count_match = len(calls) == 1
+    type_match = call.get("type") == "function"
+    name_match = call.get("name") == expected_name
+    arguments_match = (
+        call.get("arguments_error") is None
+        and _json_deep_equal(call.get("arguments"), expected_arguments)
+    )
+    findings = []
+    if not count_match:
+        findings.append(
+            f"Tool call count changed: expected 1, received {len(calls)}"
+        )
+    if not type_match:
+        findings.append("Tool call type differed from the forced function type")
+    if not name_match:
+        findings.append("Tool name differed from the forced canary name")
+    if call.get("arguments_error"):
+        findings.append(
+            f"Tool arguments could not be parsed: {call['arguments_error']}"
+        )
+    elif not arguments_match:
+        findings.append("Tool arguments differed from the forced canary payload")
+    return {
+        "verdict": (
+            "clean"
+            if count_match and type_match and name_match and arguments_match
+            else "anomaly"
+        ),
+        "expected_count": 1,
+        "received_count": len(calls),
+        "name_match": name_match,
+        "arguments_match": arguments_match,
+        "findings": findings,
+    }
+
+
+def run_tool_call_integrity_test(client, nonce_factory=None):
+    """Send one inert structured probe and return its tri-state analysis.
+
+    The returned Tool Call is inspected only.  This function intentionally has
+    no executor callback and never sends a follow-up tool result.
+    """
+    if nonce_factory is None:
+        nonce_factory = lambda: uuid.uuid4().hex
+    nonce = str(nonce_factory())
+    tool_name = f"record_probe_{nonce[:12]}"
+    expected_arguments = {
+        "probe_token": f"TC_{nonce}",
+        "sequence": 1,
+        "mode": "observe_only",
+    }
+    tool_spec = {
+        "name": tool_name,
+        "description": PROBE_DESCRIPTION,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "probe_token": {
+                    "type": "string",
+                    "enum": [expected_arguments["probe_token"]],
+                },
+                "sequence": {"type": "integer", "enum": [1]},
+                "mode": {"type": "string", "enum": ["observe_only"]},
+            },
+            "required": ["probe_token", "sequence", "mode"],
+            "additionalProperties": False,
+        },
+    }
+    response = client.call_tool_probe(
+        [{"role": "user", "content": PROBE_PROMPT}],
+        tool_spec,
+        max_tokens=256,
+    )
+    result = analyze_tool_call_integrity(
+        response,
+        expected_name=tool_name,
+        expected_arguments=expected_arguments,
+    )
+    result["expected_name"] = tool_name
+    result["expected_arguments"] = expected_arguments
+    result["received_calls"] = (
+        response.get("tool_calls", []) if isinstance(response, dict) else []
+    )
+    return result
+
+
+# ============================================================
 # Tool-call substitution detector
 # ============================================================
 
@@ -2249,12 +2649,10 @@ return path, e.g. ``pip install requests`` -> ``pip install reqeusts``
 command and comparing the returned text character-by-character against the
 expected string.
 
-This is a text-echo surrogate for the paper's AC-1.a attack: a content-based
-substitution rule in a malicious router will fire on any response body
-containing a package-install pattern, regardless of whether it arrives via a
-tool_call JSON payload or plain text. It does NOT catch AC-1 rewrites that
-target only structured tool_call payloads while leaving plaintext alone --
-that is deferred to a future step that needs APIClient tool-calling support.
+This module implements Step 8's complementary text path. Content-based
+package substitution rules often fire on plain text, while
+``tool_call_integrity.py`` independently covers non-streaming structured
+Anthropic/OpenAI Tool Calls that leave plaintext untouched.
 
 Reference: Liu, Shou, Wen, Chen, Fang, Feng,
 "Your Agent Is Mine: Measuring Malicious Intermediary Attacks on the
@@ -3397,6 +3795,18 @@ def _redact_api_key(text: str, api_key: str) -> str:
             "<REDACTED_PREFIX>",
             text,
         )
+    return text
+
+
+def redact_sensitive_text(text: str, api_key: str = "") -> str:
+    """Redact the caller credential and known secret shapes from report text."""
+    if not isinstance(text, str):
+        text = str(text)
+    if not isinstance(api_key, str):
+        api_key = ""
+    text = _redact_api_key(text, api_key)
+    for pattern, _kind in SECRET_REGEX_PATTERNS:
+        text = pattern.sub("<REDACTED_SECRET>", text)
     return text
 
 
@@ -4881,7 +5291,7 @@ API Relay Security Audit Tool v2.4
 
 Full 14-step audit: infrastructure recon, model list, token injection,
 prompt extraction, instruction conflict + identity, jailbreak, context
-length, tool-call substitution (AC-1.a), error response leakage (AC-2),
+length, tool-call integrity (AC-1 / AC-1.a), error response leakage (AC-2),
 stream integrity (AC-1 SSE), Web3 prompt injection (profile=web3|full),
 infrastructure fingerprint, latency variance, upstream channel classifier.
 Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407
@@ -5027,7 +5437,8 @@ def parse_args():
                         "(10K/50K/100K/200K chars) to lower token cost. "
                         "Default is the full scan.")
     p.add_argument("--skip-tool-substitution", action="store_true",
-                   help="Skip tool-call package substitution test (AC-1.a)")
+                   help="Skip the entire Step 8 tool-call integrity test "
+                        "(text AC-1.a and structured AC-1 probes)")
     p.add_argument("--skip-error-leakage", action="store_true",
                    help="Skip error response header leakage test (Step 9, AC-2 adjacent)")
     p.add_argument("--aggressive-error-probes", action="store_true",
@@ -5698,21 +6109,21 @@ def test_jailbreak(client, report):
 
 
 def test_tool_substitution(client, report):
-    report.h2("8. Tool-Call Package Substitution (AC-1.a)")
+    report.h2("8. Tool-Call Integrity (AC-1 / AC-1.a)")
     report.p(
-        "Ask the model to echo exact package-install commands and verify "
-        "character-level integrity on the return path. A malicious middleware "
-        "running AC-1.a rewrites package names (e.g. `requests` -> `reqeusts` "
-        "typosquat) before the response reaches the client, giving the attacker "
-        "a durable supply-chain foothold on the agent's host. "
+        "Verify both package-install text and one inert, non-streaming structured "
+        "Tool Call on the return path. The structured call is inspected only: "
+        "the audit provides no executor, sends no tool result, and never runs "
+        "returned content. A malicious middleware can rewrite a tool name, "
+        "arguments, call count, or package command before it reaches the client. "
         "Reference: Liu et al., *Your Agent Is Mine*, arXiv:2604.08407 section 4.2.1.\n"
     )
-    report.p(
-        "Limitation: this is a text-echo surrogate. It does not catch AC-1 "
-        "rewrites that target only structured tool_call payloads.\n"
-    )
 
-    results, detected, inconclusive = run_tool_substitution_test(client, sleep=1.0)
+    report.h3("Package-command text probes (AC-1.a)")
+
+    results, text_detected, text_inconclusive = run_tool_substitution_test(
+        client, sleep=1.0,
+    )
 
     report.p("| Manager | Expected | Received | Verdict |")
     report.p("|---------|----------|----------|---------|")
@@ -5742,31 +6153,109 @@ def test_tool_substitution(client, report):
         for manager, error in error_diagnostics:
             report.p(f"- {manager}: {format_diagnosis(_diagnosis_for_error(error))}")
 
-    if detected:
+    if text_detected:
         subs = sum(1 for r in results if r["verdict"] == "substituted")
+        report.p(
+            f"🔴 **Package-command substitution detected (AC-1.a): "
+            f"{subs}/{len(results)} probes rewritten on return path.**"
+        )
+    elif text_inconclusive:
+        report.p(
+            "🟡 **Package-command text probes INCONCLUSIVE: every probe errored.**"
+        )
+    elif error_count > 0:
+        report.p(
+            f"Tool-call substitution test partially skipped "
+            f"({error_count}/{len(results)} probes errored).",
+        )
+    else:
+        report.p("🟢 Package-command text probes preserved exactly.")
+
+    report.h3("Structured Tool Call probe (non-streaming)")
+    try:
+        structured = run_tool_call_integrity_test(client)
+    except Exception:
+        structured = {
+            "verdict": "inconclusive",
+            "expected_count": 1,
+            "received_count": 0,
+            "name_match": None,
+            "arguments_match": None,
+            "findings": [
+                "Structured Tool Call probe failed; support could not be verified"
+            ],
+            "received_calls": [],
+        }
+
+    def _match_label(value):
+        if value is None:
+            return "unknown"
+        return "true" if value else "false"
+
+    report.p(f"**Structured verdict**: `{structured['verdict']}`")
+    report.p(
+        f"**Expected calls**: `{structured['expected_count']}` | "
+        f"**Observed calls**: `{structured['received_count']}`"
+    )
+    report.p(
+        f"**Tool name match**: `{_match_label(structured.get('name_match'))}` | "
+        f"**Arguments match**: `{_match_label(structured.get('arguments_match'))}`"
+    )
+    preview = format_tool_calls_preview(
+        structured.get("received_calls", []),
+        api_key=getattr(client, "api_key", ""),
+    )
+    report.p(f"**Received arguments preview**: `{preview}`")
+    if structured.get("findings"):
+        report.p("\n**Structured findings:**")
+        for finding in structured["findings"]:
+            safe = str(finding)[:240].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
+            report.p(f"- {safe}")
+
+    structured_anomaly = structured["verdict"] == "anomaly"
+    structured_inconclusive = structured["verdict"] == "inconclusive"
+    detected = text_detected or structured_anomaly
+    inconclusive = not detected and (text_inconclusive or structured_inconclusive)
+
+    if detected:
+        paths = []
+        if text_detected:
+            paths.append("package-command text")
+        if structured_anomaly:
+            paths.append("structured Tool Call")
         report.flag(
             "red",
-            f"Tool-call package substitution detected (AC-1.a): "
-            f"{subs}/{len(results)} probes rewritten on return path",
+            "Tool-call integrity anomaly detected (AC-1 / AC-1.a): "
+            + " and ".join(paths)
+            + " path failed integrity checks",
         )
     elif inconclusive:
+        paths = []
+        if text_inconclusive:
+            paths.append("package-command text")
+        if structured_inconclusive:
+            paths.append("structured Tool Call")
         report.flag(
             "yellow",
-            "Tool-call substitution test INCONCLUSIVE: every probe errored. "
-            "The relay may be blocking plaintext echo -- re-run with a different "
-            "model or consider this a red flag in itself.",
+            "Tool-call integrity test INCONCLUSIVE: "
+            + " and ".join(paths)
+            + " path could not be verified",
         )
     elif error_count > 0:
         report.flag(
             "yellow",
-            f"Tool-call substitution test partially skipped "
-            f"({error_count}/{len(results)} probes errored)",
+            f"No tool-call integrity anomaly detected, but "
+            f"{error_count}/{len(results)} package-command probes errored",
         )
     else:
-        report.flag("green", "No tool-call package substitution detected")
+        report.flag(
+            "green",
+            "Tool-call integrity clean: package-command text and structured "
+            "tool name, arguments, and call count all matched",
+        )
 
     state = "detected" if detected else ("inconclusive" if inconclusive else "clean")
-    print(f"  Done: tool-call substitution ({state})")
+    print(f"  Done: tool-call integrity ({state})")
     return detected, inconclusive
 
 
@@ -6601,18 +7090,18 @@ def main():
     else:
         print("[7/14] Context length test (skipped)")
 
-    # 8. Tool-call package substitution (AC-1.a)
+    # 8. Tool-call integrity (text AC-1.a + structured AC-1)
     substitution_detected = False
     substitution_inconclusive = False
     if not args.skip_tool_substitution:
-        print("[8/14] Tool-call substitution test...")
+        print("[8/14] Tool-call integrity test...")
         substitution_detected, substitution_inconclusive = _run_step(
-            "Step 8 tool substitution", report,
+            "Step 8 tool-call integrity", report,
             test_tool_substitution, client, report,
             default=(False, True), crashes=step_crashes,
         )
     else:
-        print("[8/14] Tool-call substitution test (skipped)")
+        print("[8/14] Tool-call integrity test (skipped)")
 
     # 9. Error response header leakage (AC-2 adjacent)
     err_severity = "none"
@@ -6696,8 +7185,8 @@ def main():
     #   D1i = Step 3 crashed / inconclusive                 (Step 3)
     #   D2  = user instructions overridden                  (Step 5)
     #   D2i = Step 5 crashed / inconclusive                 (Step 5)
-    #   D3  = tool-call package substitution detected       (Step 8)
-    #   D3i = Step 8 inconclusive (all probes errored)      (Step 8)
+    #   D3  = text or structured Tool Call anomaly          (Step 8)
+    #   D3i = Step 8 text/structured path inconclusive      (Step 8)
     #   D4  = error response leakage (critical or high)     (Step 9)
     #   D4m = error response leakage (medium only)          (Step 9)
     #   D4i = Step 9 inconclusive                           (Step 9)
@@ -6732,9 +7221,10 @@ def main():
         reasons = []
         if d3:
             reasons.append(
-                "**Tool-call package substitution detected (AC-1.a).** "
-                "A malicious middleware is rewriting package-install commands "
-                "on the return path -- a code-execution-level finding."
+                "**Tool-call integrity anomaly detected (AC-1 / AC-1.a).** "
+                "A malicious middleware may be rewriting a structured tool name, "
+                "arguments, call count, or package-install command on the return "
+                "path -- a code-execution-level finding."
             )
         if err_severity == "critical":
             reasons.append(
@@ -6798,9 +7288,9 @@ def main():
             )
         if d3i:
             medium_reasons.append(
-                "Tool-call substitution test (Step 8) was **inconclusive**: "
-                "every probe errored, so the relay's AC-1.a behavior could not "
-                "be verified -- a relay that blocks plaintext echo is itself a red flag."
+                "Tool-call integrity test (Step 8) was **inconclusive**: at least "
+                "one text or structured Tool Call path could not be verified. "
+                "The relay may reject strict tool schemas or block the probe format."
             )
         if d4m:
             medium_reasons.append(

@@ -101,16 +101,22 @@ def parse_report(file_path):
     if "owned_by: openai" in content_lower:
         api_format = "Both" if "owned_by: vertex-ai" in content_lower else "OpenAI"
 
-    # Tool-call package substitution (Step 8, AC-1.a)
+    # Tool-call integrity (Step 8, structured fields are optional for legacy data)
     tool_substitution = {"detected": False, "probes": []}
     sub_section_match = re.search(
-        r"## 8\. Tool-Call Package Substitution.*?(?=\n## |\Z)",
+        r"## 8\. (?:Tool-Call Integrity|Tool-Call Package Substitution)"
+        r".*?(?=\n## |\Z)",
         content, re.DOTALL,
     )
     if sub_section_match:
         section = sub_section_match.group(0)
         # Detection verdict from the flag line
-        if "SUBSTITUTED" in section or "substitution detected" in section.lower():
+        if (
+            "SUBSTITUTED" in section
+            or "substitution detected" in section.lower()
+            or "integrity anomaly detected" in section.lower()
+            or "**Structured verdict**: `anomaly`" in section
+        ):
             tool_substitution["detected"] = True
         # Parse the per-probe table rows
         for line in section.split("\n"):
@@ -138,6 +144,31 @@ def parse_report(file_path):
                     "received": parts[2].strip("`"),
                     "verdict": verdict,
                 })
+
+        structured_verdict = re.search(
+            r"\*\*Structured verdict\*\*:\s*`([^`]+)`", section)
+        if structured_verdict:
+            expected_count = re.search(
+                r"\*\*Expected calls\*\*:\s*`(\d+)`", section)
+            received_count = re.search(
+                r"\*\*Observed calls\*\*:\s*`(\d+)`", section)
+            name_match = re.search(
+                r"\*\*Tool name match\*\*:\s*`(true|false|unknown)`", section)
+            arguments_match = re.search(
+                r"\*\*Arguments match\*\*:\s*`(true|false|unknown)`", section)
+
+            def parse_optional_bool(match):
+                if not match or match.group(1) == "unknown":
+                    return None
+                return match.group(1) == "true"
+
+            tool_substitution["structured"] = {
+                "verdict": structured_verdict.group(1),
+                "expectedCount": int(expected_count.group(1)) if expected_count else None,
+                "receivedCount": int(received_count.group(1)) if received_count else None,
+                "nameMatch": parse_optional_bool(name_match),
+                "argumentsMatch": parse_optional_bool(arguments_match),
+            }
 
     # Error response leakage (Step 9, AC-2 adjacent)
     error_leakage = {"severity": "none", "triggers": []}
