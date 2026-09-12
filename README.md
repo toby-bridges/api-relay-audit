@@ -1,7 +1,3 @@
-<p align="center">
-  <img alt="API Relay Audit - local AI API relay security audit with separate query families for relay audit, prompt injection audit, model substitution signals, and Web3 relay audit." src="./assets/readme-banner.png">
-</p>
-
 # API Relay Audit
 
 <p align="center">
@@ -19,17 +15,37 @@
   <a href="#deepseek-harness-dsh-plugin"><strong>DSH Plugin</strong></a>
 </p>
 
-## What Is API Relay Audit?
+## Your Agent Is Mine: what you can test locally
 
-API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It keeps API relay audit, prompt injection audit, model substitution signals, and Web3 relay audit as separate query families so each result keeps a clean evidence boundary. Your API key is sent only to the relay URL you choose.
+[*Your Agent Is Mine*](https://arxiv.org/abs/2604.08407) documents malicious API
+relays injecting payloads and exfiltrating credentials.
+[Anthropic's September 10, 2026 report](https://www.anthropic.com/threat-intelligence-report-september-2026)
+describes fraudulent Claude resellers swapping models and harvesting credentials
+through their client tooling. In his
+[September 11 disclosure](https://x.com/shoucccc/status/2098169782541631871),
+co-author Chaofan Shou reports buying router data containing users' credentials.
 
-Use it when you rely on a third-party AI API relay, OpenAI-compatible proxy, Claude-compatible proxy, or Web3 agent workflow and want a repeatable Markdown report before trusting that relay with production or wallet-related traffic.
+API Relay Audit is an independent, local security audit tool for AI API relays
+and LLM proxies, informed by the paper. The current release checks observable
+relay behavior and generates a Markdown report covering:
 
-## AI API Relay Security Audit
+- **Prompt and context signals:** hidden prompt injection, instruction override,
+  and context truncation.
+- **Response integrity:** changes to pinned package-command text, error-response
+  leakage, and SSE stream anomalies.
+- **Reviewable findings:** per-step evidence and `LOW / MEDIUM / HIGH` summaries;
+  inconclusive probes remain visible.
 
-- **Detect relay tampering:** prompt injection, prompt extraction, identity consistency signals, context truncation, tool-call rewriting, error-response leakage, and SSE stream anomalies.
-- **Run locally:** the standalone `audit.py` uses only Python stdlib plus `curl`; your API key is sent only to the relay URL you choose.
-- **Produce reviewable evidence:** each run generates a structured Markdown report with per-step findings and a final `LOW / MEDIUM / HIGH` verdict.
+**See the output:** [example report (synthetic fixture)](./docs/examples/sanitized-audit-report.md)
+· **Try it:** [run a local audit](#quick-start)
+· [Coverage and limits](#what-it-does-not-claim)
+
+The standalone script uses Python's standard library plus `curl`. Your API key
+is sent only to the relay URL you choose.
+
+<p align="center">
+  <img alt="API Relay Audit - local AI API relay security audit with separate query families for relay audit, prompt injection audit, model substitution signals, and Web3 relay audit." src="./assets/readme-banner.png">
+</p>
 
 ## Quick Start
 
