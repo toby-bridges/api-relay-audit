@@ -1,6 +1,6 @@
 """Markdown report generator for audit results."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class Reporter:
@@ -77,7 +77,8 @@ class Reporter:
         self.summary.append((level, msg))
         self.sections.append(f"{icon} **{msg}**\n")
 
-    def render(self, target_url="", model=""):
+    def render(self, target_url="", model="", tool_version="", profile="",
+               tool_commit=""):
         """Render the complete Markdown report.
 
         Produces a header block (title, metadata, risk summary) followed
@@ -88,6 +89,11 @@ class Reporter:
                 metadata when provided.
             model: The model identifier used for the audit. Shown in the
                 report metadata when provided.
+            tool_version: API Relay Audit version used for the run.
+            profile: Audit profile used for the run (``general``, ``web3``,
+                or ``full``).
+            tool_commit: Optional git commit for checkout-based runs. Omitted
+                when the standalone script is run outside a repository.
 
         Returns:
             A single Markdown string containing the full report.
@@ -100,12 +106,18 @@ class Reporter:
         """
         header = (
             f"# API Relay Security Audit Report\n\n"
-            f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+            f"**Generated**: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
         )
+        if tool_version:
+            header += f"**Tool Version**: `{tool_version}`\n"
+        if profile:
+            header += f"**Profile**: `{profile}`\n"
         if target_url:
             header += f"**Target**: `{target_url}`\n"
         if model:
             header += f"**Model**: `{model}`\n"
+        if tool_commit:
+            header += f"**Tool Commit**: `{tool_commit}`\n"
 
         header += "\n## Risk Summary\n\n"
         for level, msg in self.summary:

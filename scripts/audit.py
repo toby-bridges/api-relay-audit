@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-API Relay Security Audit Tool v2.3
+API Relay Security Audit Tool v2.4
 
 Full 14-step audit: infrastructure recon, model list, token injection,
 prompt extraction, instruction conflict + identity, jailbreak, context
@@ -18,6 +18,7 @@ Usage:
 """
 
 import argparse
+import os
 import re
 import shutil
 import socket
@@ -69,6 +70,26 @@ from api_relay_audit.stream_integrity import analyze_stream
 from api_relay_audit.tool_substitution import run_tool_substitution_test
 from api_relay_audit.web3.injection_probes import run_web3_injection_probes
 
+TOOL_VERSION_FALLBACK = "2.4.0"
+
+
+def _api_relay_audit_checkout_root(script_path):
+    """Return this project's checkout root, or ``None`` for copied scripts."""
+    script_path = script_path.resolve()
+    candidates = []
+    if script_path.parent.name == "scripts":
+        candidates.append(script_path.parent.parent)
+    candidates.append(script_path.parent)
+
+    for root in candidates:
+        if all((
+            (root / "VERSION").is_file(),
+            (root / "scripts" / "build-standalone.py").is_file(),
+            (root / "api_relay_audit" / "reporter.py").is_file(),
+        )):
+            return root
+    return None
+
 
 def _format_identity_inconsistency(non_claude_matches):
     """Render Step 5's non-Claude self-ID finding without over-attribution."""
@@ -96,13 +117,64 @@ def _report_error(report, error, status=None):
     report.p(format_diagnosis(_diagnosis_for_error(error, status=status)))
 
 
+def _tool_version():
+    """Return the packaged tool version for report metadata."""
+    repo_root = _api_relay_audit_checkout_root(Path(__file__).resolve())
+    if repo_root is not None:
+        candidate = repo_root / "VERSION"
+        try:
+            value = candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            value = ""
+        if re.fullmatch(r"\d+\.\d+\.\d+", value):
+            return value
+    return TOOL_VERSION_FALLBACK
+
+
+def _tool_commit_from_checkout():
+    """Return a short git commit only when this script is in this repo checkout."""
+    repo_root = _api_relay_audit_checkout_root(Path(__file__).resolve())
+    if repo_root is None:
+        return ""
+    if not (repo_root / ".git").exists():
+        return ""
+    try:
+        root_result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+        git_root = Path(root_result.stdout.strip()).resolve()
+        if git_root != repo_root.resolve():
+            return ""
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--short=12", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+    except Exception:
+        return ""
+    commit = result.stdout.strip()
+    return commit if re.fullmatch(r"[0-9a-f]{7,12}", commit) else ""
+
+
 # ============================================================
 # CLI
 # ============================================================
 
 def parse_args():
-    p = argparse.ArgumentParser(description="API Relay Security Audit Tool")
-    p.add_argument("--key", required=True, help="API Key")
+    p = argparse.ArgumentParser(
+        description="API Relay Security Audit Tool",
+        allow_abbrev=False,
+    )
+    key_source = p.add_mutually_exclusive_group(required=True)
+    key_source.add_argument("--key", help="API Key")
+    key_source.add_argument("--key-env", metavar="NAME",
+                            help="Read the API Key from environment variable NAME")
     p.add_argument("--url", required=True, help="Base URL (e.g. https://xxx.com/v1)")
     p.add_argument("--model", default="claude-opus-4-6", help="Model name")
     p.add_argument("--connectivity", action="store_true",
@@ -164,7 +236,15 @@ def parse_args():
                    help="Path to an append-only JSONL forensic log (arXiv §7.3). "
                         "Every API request is recorded with timestamp, URL, "
                         "SHA-256 of request/response, and status code.")
-    return p.parse_args()
+    args = p.parse_args()
+    if args.key_env is not None:
+        value = os.environ.get(args.key_env)
+        if not value:
+            p.error(
+                f"environment variable {args.key_env!r} is missing or empty"
+            )
+        args.key = value
+    return args
 
 
 def run_warmup(client, n):
@@ -534,7 +614,6 @@ def test_prompt_extraction(client, report):
             weak_hits = [kw for kw in weak_markers if kw in text_lower]
 
             if has_strong:
-                leaked = True
                 if _is_self_corrected_hidden_prompt_echo(name, text_lower, structural, strong_hits):
                     report.flag(
                         "yellow",
@@ -543,18 +622,11 @@ def test_prompt_extraction(client, report):
                         "self-correction, verify manually",
                     )
                 else:
+                    leaked = True
                     report.flag("red", f"Test {name}: Hidden prompt content extracted!")
             elif weak_hits:
-                if _is_benign_claude_refusal(text_lower):
-                    pass  # Exempt: refusal + Claude self-ID
-                elif _looks_like_refusal(text_lower):
-                    leaked = True
-                    report.flag(
-                        "yellow",
-                        f"Test {name}: identity words ({', '.join(weak_hits)}) "
-                        f"present alongside refusal without Claude self-identification "
-                        f"— possible partial leak, verify manually",
-                    )
+                if _looks_like_refusal(text_lower):
+                    pass
                 else:
                     leaked = True
                     report.flag("red", f"Test {name}: Hidden prompt content extracted!")
@@ -984,13 +1056,15 @@ def test_stream_integrity(client, report):
         "Open an Anthropic streaming request with thinking enabled and "
         "inspect every SSE event for structural anomalies. A relay that "
         "rewrites or downgrades the streamed response often fails one "
-        "of four invariants: (1) all event types belong to Anthropic's "
+        "of five invariants: (1) all event types belong to Anthropic's "
         "known set (ping / message_start / content_block_start / "
         "content_block_delta / content_block_stop / message_delta / "
         "message_stop); (2) ``input_tokens`` is consistent across "
         "``message_start`` and ``message_delta``; (3) ``output_tokens`` "
         "is monotonically non-decreasing; (4) ``signature_delta`` events "
-        "carry non-empty signature values. Detection concept sourced from "
+        "carry non-empty signature values; (5) exactly one terminal "
+        "``message_stop`` follows ``message_start`` with no later non-ping "
+        "events. Detection concept sourced from "
         "hvoy.ai's claude_detector.py, verified against source on "
         "2026-04-11. See reference_hvoy_relayapi memory for details.\n"
     )
@@ -1015,6 +1089,7 @@ def test_stream_integrity(client, report):
     report.p(f"| Usage monotonic | {'yes' if analysis['usage_monotonic'] else 'NO'} |")
     report.p(f"| Usage consistent | {'yes' if analysis['usage_consistent'] else 'NO'} |")
     report.p(f"| Signature valid | {'yes' if analysis['signature_valid'] else 'NO'} |")
+    report.p(f"| Stream complete | {'yes' if analysis['stream_complete'] else 'NO'} |")
     report.p(
         f"| Stream model | {analysis['stream_model_name'] or '—'} "
         f"({'claude' if analysis['stream_model_is_claude'] else 'NOT claude'}) |"
@@ -1049,7 +1124,8 @@ def test_stream_integrity(client, report):
         report.flag(
             "green",
             "Stream integrity clean: SSE whitelist + usage monotonicity "
-            "+ signature validity + stream model identity all passed",
+            "+ signature validity + terminal completeness + stream model "
+            "identity all passed",
         )
 
     print(f"  Done: stream integrity ({verdict})")
@@ -1919,7 +1995,13 @@ def main():
                  "anomaly, or Web3 injection detected.")
 
     # Output
-    md = report.render(target_url=client.base_url, model=args.model)
+    md = report.render(
+        target_url=client.base_url,
+        model=args.model,
+        tool_version=f"v{_tool_version()}",
+        profile=args.profile,
+        tool_commit=_tool_commit_from_checkout(),
+    )
 
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)

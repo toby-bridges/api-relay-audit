@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek Harness Plugin for AI API Relay Audits</title>
+<meta name="description" content="Install the pinned API Relay Audit plugin for DeepSeek Harness web and cc-tui profiles, with local reports and per-invocation credential handling.">
+<link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/guides/deepseek-harness-plugin-api-relay-audit.html">
+<link rel="stylesheet" href="../assets/content.css">
+</head>
+<body>
+<header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">中文</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
+<main class="wrap">
+  <div class="eyebrow">DeepSeek Harness Plugin</div>
+  <h1>Run API relay audits from DeepSeek Harness</h1>
+  <p class="lead">The v2.4.0 DSH bundle registers <code>/relay-audit</code> on compatible web and cc-tui profiles, reuses the selected route, and keeps credentials out of command arguments.</p>
+
+  <section class="note">API Relay Audit does not certify that a relay is safe. Results remain local evidence with explicit clean, anomaly, and inconclusive states.</section>
+
+  <h2>Install the immutable release</h2>
+  <pre class="code"><code>DSH_PLUGIN_REF=v2.4.0
+dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
+dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"</code></pre>
+
+  <h2>Run the audit</h2>
+  <pre class="code"><code># Lower-cost route and credential check
+/relay-audit --connectivity
+
+# Full 14-step audit
+/relay-audit
+
+# Profile-gated Web3 relay audit
+/relay-audit --profile web3 --fast-context</code></pre>
+
+  <h2>Runtime boundaries</h2>
+  <ul>
+    <li>The plugin requires the DSH profile loader and <code>@deepseek-ai/dsh-commands</code> registry.</li>
+    <li>The selected route must identify as Claude; current identity and stream baselines are Claude-specific.</li>
+    <li>The credential is resolved on every invocation and passed to the local child process through <code>API_RELAY_AUDIT_KEY</code>, not argv.</li>
+    <li>Reports are written under the current session workspace by default.</li>
+  </ul>
+
+  <h2>Evidence scope</h2>
+  <p>The plugin preserves separate API relay audit, prompt injection audit, model substitution signals, and Web3 relay audit query families. Model identity is a consistency signal, not standalone provider proof. The v2.4.0 release was installed in isolated web and cc-tui profiles and passed fake-relay connectivity and secret-sentinel scans.</p>
+  <p>Review the exact tool versions, commit resolution, standalone hash, and test boundary in the <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/distribution-verification-v2.4.0.md">v2.4.0 distribution verification</a>.</p>
+</main>
+<footer><div class="wrap">Related: <a href="audit-claude-api-relay-safely.html">audit a Claude API relay safely</a> · <a href="detect-prompt-injection-llm-api-proxies.html">prompt injection in LLM proxies</a></div></footer>
+</body>
+</html>

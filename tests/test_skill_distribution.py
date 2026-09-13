@@ -98,7 +98,7 @@ def test_skill_surfaces_do_not_regress_to_13_step_copy():
         HERMES_SKILL,
         SKILL_DISTRIBUTION_DOC,
         RELEASE_DRAFT,
-        REPO_ROOT / "web" / "guides" / "openclaw-hermes-skill-api-relay-audit.html",
+        REPO_ROOT / "web" / "guides" / "deepseek-harness-plugin-api-relay-audit.html",
         HOMEPAGE,
         REPO_ROOT / "web" / "zh" / "index.html",
     ]
@@ -109,11 +109,13 @@ def test_skill_surfaces_do_not_regress_to_13_step_copy():
             assert phrase not in text, f"{path} contains stale phrase {phrase!r}"
 
 
-def test_homepage_agent_tab_matches_openclaw_hermes_contract():
+def test_homepage_agent_tab_matches_dsh_contract():
     text = _read(HOMEPAGE)
-    assert "OpenClaw or Hermes skill" in text
-    assert "hermes skills install toby-bridges/api-relay-audit/skills/api-relay-audit" in text
+    assert "DeepSeek Harness plugin" in text
+    assert 'dsh plugin --profile web add "github:toby-bridges/api-relay-audit#v2.4.0"' in text
+    assert "/relay-audit --connectivity" in text
     assert "API_RELAY_AUDIT_KEY" in text
+    assert "after ClawHub publication" not in text
     assert "Claude Code Skill" not in text
     assert "~/.claude/commands" not in text
     assert "my key is sk-xxx" not in text

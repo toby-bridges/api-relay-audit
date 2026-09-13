@@ -23,6 +23,7 @@ specific, reproducible, and safe to publish.
 
 | Contribution type | Good input | Avoid |
 | --- | --- | --- |
+| Local run feedback | Tool version, install method, OS/shell/Python/curl versions, command shape, sanitized error text | API keys, private relay domains, raw traffic, or unredacted reports |
 | Detector gap | A sanitized prompt, profile, expected behavior, actual behavior, and affected step | Raw API keys, private relay traffic, or unverifiable claims |
 | Documentation example | A concrete command, flag combination, profile choice, or confusing report line | Broad rewrites that change project scope |
 | OpenClaw / Hermes feedback | Install command used, environment, error text, and what fixed it | Publishing secrets from shell history or logs |
@@ -30,9 +31,14 @@ specific, reproducible, and safe to publish.
 
 Use the issue templates when possible:
 
+- Local run feedback: `.github/ISSUE_TEMPLATE/local-run-feedback.yml`
 - Detector gap: `.github/ISSUE_TEMPLATE/detector-gap.yml`
 - Documentation example: `.github/ISSUE_TEMPLATE/documentation-example.yml`
 - Agent skill install feedback: `.github/ISSUE_TEMPLATE/agent-skill-feedback.yml`
+
+See [docs/community-evidence.md](./docs/community-evidence.md) for the
+difference between local run feedback, detector-gap reports, and formal audit
+evidence submissions.
 
 Do not submit a public example audit report with real relay domains, real API
 keys, wallet material, raw traffic captures, or private operational details.

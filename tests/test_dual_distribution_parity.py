@@ -12,6 +12,7 @@ focused behavior/constant regression tests for public standalone semantics.
 """
 
 import ast
+import importlib.util
 import sys
 import re
 import subprocess
@@ -22,6 +23,58 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_audit_module(path, name):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _long_options(path):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_argument"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and node.args[0].value.startswith("--")
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "module_name"),
+    [
+        (REPO_ROOT / "scripts" / "audit.py", "modular_audit_no_abbrev"),
+        (REPO_ROOT / "audit.py", "standalone_audit_no_abbrev"),
+    ],
+)
+def test_all_long_option_abbreviations_are_rejected(path, module_name, monkeypatch, capsys):
+    module = _load_audit_module(path, module_name)
+    options = _long_options(path)
+    abbreviations = {
+        option[:length]
+        for option in options
+        for length in range(3, len(option))
+        if option[:length] not in options
+    }
+
+    for abbreviation in sorted(abbreviations):
+        for token in (abbreviation, f"{abbreviation}=value"):
+            monkeypatch.setattr(
+                sys,
+                "argv",
+                ["audit.py", "--key", "test-key", "--url", "https://example.invalid", token],
+            )
+            with pytest.raises(SystemExit) as exc_info:
+                module.parse_args()
+            assert exc_info.value.code == 2
+            assert "unrecognized arguments" in capsys.readouterr().err
 
 
 def test_standalone_artifact_generated_from_sources():
@@ -450,7 +503,97 @@ def test_public_help_flags_parity():
     modular_flags = _help_option_set(REPO_ROOT / "scripts" / "audit.py")
     standalone_flags = _help_option_set(REPO_ROOT / "audit.py")
     assert "--connectivity" in modular_flags
+    assert "--key-env" in modular_flags
     assert modular_flags == standalone_flags
+
+
+def test_api_key_cli_sources_are_safe_and_dual_distributed(monkeypatch, capsys):
+    """Both entrypoints accept exactly one API-key source without echoing it."""
+    import scripts.audit as modular
+
+    standalone = _load_standalone_audit()
+    secret = "sk-dsh-secret-must-not-appear"
+
+    for module in (modular, standalone):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key",
+                secret,
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        assert module.parse_args().key == secret
+
+        monkeypatch.setenv("API_RELAY_AUDIT_TEST_KEY", secret)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key-env",
+                "API_RELAY_AUDIT_TEST_KEY",
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        parsed = module.parse_args()
+        assert parsed.key == secret
+        assert parsed.key_env == "API_RELAY_AUDIT_TEST_KEY"
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key",
+                secret,
+                "--key-env",
+                "API_RELAY_AUDIT_TEST_KEY",
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        with pytest.raises(SystemExit) as conflict:
+            module.parse_args()
+        assert conflict.value.code == 2
+        assert secret not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_key_env_rejects_missing_or_empty_values_without_leaking(
+    monkeypatch, capsys, value
+):
+    import scripts.audit as modular
+
+    standalone = _load_standalone_audit()
+    name = "API_RELAY_AUDIT_EMPTY_TEST_KEY"
+    if value is None:
+        monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(name, value)
+
+    for module in (modular, standalone):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key-env",
+                name,
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        with pytest.raises(SystemExit) as exc:
+            module.parse_args()
+        assert exc.value.code == 2
+        error = capsys.readouterr().err
+        assert name in error
+        assert "missing or empty" in error
 
 
 def test_profile_help_matches_current_14_step_contract():

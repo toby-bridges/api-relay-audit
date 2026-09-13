@@ -73,23 +73,61 @@ jobs:
       - name: Confirm workflow did not mutate source files
         run: git diff --exit-code
 
-      - name: Ensure tag and release do not already exist
+      - name: Inspect draft release state
+        id: release_state
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
+          EXPECTED_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           git fetch --tags --force
 
-          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            echo "tag already exists: ${TAG}" >&2
+          tag_commit=""
+          if git rev-parse -q --verify "refs/tags/${TAG}^{commit}" >/dev/null; then
+            tag_commit="$(git rev-list -n 1 "refs/tags/${TAG}")"
+          fi
+
+          release_error="$(mktemp)"
+          set +e
+          release_json="$(gh release view "${TAG}" --json isDraft,targetCommitish 2>"${release_error}")"
+          release_status=$?
+          set -e
+
+          release_exists=false
+          if [ "${release_status}" -eq 0 ]; then
+            release_exists=true
+          elif ! grep -qi "release not found" "${release_error}"; then
+            cat "${release_error}" >&2
+            exit "${release_status}"
+          fi
+
+          if [ -z "${tag_commit}" ] && [ "${release_exists}" = false ]; then
+            echo "mode=create" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${release_exists}" = false ]; then
+            echo "tag exists without a release: ${TAG}" >&2
             exit 1
           fi
 
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "release already exists: ${TAG}" >&2
+          is_draft="$(jq -r '.isDraft' <<<"${release_json}")"
+          target_commit="$(jq -r '.targetCommitish' <<<"${release_json}")"
+          if [ "${is_draft}" != true ]; then
+            echo "release already published: ${TAG}" >&2
             exit 1
           fi
+          if [ "${target_commit}" != "${EXPECTED_COMMIT}" ]; then
+            echo "draft target mismatch: ${target_commit} != ${EXPECTED_COMMIT}" >&2
+            exit 1
+          fi
+          if [ -n "${tag_commit}" ] && [ "${tag_commit}" != "${EXPECTED_COMMIT}" ]; then
+            echo "tag target mismatch: ${tag_commit} != ${EXPECTED_COMMIT}" >&2
+            exit 1
+          fi
+
+          echo "mode=resume" >> "$GITHUB_OUTPUT"
 
       - name: Package standalone artifact
         run: |
@@ -99,6 +137,7 @@ jobs:
           (cd dist && sha256sum audit.py > audit.py.sha256)
 
       - name: Create draft GitHub Release
+        if: steps.release_state.outputs.mode == 'create'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -111,3 +150,29 @@ jobs:
             --title "${TAG}" \
             --notes-file "${NOTES}" \
             --target "${GITHUB_SHA}"
+
+      - name: Resume existing draft GitHub Release
+        if: steps.release_state.outputs.mode == 'resume'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          NOTES: ${{ steps.version.outputs.notes }}
+        run: |
+          set -euo pipefail
+          gh release upload "${TAG}" \
+            dist/audit.py \
+            dist/audit.py.sha256 \
+            --clobber
+          gh release edit "${TAG}" \
+            --title "${TAG}" \
+            --notes-file "${NOTES}"
+
+      - name: Verify published release artifact provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 scripts/verify-release-artifact.py \
+            --tag "${TAG}" \
+            --source-ref "${GITHUB_SHA}"

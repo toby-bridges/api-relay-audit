@@ -103,10 +103,16 @@ def replace_regex(
 
 def sync_audit_script(version: Version, path: Path) -> str:
     text = read_text(path)
-    return replace_regex(
+    text = replace_regex(
         text,
         rf"API Relay Security Audit Tool {DISPLAY_VERSION_RE}",
         f"API Relay Security Audit Tool {version.display}",
+        path,
+    )
+    return replace_regex(
+        text,
+        rf'^TOOL_VERSION_FALLBACK = "{FULL_VERSION_RE}"$',
+        f'TOOL_VERSION_FALLBACK = "{version.full}"',
         path,
     )
 
@@ -129,6 +135,16 @@ def sync_package_init(version: Version, path: Path) -> str:
         text,
         rf'^__version__ = "{FULL_VERSION_RE}"$',
         f'__version__ = "{version.full}"',
+        path,
+    )
+
+
+def sync_dsh_package(version: Version, path: Path) -> str:
+    text = read_text(path)
+    return replace_regex(
+        text,
+        rf'^  "version": "{FULL_VERSION_RE}",$',
+        f'  "version": "{version.full}",',
         path,
     )
 
@@ -173,8 +189,8 @@ def sync_skill_distribution(version: Version, path: Path) -> str:
     )
     text = replace_regex(
         text,
-        rf"--version {FULL_VERSION_RE} \\",
-        f"--version {version.full} \\",
+        rf"^DSH_PLUGIN_REF=v{FULL_VERSION_RE}$",
+        f"DSH_PLUGIN_REF={version.tag}",
         path,
     )
     return text
@@ -232,6 +248,7 @@ def planned_files(version: Version) -> list[PlannedFile]:
     audit_script = REPO_ROOT / "scripts" / "audit.py"
     build_standalone = REPO_ROOT / "scripts" / "build-standalone.py"
     package_init = REPO_ROOT / "api_relay_audit" / "__init__.py"
+    dsh_package = REPO_ROOT / "package.json"
     root_skill = REPO_ROOT / "SKILL.md"
     hermes_skill = REPO_ROOT / "skills" / "api-relay-audit" / "SKILL.md"
     skill_distribution = REPO_ROOT / "docs" / "skill-distribution.md"
@@ -242,6 +259,7 @@ def planned_files(version: Version) -> list[PlannedFile]:
         PlannedFile(audit_script, sync_audit_script(version, audit_script)),
         PlannedFile(build_standalone, sync_build_standalone(version, build_standalone)),
         PlannedFile(package_init, sync_package_init(version, package_init)),
+        PlannedFile(dsh_package, sync_dsh_package(version, dsh_package)),
         PlannedFile(root_skill, sync_skill(version, root_skill)),
         PlannedFile(hermes_skill, sync_skill(version, hermes_skill)),
         PlannedFile(

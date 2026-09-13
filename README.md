@@ -1,7 +1,3 @@
-<p align="center">
-  <img alt="API Relay Audit - local AI API relay security audit with separate query families for relay audit, prompt injection audit, model substitution signals, and Web3 relay audit." src="./assets/readme-banner.png">
-</p>
-
 # API Relay Audit
 
 <p align="center">
@@ -16,22 +12,70 @@
 </p>
 
 <p align="center">
-  <a href="./SKILL.md"><strong>OpenClaw Skill</strong></a>
-  ·
-  <a href="./skills/api-relay-audit/SKILL.md"><strong>Hermes Skill</strong></a>
+  <a href="#deepseek-harness-dsh-plugin"><strong>DSH Plugin</strong></a>
 </p>
 
-## What Is API Relay Audit?
+## Your Agent Is Mine: what you can test locally
 
-API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It keeps API relay audit, prompt injection audit, model substitution signals, and Web3 relay audit as separate query families so each result keeps a clean evidence boundary. Your API key is sent only to the relay URL you choose.
+[*Your Agent Is Mine*](https://arxiv.org/abs/2604.08407) documents malicious API
+relays injecting payloads and exfiltrating credentials.
+[Anthropic's September 10, 2026 report](https://www.anthropic.com/threat-intelligence-report-september-2026)
+describes fraudulent Claude resellers swapping models and harvesting credentials
+through their client tooling. In his
+[September 11 disclosure](https://x.com/shoucccc/status/2098169782541631871),
+co-author Chaofan Shou reports buying router data containing users' credentials.
 
-Use it when you rely on a third-party AI API relay, OpenAI-compatible proxy, Claude-compatible proxy, or Web3 agent workflow and want a repeatable Markdown report before trusting that relay with production or wallet-related traffic.
+API Relay Audit is an independent, local security audit tool for AI API relays
+and LLM proxies, informed by the paper. The current release checks observable
+relay behavior and generates a Markdown report covering:
 
-## AI API Relay Security Audit
+- **Prompt and context signals:** hidden prompt injection, instruction override,
+  and context truncation.
+- **Response integrity:** changes to pinned package-command text, error-response
+  leakage, and SSE stream anomalies.
+- **Reviewable findings:** per-step evidence and `LOW / MEDIUM / HIGH` summaries;
+  inconclusive probes remain visible.
 
-- **Detect relay tampering:** prompt injection, prompt extraction, identity consistency signals, context truncation, tool-call rewriting, error-response leakage, and SSE stream anomalies.
-- **Run locally:** the standalone `audit.py` uses only Python stdlib plus `curl`; your API key is sent only to the relay URL you choose.
-- **Produce reviewable evidence:** each run generates a structured Markdown report with per-step findings and a final `LOW / MEDIUM / HIGH` verdict.
+**See the output:** [example report (synthetic fixture)](./docs/examples/sanitized-audit-report.md)
+· **Try it:** [run a local audit](#quick-start)
+· [Coverage and limits](#what-it-does-not-claim)
+
+The standalone script uses Python's standard library plus `curl`. Your API key
+is sent only to the relay URL you choose.
+
+<p align="center">
+  <img alt="API Relay Audit - local AI API relay security audit with separate query families for relay audit, prompt injection audit, model substitution signals, and Web3 relay audit." src="./assets/readme-banner.png">
+</p>
+
+## Quick Start
+
+```bash
+AUDIT_SCRIPT_REF=v2.4.0
+curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
+
+python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
+
+# Web3 / wallet users
+python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report.md
+```
+
+See a public-safe fixture report: [sanitized audit report](./docs/examples/sanitized-audit-report.md).
+Use `master` as `AUDIT_SCRIPT_REF` only when intentionally testing unreleased changes.
+
+> If API Relay Audit helps you evaluate a relay before sending real traffic, [star the repository](https://github.com/toby-bridges/api-relay-audit) to follow new detector coverage and release-tested updates.
+
+## When to Use It
+
+- You use a third-party AI API relay, mirror, gateway, or LLM proxy.
+- You want to check whether a Claude-compatible or OpenAI-compatible proxy injects prompts, swaps models, truncates context, or rewrites tool output.
+- You are testing relay behavior before production traffic, coding-agent automation, package-install suggestions, or wallet-related actions.
+- You need a local, repeatable audit report instead of a web tool that asks for your API key.
+
+## What It Does Not Claim
+
+- It does not certify that a relay is safe.
+- It does not replace manual security review or operational monitoring.
+- It does not treat `inconclusive` as `clean`; blocked probes and ambiguous responses stay visible in the report.
 
 ## Query Family Boundaries
 
@@ -43,21 +87,6 @@ Use it when you rely on a third-party AI API relay, OpenAI-compatible proxy, Cla
 | Web3 relay audit | Check wallet-sensitive relay behavior before agent workflows touch signing or transactions. | `web3` or `full`; Step 11 | Profile-gated; general relay audits do not imply wallet safety. |
 
 The canonical contract lives in [docs/query-families.md](./docs/query-families.md). README headings, Pages cards, issue templates, and skill descriptions should preserve these boundaries instead of flattening them into one slogan.
-
-## Quick Start
-
-```bash
-AUDIT_SCRIPT_REF=v2.3.0
-curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
-
-python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
-
-# Web3 / wallet users
-python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report.md
-```
-
-See a public-safe fixture report: [sanitized audit report](./docs/examples/sanitized-audit-report.md).
-Use `master` as `AUDIT_SCRIPT_REF` only when intentionally testing unreleased changes.
 
 ## Coverage
 
@@ -81,31 +110,56 @@ Runtime profiles:
 - `web3`: wallet-safety probes for Web3 agent flows
 - `full`: general plus Web3 checks
 
-## Agent Skills: OpenClaw and Hermes
+## DeepSeek Harness DSH Plugin
 
-API Relay Audit can also run as an agent skill when an agent workflow needs to
-audit a relay before trusting it with coding, tool, or wallet-related traffic.
+The repository is also an installable `dsh-api-relay-audit` bundle for
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web and
+community TUI surfaces that use the official `@deepseek-ai/dsh-commands`
+registry. Pin an immutable commit or release tag:
+
+```bash
+DSH_PLUGIN_REF=v2.4.0
+dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
+
+# dsh-cc-tui and other compatible profile-based clients
+dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
+```
+
+The command reuses the current DSH provider's `baseURL`, model, and credential
+reference. The credential stays in DSH Credentials and is delivered to the
+local audit process through an environment variable, never through command
+arguments or the session log:
+
+```text
+/relay-audit
+/relay-audit --connectivity
+/relay-audit --profile web3 --fast-context
+/relay-audit --url <URL> --model <claude-model> --credential-ref <DSH_CREDENTIAL_REF>
+```
+
+No arguments preserves the existing full-audit default and may consume
+metered tokens. Use `--connectivity` for a lower-cost check. This distribution
+does not add a new model baseline: the selected route must identify as Claude,
+although the relay API itself may be Anthropic-compatible or OpenAI-compatible.
+Independent wrappers without DSH profiles and the DSH command registry are not
+compatible with this bundle. See [agent distribution notes](./docs/skill-distribution.md).
+The exact v2.4.0 installation, runtime, and secret-scan results are recorded in
+[the DSH distribution verification](./docs/distribution-verification-v2.4.0.md).
+
+## Retained Agent Skill Files
+
+The repository retains its existing OpenClaw and Hermes skill files for direct
+users and downstream compatibility. They are not current registry distribution
+targets; active distribution and release verification focus on the DeepSeek
+Harness plugin.
 
 - **OpenClaw Skill:** run a local AI API relay audit before an OpenClaw agent
   depends on a third-party relay, proxy API, or resale key.
 - **Hermes Skill:** install API Relay Audit as a Hermes Agent skill and run the
   same local 14-step LLM proxy security audit from an agent workflow.
 
-These skills do not certify that a relay is safe. They help agents generate a
+These files do not certify that a relay is safe. They help agents generate a
 local, reviewable Markdown report before trusting a relay path.
-
-## When to Use It
-
-- You use a third-party AI API relay, mirror, gateway, or LLM proxy.
-- You want to check whether a Claude-compatible or OpenAI-compatible proxy injects prompts, swaps models, truncates context, or rewrites tool output.
-- You are testing relay behavior before production traffic, coding-agent automation, package-install suggestions, or wallet-related actions.
-- You need a local, repeatable audit report instead of a web tool that asks for your API key.
-
-## What It Does Not Claim
-
-- It does not certify that a relay is safe.
-- It does not replace manual security review or operational monitoring.
-- It does not treat `inconclusive` as `clean`; blocked probes and ambiguous responses stay visible in the report.
 
 ## Evidence Boundaries
 
@@ -139,11 +193,11 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 
 | Metric | Current value |
 |---|---:|
-| Version | `v2.3` |
+| Version | `v2.4` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
-| pytest collected tests | 778 |
-| CLI flags | 21 |
+| pytest collected tests | 808 |
+| CLI flags | 22 |
 | Runtime profiles | `general`, `web3`, `full` |
 
 ## Example Report And Live Page
@@ -158,7 +212,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
   [prompt injection in proxies](https://toby-bridges.github.io/api-relay-audit/guides/detect-prompt-injection-llm-api-proxies.html),
   [Claude Code gateway prompt steganography](https://toby-bridges.github.io/api-relay-audit/guides/claude-code-anthropic-base-url-prompt-steganography.html),
   [Web3 wallet prompt injection](https://toby-bridges.github.io/api-relay-audit/guides/web3-wallet-prompt-injection-ai-agents.html),
-  [OpenClaw and Hermes skill](https://toby-bridges.github.io/api-relay-audit/guides/openclaw-hermes-skill-api-relay-audit.html)
+  [DeepSeek Harness plugin](https://toby-bridges.github.io/api-relay-audit/guides/deepseek-harness-plugin-api-relay-audit.html)
 - Contributors / Credits: [CONTRIBUTORS.md](./CONTRIBUTORS.md)
 - Security policy: [SECURITY.md](./SECURITY.md)
 - Contributing guide: [CONTRIBUTING.md](./CONTRIBUTING.md)
@@ -218,15 +272,18 @@ You do not need to write code to help. Good first contributions are small,
 reproducible, and evidence-focused:
 
 - Report a detector gap with a sanitized reproduction.
+- Share local run feedback for install, runtime, platform, or report-UX issues.
 - Add documentation examples for profiles, flags, or relay behavior.
-- Improve OpenClaw or Hermes install notes from a real local setup.
+- Improve DSH, OpenClaw, or Hermes install notes from a real local setup.
 - Translate Quick Start or clarify `clean`, `anomaly`, and `inconclusive`.
 
 Start with:
 
+- [Local Run Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=local-run-feedback.yml)
 - [Detector Gap](https://github.com/toby-bridges/api-relay-audit/issues/new?template=detector-gap.yml)
 - [Documentation Example](https://github.com/toby-bridges/api-relay-audit/issues/new?template=documentation-example.yml)
 - [Agent Skill Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=agent-skill-feedback.yml)
+- [Community Evidence Guide](./docs/community-evidence.md)
 - [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 Avoid publishing real API keys or private relay traffic, and keep changes scoped
@@ -266,7 +323,7 @@ to one behavior or document.
 ## 30 秒快速开始
 
 ```bash
-AUDIT_SCRIPT_REF=v2.3.0
+AUDIT_SCRIPT_REF=v2.4.0
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
@@ -282,14 +339,43 @@ python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report
 - 模型身份: 非 Claude 身份泄漏、模型替换信号、Claude / OpenAI 兼容中转行为
 - Web3 风险: 转账指引、签名拒绝、私钥泄漏拒绝
 
-## Agent Skill 支持
+## DeepSeek Harness DSH Plugin
 
-API Relay Audit 也可以作为 agent skill 使用。
+本仓库同时提供 GitHub 可直装的 `dsh-api-relay-audit` bundle，支持官方 DSH
+Web，以及使用 `@deepseek-ai/dsh-commands` registry 的社区 TUI。安装时必须固定
+commit 或 release tag：
+
+```bash
+DSH_PLUGIN_REF=v2.4.0
+dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
+dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
+```
+
+插件默认复用当前 DSH provider 的 `baseURL`、model 和 credential reference；
+真实 API Key 只从 DSH Credentials 解析，并通过子进程环境变量传递，不进入命令
+参数或会话日志。
+
+```text
+/relay-audit
+/relay-audit --connectivity
+/relay-audit --profile web3 --fast-context
+/relay-audit --url <URL> --model <claude-model> --credential-ref <DSH_CREDENTIAL_REF>
+```
+
+无参数运行现有完整审计，可能产生较高 token 消耗；低成本检查使用
+`--connectivity`。插件不增加新的模型基线：中转接口可以兼容 Anthropic 或
+OpenAI，但被审计线路必须明确为 Claude。没有 DSH profile/plugin 机制的独立
+wrapper 不在兼容范围内。
+
+## 保留的 Agent Skill 文件
+
+仓库保留 OpenClaw 和 Hermes skill 文件，供已有直接用户和下游兼容使用；当前
+registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 
 - **OpenClaw Skill:** 在 OpenClaw agent 把 coding、tool 或钱包相关流量交给第三方 relay 前，先运行本地审计。
 - **Hermes Skill:** 作为 Hermes Agent skill 安装，在 agent workflow 中运行同一套本地 14 步审计。
 
-这些 skill 不给中转站颁发安全认证，只帮助 agent 在信任 relay 前生成本地、可复查的 Markdown 报告。
+这些文件不代表 registry 已发布，也不给中转站颁发安全认证；它们只帮助 agent 在信任 relay 前生成本地、可复查的 Markdown 报告。
 
 ## 什么时候使用
 
@@ -326,20 +412,22 @@ API Relay Audit 也可以作为 agent skill 使用。
 
 | 指标 | 当前值 |
 |---|---:|
-| 版本 | `v2.3` |
+| 版本 | `v2.4` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 778 |
-| CLI flags | 21 |
+| pytest collected tests | 808 |
+| CLI flags | 22 |
 | Runtime profiles | `general`, `web3`, `full` |
 
 ## 如何贡献
 
-你不需要写代码也能帮忙：可以提交检测缺口、文档示例、翻译改进，或 OpenClaw / Hermes 安装反馈。
+你不需要写代码也能帮忙：可以提交本地运行反馈、检测缺口、文档示例、翻译改进，或 DSH plugin 安装反馈。保留的 OpenClaw / Hermes 集成反馈也会被接受。
 
+- [Local Run Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=local-run-feedback.yml)
 - [Detector Gap](https://github.com/toby-bridges/api-relay-audit/issues/new?template=detector-gap.yml)
 - [Documentation Example](https://github.com/toby-bridges/api-relay-audit/issues/new?template=documentation-example.yml)
-- [Agent Skill Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=agent-skill-feedback.yml)
+- [DSH Plugin Feedback](https://github.com/toby-bridges/api-relay-audit/issues/new?template=agent-skill-feedback.yml)
+- [Community Evidence Guide](./docs/community-evidence.md)
 
 请不要提交真实 API Key、私有中转站流量、钱包材料或未脱敏审计报告。
 

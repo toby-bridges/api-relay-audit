@@ -1,7 +1,7 @@
 ---
 name: api-relay-audit
 description: Use when auditing third-party AI API relays, LLM proxies, gateways, or API-key resale services locally before trusting coding, tool, production, or wallet-sensitive traffic.
-version: 2.3.0
+version: 2.4.0
 author: Toby Bridges
 license: AGPL-3.0-only
 platforms: [linux, macos, windows]
@@ -94,7 +94,7 @@ MODEL="${API_RELAY_AUDIT_MODEL:-claude-opus-4-6}"
 PROFILE="${API_RELAY_AUDIT_PROFILE:-general}"
 WORKDIR="$(mktemp -d)"
 REPORT="$PWD/api-relay-audit-report.md"
-AUDIT_SCRIPT_REF=v2.3.0
+AUDIT_SCRIPT_REF=v2.4.0
 
 curl -fsSL \
   "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" \
@@ -149,7 +149,7 @@ Warn the user before enabling `--aggressive-error-probes` because oversized prob
 | 7 | Context length | Canary-based truncation detection. |
 | 8 | Tool-call substitution | Package-install command rewriting, AC-1.a. |
 | 9 | Error leakage | Credential, header, stack trace, path, and internal-field leakage. |
-| 10 | Stream integrity | SSE event whitelist, usage monotonicity, signatures, and stream model identity. |
+| 10 | Stream integrity | SSE event whitelist, usage monotonicity, signatures, terminal `message_stop` completeness, and stream model identity. |
 | 11 | Web3 prompt injection | Wallet-safety refusal probes, profile-gated. |
 | 12 | Infrastructure fingerprint | Known relay framework signatures, informational only. |
 | 13 | Latency variance | Bimodal or unstable routing hints, informational only. |
