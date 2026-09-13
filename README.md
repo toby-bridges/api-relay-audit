@@ -62,7 +62,7 @@ python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report
 See a public-safe fixture report: [sanitized audit report](./docs/examples/sanitized-audit-report.md).
 Use `master` as `AUDIT_SCRIPT_REF` only when intentionally testing unreleased changes.
 
-> If API Relay Audit helps you evaluate a relay before sending real traffic, [star the repository](https://github.com/toby-bridges/api-relay-audit) to follow new detector coverage and release-tested updates.
+> [Star the repository](https://github.com/toby-bridges/api-relay-audit) to bookmark it for your next relay audit.
 
 ## When to Use It
 

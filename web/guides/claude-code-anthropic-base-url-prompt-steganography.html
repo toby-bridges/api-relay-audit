@@ -19,7 +19,7 @@
 <style>
 h1{overflow-wrap:anywhere}
 .title-code{white-space:normal;word-break:break-all}
-@media(max-width:640px){.title-code{display:block;font-size:.82em;line-height:1.2}.title-comma{display:none}}
+@media(max-width:640px){.title-code{display:block;font-size:1.125rem;line-height:1.4;word-break:normal}.title-comma{display:none}}
 </style>
 <script type="application/ld+json">
 {
@@ -30,8 +30,7 @@ h1{overflow-wrap:anywhere}
       "@id": "https://toby-bridges.github.io/api-relay-audit/guides/claude-code-anthropic-base-url-prompt-steganography.html#article",
       "headline": "Claude Code, ANTHROPIC_BASE_URL, and Prompt Steganography: How to Audit AI API Relays",
       "description": "What reported Claude Code prompt steganography means for ANTHROPIC_BASE_URL users, how to audit an AI API relay locally, and what the audit cannot prove.",
-      "datePublished": "2026-07-24",
-      "dateModified": "2026-07-24",
+      "dateModified": "2026-09-13",
       "mainEntityOfPage": "https://toby-bridges.github.io/api-relay-audit/guides/claude-code-anthropic-base-url-prompt-steganography.html",
       "image": "https://toby-bridges.github.io/api-relay-audit/assets/social-preview.png",
       "author": {
@@ -110,7 +109,7 @@ h1{overflow-wrap:anywhere}
     <li>If your question is specifically about client-side markers, capture and compare raw outbound requests in an authorized test environment. That requires client or network instrumentation outside API Relay Audit.</li>
   </ol>
 
-  <pre class="code"><code>AUDIT_SCRIPT_REF=v2.3.0
+  <pre class="code"><code>AUDIT_SCRIPT_REF=v2.4.0
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 python audit.py --key &lt;YOUR_KEY&gt; --url &lt;ANTHROPIC_BASE_URL&gt; --output claude-code-relay-audit.md</code></pre>
 
@@ -147,7 +146,7 @@ python audit.py --key &lt;YOUR_KEY&gt; --url &lt;ANTHROPIC_BASE_URL&gt; --output
     <li><a href="https://arxiv.org/abs/2604.08407">Liu et al.: Your Agent Is Mine - malicious intermediary attacks on the LLM supply chain</a></li>
   </ul>
 
-  <div class="cta"><a class="button primary" href="https://github.com/toby-bridges/api-relay-audit">View API Relay Audit on GitHub</a><a class="button" href="audit-claude-api-relay-safely.html">Read the Claude relay audit guide</a></div>
+  <div class="cta" data-cta-placement="guide-end"><a class="button primary" href="https://github.com/toby-bridges/api-relay-audit#quick-start" data-cta="run-locally">Run locally on GitHub</a><a class="star-link" href="https://github.com/toby-bridges/api-relay-audit" data-cta="star">Star for your next relay audit</a></div>
 </main>
 <footer><div class="wrap">Related: <a href="detect-prompt-injection-llm-api-proxies.html">prompt injection in LLM proxies</a> &middot; <a href="what-is-ai-api-relay-proxy.html">what is an AI API relay?</a></div></footer>
 </body>
