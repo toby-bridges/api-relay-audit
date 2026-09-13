@@ -202,6 +202,10 @@ section:first-of-type{padding-top:100px}
 .demo-flags{padding:0 28px 24px;display:flex;flex-wrap:wrap;gap:8px}
 .flag{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.18);color:#fca5a5;padding:5px 12px;border-radius:6px;font-size:.78rem}
 .demo-note{text-align:center;color:var(--text3);font-size:.78rem;margin-top:16px}
+.demo-cta{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:16px;margin:24px 0 40px;text-align:center}
+.demo-cta .btn{max-width:100%;white-space:normal}
+.demo-cta .star-link{font-size:.9rem;color:var(--accent2);text-decoration:none}
+.demo-cta .star-link:hover{text-decoration:underline}
 
 /* ── How it works ── */
 .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:32px}
@@ -610,6 +614,10 @@ footer a:hover{color:var(--text)}
 
   <div id="demo-cards"></div>
   <p class="demo-note" data-i18n="demo_note">Domain names and sensitive details redacted; examples preserve the report shape without publishing raw relay traffic.</p>
+  <div class="demo-cta" data-cta-placement="after-demo">
+    <a class="btn btn-primary" href="https://github.com/toby-bridges/api-relay-audit#quick-start" data-cta="run-locally" data-i18n="cta_github_run">Run locally on GitHub</a>
+    <a class="star-link" href="https://github.com/toby-bridges/api-relay-audit" data-cta="star" data-i18n="cta_github_star">Star for your next relay audit</a>
+  </div>
 </section>
 
 <!-- ── How It Works ── -->
@@ -706,6 +714,10 @@ footer a:hover{color:var(--text)}
     <a class="guide-card" href="guides/audit-claude-api-relay-safely.html">
       <h3>How to audit a Claude API relay safely</h3>
       <p>Run a local audit without adding another API-key trust hop.</p>
+    </a>
+    <a class="guide-card" href="guides/claude-code-anthropic-base-url-prompt-steganography.html">
+      <h3>Claude Code, ANTHROPIC_BASE_URL, and prompt steganography</h3>
+      <p>Separate reported client markers from relay behavior, then audit the gateway trust boundary.</p>
     </a>
     <a class="guide-card" href="guides/compare-api-relay-audit-hvoy-cctest.html">
       <h3>api-relay-audit vs hvoy.ai vs cctest.ai</h3>
@@ -1034,6 +1046,8 @@ function copyCmdOutput(){
 let currentLang='en';
 const i18n={
   zh:{
+    cta_github_run:"前往 GitHub，在本地运行",
+    cta_github_star:"Star 收藏，下次审计时再用",
     nav_demo:"Demo",nav_install:"快速开始",nav_faq:"FAQ",
     hero_badge:"本地运行 — API Key 只发送到你指定的中转站 URL",
     hero_title:'<span class="gradient">AI API 中转站</span>安全审计',
@@ -1136,6 +1150,8 @@ const i18n={
     footer_threat:"威胁模型: "
   },
   en:{
+    cta_github_run:"Run locally on GitHub",
+    cta_github_star:"Star for your next relay audit",
     nav_demo:"Demo",nav_install:"Quick Start",nav_faq:"FAQ",
     hero_badge:"Local execution — your API key is sent only to the relay URL you choose",
     hero_title:'<span class="gradient">AI API Relay</span> Security Audit',

@@ -62,7 +62,7 @@ python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report
 See a public-safe fixture report: [sanitized audit report](./docs/examples/sanitized-audit-report.md).
 Use `master` as `AUDIT_SCRIPT_REF` only when intentionally testing unreleased changes.
 
-> If API Relay Audit helps you evaluate a relay before sending real traffic, [star the repository](https://github.com/toby-bridges/api-relay-audit) to follow new detector coverage and release-tested updates.
+> [Star the repository](https://github.com/toby-bridges/api-relay-audit) to bookmark it for your next relay audit.
 
 ## When to Use It
 
@@ -210,6 +210,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
   [Claude relay audit](https://toby-bridges.github.io/api-relay-audit/guides/audit-claude-api-relay-safely.html),
   [tool comparison](https://toby-bridges.github.io/api-relay-audit/guides/compare-api-relay-audit-hvoy-cctest.html),
   [prompt injection in proxies](https://toby-bridges.github.io/api-relay-audit/guides/detect-prompt-injection-llm-api-proxies.html),
+  [Claude Code gateway prompt steganography](https://toby-bridges.github.io/api-relay-audit/guides/claude-code-anthropic-base-url-prompt-steganography.html),
   [Web3 wallet prompt injection](https://toby-bridges.github.io/api-relay-audit/guides/web3-wallet-prompt-injection-ai-agents.html),
   [DeepSeek Harness plugin](https://toby-bridges.github.io/api-relay-audit/guides/deepseek-harness-plugin-api-relay-audit.html)
 - Contributors / Credits: [CONTRIBUTORS.md](./CONTRIBUTORS.md)

@@ -34,6 +34,9 @@ th,td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;co
 th{color:var(--text);font-size:.85rem}
 tr:last-child td{border-bottom:0}
 .cta{display:flex;gap:12px;flex-wrap:wrap;margin:26px 0}
+.cta[data-cta-placement="guide-end"]{align-items:center}
+.cta .button{max-width:100%;text-align:center;overflow-wrap:anywhere}
+.cta .star-link{font-size:.9rem}
 .button{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;padding:10px 16px;color:var(--text);font-weight:700}
 .button.primary{background:#2563eb;border-color:#2563eb}
 footer{border-top:1px solid var(--border);padding:26px 0;color:var(--soft);font-size:.86rem}

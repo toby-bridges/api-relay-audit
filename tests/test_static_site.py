@@ -1,6 +1,7 @@
 """Regression checks for the GitHub Pages static site."""
 
 import json
+import re
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -10,6 +11,7 @@ import xml.etree.ElementTree as ET
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = REPO_ROOT / "web"
 PAGES_BASE = "https://toby-bridges.github.io/api-relay-audit/"
+GITHUB_REPO = "https://github.com/toby-bridges/api-relay-audit"
 
 
 class SiteParser(HTMLParser):
@@ -22,9 +24,17 @@ class SiteParser(HTMLParser):
         self.json_ld = []
         self._in_json_ld = False
         self._json_ld_parts = []
+        self.elements = []
+        self._ancestors = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        self.elements.append((tag, attrs, tuple(self._ancestors)))
+        if tag not in {
+            "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr",
+        }:
+            self._ancestors.append((tag, attrs))
         if "id" in attrs:
             self.ids.add(attrs["id"])
         for key in ("href", "src"):
@@ -43,6 +53,10 @@ class SiteParser(HTMLParser):
             self._json_ld_parts.append(data)
 
     def handle_endtag(self, tag):
+        for index in range(len(self._ancestors) - 1, -1, -1):
+            if self._ancestors[index][0] == tag:
+                del self._ancestors[index:]
+                break
         if tag == "script" and self._in_json_ld:
             self.json_ld.append("".join(self._json_ld_parts))
             self._in_json_ld = False
@@ -89,6 +103,43 @@ def test_all_pages_parse_and_json_ld_is_valid():
         parser = _parse_html(path)
         for item in parser.json_ld:
             json.loads(item)
+        if path.parent == WEB_ROOT / "guides":
+            _assert_conversion_links(parser, "guide-end", path)
+            assert any(
+                tag == "a" and attrs.get("href") == GITHUB_REPO
+                and any(parent == "header" for parent, _ in ancestors)
+                for tag, attrs, ancestors in parser.elements
+            ), f"{path}: missing header GitHub link"
+        elif path == WEB_ROOT / "index.html":
+            _assert_conversion_links(parser, "after-demo", path)
+
+
+def _assert_conversion_links(parser, placement, path):
+    containers = [
+        (attrs, ancestors) for tag, attrs, ancestors in parser.elements
+        if attrs.get("data-cta-placement") == placement
+    ]
+    assert len(containers) == 1, f"{path}: expected one {placement} CTA"
+    if placement == "after-demo":
+        assert any(attrs.get("id") == "demo" for _, attrs in containers[0][1])
+    else:
+        assert any(tag == "main" for tag, _ in containers[0][1])
+    links = [
+        attrs for tag, attrs, ancestors in parser.elements
+        if tag == "a" and any(
+            parent_attrs.get("data-cta-placement") == placement
+            for _, parent_attrs in ancestors
+        )
+    ]
+    legacy = path.name == "openclaw-hermes-skill-api-relay-audit.html"
+    assert [(link.get("data-cta"), link.get("href")) for link in links] == [
+        ("retained-files", GITHUB_REPO + "/blob/master/SKILL.md") if legacy
+        else ("run-locally", GITHUB_REPO + "#quick-start"),
+        ("star", GITHUB_REPO),
+    ], f"{path}: missing or duplicated run/Star links"
+    assert sum(
+        attrs.get("data-cta") == "star" for _, attrs, _ in parser.elements
+    ) == 1, f"{path}: repeated Star CTA"
 
 
 def test_relative_links_and_fragments_resolve():
@@ -165,3 +216,12 @@ def test_release_copy_avoids_stale_numeric_and_key_flow_claims():
     ]
     for phrase in forbidden:
         assert phrase not in public_text
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert readme.lower().count("[star the repository]") == 1
+    assert readme.index("[Star the repository]") > readme.index("## Quick Start")
+    guide = (WEB_ROOT / "guides" / (
+        "claude-code-anthropic-base-url-prompt-steganography.html"
+    )).read_text(encoding="utf-8")
+    assert re.search(r"AUDIT_SCRIPT_REF=v\d+\.\d+\.\d+\b", guide)
+    assert "has not independently reproduced" in guide
+    assert "does not inspect the Claude Code binary" in guide
