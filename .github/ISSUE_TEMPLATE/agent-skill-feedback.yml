@@ -29,7 +29,7 @@ body:
       label: Command Used
       description: Paste the install or run command after removing secrets.
       placeholder: |
-        dsh plugin --profile web add "github:toby-bridges/api-relay-audit#v2.4.0"
+        dsh plugin --profile web add "github:toby-bridges/api-relay-audit#v2.4.1"
     validations:
       required: true
 

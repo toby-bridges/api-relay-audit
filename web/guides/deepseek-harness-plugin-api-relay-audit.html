@@ -13,13 +13,13 @@
 <main class="wrap">
   <div class="eyebrow">DeepSeek Harness Plugin</div>
   <h1>Run API relay audits from DeepSeek Harness</h1>
-  <p class="lead">The v2.4.0 DSH bundle registers <code>/relay-audit</code> on compatible web and cc-tui profiles and reuses the selected route. This adapter currently requires the selected model route to declare Claude.</p>
+  <p class="lead">The v2.4.1 DSH bundle registers <code>/relay-audit</code> on compatible web and cc-tui profiles and reuses the selected route. This adapter currently requires the selected model route to declare Claude.</p>
 
   <section class="note">API Relay Audit does not certify that a relay is safe. Results remain local evidence with explicit clean, anomaly, and inconclusive states.</section>
 
   <h2>Install the immutable release</h2>
-  <p>This installation path was verified with DSH <code>0.1.0-rc.6</code> and <code>dsh-cc-tui</code> <code>0.4.1</code>. Compatibility with newer DSH releases is being rechecked; use an isolated profile before upgrading.</p>
-  <pre class="code"><code>DSH_PLUGIN_REF=v2.4.0
+  <p>Official rc.6 Web and <code>dsh-cc-tui</code> <code>0.4.1</code> composition passed in CI. Isolated Web installs, boot, and installed-handler connectivity passed on DSH <code>0.1.7-rc.2</code> and <code>0.2.0-rc.2</code>. Interactive command rendering and Desktop profiles remain unverified; start with an isolated profile.</p>
+  <pre class="code"><code>DSH_PLUGIN_REF=v2.4.1
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"</code></pre>
 
@@ -39,13 +39,13 @@ dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGI
     <li>The plugin requires the DSH profile loader and <code>@deepseek-ai/dsh-commands</code> registry.</li>
     <li>The selected route must identify as Claude; current identity and stream baselines are Claude-specific.</li>
     <li>The DSH adapter resolves the credential on every invocation and passes it to the audit process through <code>API_RELAY_AUDIT_KEY</code>, not that process's argv.</li>
-    <li>In the pinned v2.4.0 release, error-probe and streaming curl requests can still put the key in curl process arguments while they run. The correction in development is not included in that release tag.</li>
+    <li>v2.4.1 passes error-probe and streaming curl credential headers through curl config stdin. The older v2.4.0 release can put the key in curl process arguments while those requests run.</li>
     <li>Reports are written under the current session workspace by default.</li>
   </ul>
 
   <h2>Evidence scope</h2>
-  <p>The plugin preserves separate API relay audit, prompt injection audit, model substitution signals, and Web3 relay audit query families. Model identity is a consistency signal, not standalone provider proof. The v2.4.0 release was installed in isolated web and cc-tui profiles and passed fake-relay connectivity and secret-sentinel scans for connectivity mode; that evidence does not cover the full audit.</p>
-  <p>Review the exact tool versions, commit resolution, standalone hash, and test boundary in the <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/distribution-verification-v2.4.0.md">v2.4.0 distribution verification</a>.</p>
+  <p>The plugin preserves separate API relay audit, prompt injection audit, model substitution signals, and Web3 relay audit query families. Model identity is a consistency signal, not standalone provider proof. The v2.4.1 host checks covered connectivity mode against a local fixture; they do not cover a full audit or an interactive Web session.</p>
+  <p>Review the change and test boundary in the <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/releases/v2.4.1.md">v2.4.1 release notes</a>. The <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/distribution-verification-v2.4.0.md">v2.4.0 distribution verification</a> remains historical evidence for that tag.</p>
 </main>
 <footer><div class="wrap">Related: <a href="audit-claude-api-relay-safely.html">audit a Claude API relay safely</a> · <a href="detect-prompt-injection-llm-api-proxies.html">prompt injection in LLM proxies</a></div></footer>
 </body>
