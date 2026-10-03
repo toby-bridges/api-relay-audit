@@ -127,8 +127,8 @@ dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGI
 
 The command reuses the current DSH provider's `baseURL`, model, and credential
 reference. The credential stays in DSH Credentials and is delivered to the
-local audit process through an environment variable, never through command
-arguments or the session log:
+local audit process through an environment variable, keeping it out of the
+plugin command input, the audit process arguments, and the session log:
 
 ```text
 /relay-audit
@@ -141,6 +141,10 @@ No arguments preserves the existing full-audit default and may consume
 metered tokens. Use `--connectivity` for a lower-cost check. This distribution
 does not add a new model baseline: the selected route must identify as Claude,
 although the relay API itself may be Anthropic-compatible or OpenAI-compatible.
+The pinned `v2.4.0` release has a narrower credential guarantee: its error
+probe and streaming curl paths can put the key in the curl process arguments
+while those requests run. Treat the local process list as sensitive when using
+that tag; a correction is in development and is not part of `v2.4.0`.
 Independent wrappers without DSH profiles and the DSH command registry are not
 compatible with this bundle. See [agent distribution notes](./docs/skill-distribution.md).
 The exact v2.4.0 installation, runtime, and secret-scan results are recorded in
@@ -351,8 +355,8 @@ dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGI
 ```
 
 插件默认复用当前 DSH provider 的 `baseURL`、model 和 credential reference；
-真实 API Key 只从 DSH Credentials 解析，并通过子进程环境变量传递，不进入命令
-参数或会话日志。
+真实 API Key 只从 DSH Credentials 解析，通过环境变量传给审计进程，不进入插件
+命令输入、审计进程参数或会话日志。
 
 ```text
 /relay-audit
@@ -365,6 +369,8 @@ dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGI
 `--connectivity`。插件不增加新的模型基线：中转接口可以兼容 Anthropic 或
 OpenAI，但被审计线路必须明确为 Claude。没有 DSH profile/plugin 机制的独立
 wrapper 不在兼容范围内。
+固定安装的 `v2.4.0` 版本仍有一项本地边界：错误探针和流式请求使用 curl 时，
+Key 可能短暂出现在 curl 进程参数中；正在开发的修复尚不属于该发布标签。
 
 ## 保留的 Agent Skill 文件
 

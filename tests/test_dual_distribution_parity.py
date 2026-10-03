@@ -974,16 +974,49 @@ def test_standalone_get_models_bypasses_proxy_for_loopback(monkeypatch):
     ) == ["--noproxy", "localhost,127.0.0.1,::1"]
 
 
+def test_standalone_raw_request_keeps_secret_out_of_argv(monkeypatch):
+    """The generated curl fallback protects credentials on error probes."""
+    from pathlib import Path
+
+    standalone = _load_standalone_audit()
+    captured = {}
+
+    class FakeRunResult:
+        returncode = 0
+        stdout = b"HTTP/1.1 400 Bad Request\r\n\r\nbad request"
+        stderr = b""
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["config"] = kwargs["input"]
+        captured["body_path"] = Path(cmd[cmd.index("--data-binary") + 1][1:])
+        assert captured["body_path"].read_bytes() == b"broken"
+        return FakeRunResult()
+
+    monkeypatch.setattr(standalone.subprocess, "run", fake_run)
+    client = standalone.APIClient(
+        "https://relay.example.com", "sk-test", "claude-opus-4-6", verbose=False,
+    )
+    result = client.raw_request(
+        "POST", "/v1/messages", {"x-api-key": "sk-test"}, b"broken",
+    )
+
+    assert result["status"] == 400
+    assert "sk-test" not in " ".join(captured["cmd"])
+    assert b"x-api-key: sk-test" in captured["config"]
+    assert not captured["body_path"].exists()
+
+
 def test_standalone_stream_bypasses_proxy_for_loopback(monkeypatch):
     """Standalone SSE curl path uses the same loopback proxy bypass facade."""
     from io import BytesIO
     from unittest.mock import MagicMock
 
     standalone = _load_standalone_audit()
-    captured_cmds = []
+    captured = {}
 
     def fake_popen(cmd, *args, **kwargs):
-        captured_cmds.append(cmd)
+        captured["cmd"] = cmd
         proc = MagicMock()
         proc.stdin = MagicMock()
         proc.stdout = BytesIO(
@@ -994,6 +1027,7 @@ def test_standalone_stream_bypasses_proxy_for_loopback(monkeypatch):
         proc.stderr = BytesIO(b"")
         proc.wait = MagicMock(return_value=None)
         proc.returncode = 0
+        captured["proc"] = proc
         return proc
 
     monkeypatch.setattr(standalone.subprocess, "Popen", fake_popen)
@@ -1008,6 +1042,9 @@ def test_standalone_stream_bypasses_proxy_for_loopback(monkeypatch):
     signals = client.stream_call([{"role": "user", "content": "hi"}])
 
     assert signals.transport_error is None
-    cmd = captured_cmds[0]
+    cmd = captured["cmd"]
     assert "--noproxy" in cmd
     assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+    assert "sk-test" not in " ".join(cmd)
+    assert cmd[cmd.index("--config") + 1] == "-"
+    assert b"x-api-key: sk-test" in captured["proc"].stdin.write.call_args.args[0]

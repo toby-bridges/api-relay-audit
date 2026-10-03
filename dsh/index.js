@@ -31,8 +31,10 @@ const AUDIT_SCRIPT = fileURLToPath(new URL('../audit.py', import.meta.url))
 
 const USAGE = `Usage: /relay-audit [audit options]
 
-Defaults to the current DSH provider/model and runs the full existing audit.
-Use --connectivity for the lower-cost connectivity check.
+Uses the current DSH provider/model. This DSH adapter currently accepts only
+routes declaring a Claude model; other routes are refused before any probe.
+No options runs the full audit and may consume metered tokens.
+Use --connectivity first for the lower-cost connectivity check.
 
 Target overrides:
   --url <URL>
@@ -189,7 +191,12 @@ function configuredProviderProfile(ctx, provider) {
   const directory = ctx.llm.listConfigurableProviders()
   const entry = directory.find(candidate => candidate.provider === provider)
   if (entry === undefined) return undefined
-  const section = ctx.settings.get(entry.settingsNs)
+  // DSH rc.6 exposes get(); newer hosts expose only form descriptors.
+  // Request a redacted view so a target lookup never reads secret fields.
+  const section = typeof ctx.settings.get === 'function'
+    ? ctx.settings.get(entry.settingsNs)
+    : ctx.settings.describe?.({ redactSecrets: true })
+      .find(descriptor => descriptor.ns === entry.settingsNs)?.value
   const profile = atPath(section, entry.settingsPath)
   return isRecord(profile) ? profile : undefined
 }
