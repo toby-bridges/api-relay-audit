@@ -6,7 +6,9 @@ Eliminates duplicated API calling logic across scripts.
 
 import hashlib
 import json
+import os
 import subprocess
+import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -847,7 +849,8 @@ class APIClient:
                          hasher=None) -> None:
         """Curl branch of :meth:`stream_call`. Uses ``curl -N --no-buffer``
         to disable curl's own output buffering so SSE events are streamed
-        to stdout as they arrive. The request body is piped via stdin.
+        to stdout as they arrive. Headers are piped through curl config stdin;
+        the request body is held in a private, short-lived file.
 
         Read stdout line-by-line so short SSE frames are yielded as soon
         as curl flushes them. Fixed in v1.8.2: ``read(4096)`` blocked
@@ -855,17 +858,20 @@ class APIClient:
         curl fallback behave like a buffered fetch instead of an
         incremental stream.
         """
-        cmd = [
-            "curl", "-sk", *_transport.curl_loopback_no_proxy_args(url),
-            "-N", "--no-buffer", "-X", "POST", url,
-            "--max-time", str(timeout),
-            "-w", f"\n{CURL_STATUS_SENTINEL}%{{http_code}}\n",
-            "--data-binary", "@-",
-        ]
-        for k, v in headers.items():
-            cmd.extend(["-H", f"{k}: {v}"])
-
+        body_path = None
         try:
+            with tempfile.NamedTemporaryFile(
+                "wb", delete=False, prefix="api-relay-body-", suffix=".json"
+            ) as body_file:
+                body_path = body_file.name
+                body_file.write(json.dumps(body).encode("utf-8"))
+            cmd = [
+                "curl", "-sk", *_transport.curl_loopback_no_proxy_args(url),
+                "-N", "--no-buffer", "-X", "POST", url,
+                "--max-time", str(timeout),
+                "-w", f"\n{CURL_STATUS_SENTINEL}%{{http_code}}\n",
+                "--config", "-", "--data-binary", f"@{body_path}",
+            ]
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -873,7 +879,7 @@ class APIClient:
                 stderr=subprocess.PIPE,
             )
             try:
-                proc.stdin.write(json.dumps(body).encode("utf-8"))
+                proc.stdin.write(_transport.curl_header_config(headers).encode("utf-8"))
                 proc.stdin.close()
             except (BrokenPipeError, OSError):
                 # Curl already died (e.g. SSL handshake failed); let the
@@ -938,3 +944,9 @@ class APIClient:
         except Exception as e:
             if signals.transport_error is None:
                 signals.transport_error = str(e)
+        finally:
+            if body_path is not None:
+                try:
+                    os.unlink(body_path)
+                except OSError:
+                    pass
