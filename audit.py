@@ -4,16 +4,16 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: a4dd8490b3585f8f87fa3c4b8136cc58f254523834b054c05a202fc5936891d9
-# standalone_body_sha256: 78fb78234bbd1dec8a6e408c4a6b116a1ca981496649bec676813c9abbf7e2ec
+# source_sha256: f417c8c803fae63ff8d9596c0b24709bf567a0d5f31b8f64bc863b1dfc8d2935
+# standalone_body_sha256: 8bd22bee093438170e32ced47fa82ba4fe77db345da34b9ff23b530dcc9c5351
 # END GENERATED STANDALONE HEADER
 
 """
-API Relay Security Audit Tool v2.4 --- Standalone Edition
+API Relay Security Audit Tool v2.4.1 --- Standalone Edition
 
 Generated curl-only artifact for users who want:
 
-  AUDIT_SCRIPT_REF=v2.4.0
+  AUDIT_SCRIPT_REF=v2.4.1
   curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
   python audit.py --key YOUR_KEY --url https://relay.example.com/v1
 
@@ -4920,7 +4920,7 @@ def run_channel_classifier(client):
 # ============================================================
 
 """
-API Relay Security Audit Tool v2.4
+API Relay Security Audit Tool v2.4.1
 
 Full 14-step audit: infrastructure recon, model list, token injection,
 prompt extraction, instruction conflict + identity, jailbreak, context
@@ -4953,7 +4953,7 @@ from urllib.request import Request, urlopen
 
 
 
-TOOL_VERSION_FALLBACK = "2.4.0"
+TOOL_VERSION_FALLBACK = "2.4.1"
 
 
 def _api_relay_audit_checkout_root(script_path):

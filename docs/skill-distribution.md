@@ -14,8 +14,8 @@ safety claim.
 
 All retained integration files must stay aligned with the current audit surface:
 
-- version `2.4.0`
-- audit script ref `v2.4.0`
+- version `2.4.1`
+- audit script ref `v2.4.1`
 - 14 audit steps
 - local-first execution
 - API key not repeated in chat, logs, filenames, or public comments
@@ -37,32 +37,34 @@ allowlist. Install an immutable repository revision into each intended
 profile:
 
 ```bash
-DSH_PLUGIN_REF=v2.4.0
+DSH_PLUGIN_REF=v2.4.1
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 ```
 
 Compatibility contract:
 
-- tested with DSH `0.1.0-rc.6` and `dsh-cc-tui` `0.4.1`;
+- official rc.6 Web and `dsh-cc-tui` `0.4.1` composition passed in CI;
+- isolated DSH `0.1.7-rc.2` and `0.2.0-rc.2` Web profile install, boot,
+  and installed-handler connectivity checks passed;
 - requires the DSH profile/bundle loader and `@deepseek-ai/dsh-commands`;
 - resolves `baseURL`, model, and `apiKeyEnv` from the current configurable
   provider, with explicit command overrides for missing facts;
 - resolves the credential per invocation and keeps the value out of the DSH
-  command input and the launched audit process argv; the pinned `v2.4.0` tag
-  can still place it in curl process argv during error and stream probes;
+  command input, audit process argv, and curl process argv; the older
+  `v2.4.0` tag can still place it in curl process argv during error and stream
+  probes;
 - accepts Claude routes over either Anthropic-compatible or OpenAI-compatible
   APIs, but refuses non-Claude model families because the current identity and
   stream-integrity baselines are Claude-specific;
 - writes reports under the current session workspace by default.
 
-The unreleased source tree also accepts the exact DSH `0.1.7-rc.2` and
-`0.2.0-rc.2` peer versions. Isolated Web profiles installed and booted with
-both versions. A minimal service harness invoked each installed bundle's
-command handler and completed a two-format connectivity check against a local
-fixture. Interactive command rendering and Desktop profiles have not been
-verified. The immutable `v2.4.0` tag still has the rc.6-only peer declaration
-and does not contain this adaptation.
+The `v2.4.1` source accepts only the three exact DSH peer versions listed
+above. A minimal service harness invoked each newer installed bundle's command
+handler and completed a two-format connectivity check against a local fixture.
+Interactive command rendering and Desktop profiles have not been verified. The
+immutable `v2.4.0` tag has only the rc.6 peer declaration and does not contain
+this adaptation.
 
 Post-install verification:
 
@@ -75,8 +77,10 @@ Both dumps must contain the `api-relay-audit` row. In a configured session,
 `/relay-audit --connectivity` should create a local Markdown report without
 placing the API key in the command input, result, process argv, or logs.
 
-The release-specific evidence is in
-[`distribution-verification-v2.4.0.md`](./distribution-verification-v2.4.0.md).
+The release scope and evidence limits are in
+[`releases/v2.4.1.md`](./releases/v2.4.1.md). The earlier
+[`distribution-verification-v2.4.0.md`](./distribution-verification-v2.4.0.md)
+documents the immutable prior tag.
 
 ## Non-Primary Integrations
 

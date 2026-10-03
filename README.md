@@ -50,7 +50,7 @@ is sent only to the relay URL you choose.
 ## Quick Start
 
 ```bash
-AUDIT_SCRIPT_REF=v2.4.0
+AUDIT_SCRIPT_REF=v2.4.1
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
@@ -118,7 +118,7 @@ community TUI surfaces that use the official `@deepseek-ai/dsh-commands`
 registry. Pin an immutable commit or release tag:
 
 ```bash
-DSH_PLUGIN_REF=v2.4.0
+DSH_PLUGIN_REF=v2.4.1
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 
 # dsh-cc-tui and other compatible profile-based clients
@@ -141,14 +141,16 @@ No arguments preserves the existing full-audit default and may consume
 metered tokens. Use `--connectivity` for a lower-cost check. This distribution
 does not add a new model baseline: the selected route must identify as Claude,
 although the relay API itself may be Anthropic-compatible or OpenAI-compatible.
-The pinned `v2.4.0` release has a narrower credential guarantee: its error
-probe and streaming curl paths can put the key in the curl process arguments
-while those requests run. Treat the local process list as sensitive when using
-that tag; a correction is in development and is not part of `v2.4.0`.
+The older `v2.4.0` release can put the key in curl process arguments during
+error probes and streaming fallback. `v2.4.1` passes those headers through
+curl config stdin instead. Treat the local process list as sensitive if you
+still run `v2.4.0`.
 Independent wrappers without DSH profiles and the DSH command registry are not
 compatible with this bundle. See [agent distribution notes](./docs/skill-distribution.md).
 The exact v2.4.0 installation, runtime, and secret-scan results are recorded in
 [the DSH distribution verification](./docs/distribution-verification-v2.4.0.md).
+For the updated host matrix and verification limits, see the
+[v2.4.1 release notes](./docs/releases/v2.4.1.md).
 
 ## Retained Agent Skill Files
 
@@ -197,10 +199,10 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 
 | Metric | Current value |
 |---|---:|
-| Version | `v2.4` |
+| Version | `v2.4.1` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
-| pytest collected tests | 808 |
+| pytest collected tests | 811 |
 | CLI flags | 22 |
 | Runtime profiles | `general`, `web3`, `full` |
 
@@ -326,7 +328,7 @@ to one behavior or document.
 ## 30 秒快速开始
 
 ```bash
-AUDIT_SCRIPT_REF=v2.4.0
+AUDIT_SCRIPT_REF=v2.4.1
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
@@ -349,7 +351,7 @@ Web，以及使用 `@deepseek-ai/dsh-commands` registry 的社区 TUI。安装�
 commit 或 release tag：
 
 ```bash
-DSH_PLUGIN_REF=v2.4.0
+DSH_PLUGIN_REF=v2.4.1
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 ```
@@ -369,8 +371,9 @@ dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGI
 `--connectivity`。插件不增加新的模型基线：中转接口可以兼容 Anthropic 或
 OpenAI，但被审计线路必须明确为 Claude。没有 DSH profile/plugin 机制的独立
 wrapper 不在兼容范围内。
-固定安装的 `v2.4.0` 版本仍有一项本地边界：错误探针和流式请求使用 curl 时，
-Key 可能短暂出现在 curl 进程参数中；正在开发的修复尚不属于该发布标签。
+旧版 `v2.4.0` 的错误探针和流式 curl 请求可能短暂把 Key 放进 curl 进程参数；
+`v2.4.1` 改为经 curl 配置标准输入传递这些请求头。仍使用旧版时，应把本机
+进程列表视为敏感信息。
 
 ## 保留的 Agent Skill 文件
 
@@ -417,10 +420,10 @@ registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 
 | 指标 | 当前值 |
 |---|---:|
-| 版本 | `v2.4` |
+| 版本 | `v2.4.1` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 808 |
+| pytest collected tests | 811 |
 | CLI flags | 22 |
 | Runtime profiles | `general`, `web3`, `full` |
 
