@@ -1,0 +1,66 @@
+[
+  {
+    "text": "你的 AI API 中转，真的只是在转发吗？",
+    "startMs": 400,
+    "endMs": 3950,
+    "timestampMs": 400,
+    "confidence": 1,
+    "pageBreakAfter": true
+  },
+  {
+    "text": "它可能注入隐藏提示、替换模型、截断上下文，",
+    "startMs": 4250,
+    "endMs": 9000,
+    "timestampMs": 4250,
+    "confidence": 1,
+    "pageBreakAfter": true
+  },
+  {
+    "text": "甚至改写工具调用。",
+    "startMs": 9150,
+    "endMs": 10900,
+    "timestampMs": 9150,
+    "confidence": 1,
+    "pageBreakAfter": true
+  },
+  {
+    "text": "API Relay Audit 在本地运行十四步审计，",
+    "startMs": 11200,
+    "endMs": 15500,
+    "timestampMs": 11200,
+    "confidence": 1,
+    "pageBreakAfter": true
+  },
+  {
+    "text": "不增加额外的密钥托管方，",
+    "startMs": 15800,
+    "endMs": 17850,
+    "timestampMs": 15800,
+    "confidence": 1,
+    "pageBreakAfter": true
+  },
+  {
+    "text": "并生成可复查的 Markdown 证据报告。",
+    "startMs": 18200,
+    "endMs": 21200,
+    "timestampMs": 18200,
+    "confidence": 1,
+    "pageBreakAfter": true
+  },
+  {
+    "text": "Clean、Anomaly、Inconclusive，清楚区分。",
+    "startMs": 21650,
+    "endMs": 25750,
+    "timestampMs": 21650,
+    "confidence": 1,
+    "pageBreakAfter": true
+  },
+  {
+    "text": "信任之前，先审计。",
+    "startMs": 26250,
+    "endMs": 28050,
+    "timestampMs": 26250,
+    "confidence": 1,
+    "pageBreakAfter": true
+  }
+]
