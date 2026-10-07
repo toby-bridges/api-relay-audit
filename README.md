@@ -64,6 +64,20 @@ Use `master` as `AUDIT_SCRIPT_REF` only when intentionally testing unreleased ch
 
 > If API Relay Audit helps you evaluate a relay before sending real traffic, [star the repository](https://github.com/toby-bridges/api-relay-audit) to follow new detector coverage and release-tested updates.
 
+## JSON Reports (Development Checkout)
+
+The development checkout also supports `--format json` for local automation:
+
+```bash
+python scripts/audit.py --key-env API_RELAY_AUDIT_KEY --url <BASE_URL> --format json --output report.json
+```
+
+Without `--output`, stdout contains one JSON document and progress goes to
+stderr. JSON preserves the existing final risk rating and full Markdown
+evidence; it does not sanitize the report for public sharing. This option is
+not in the pinned `v2.4.1` release above. See the [JSON schema and coverage
+boundaries](./docs/json-report.md).
+
 ## When to Use It
 
 - You use a third-party AI API relay, mirror, gateway, or LLM proxy.
@@ -202,8 +216,8 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 | Version | `v2.4.1` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
-| pytest collected tests | 811 |
-| CLI flags | 22 |
+| pytest collected tests | 863 |
+| CLI flags | 23 |
 | Runtime profiles | `general`, `web3`, `full` |
 
 ## Example Report And Live Page
@@ -423,8 +437,8 @@ registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 | 版本 | `v2.4.1` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 811 |
-| CLI flags | 22 |
+| pytest collected tests | 863 |
+| CLI flags | 23 |
 | Runtime profiles | `general`, `web3`, `full` |
 
 ## 如何贡献
