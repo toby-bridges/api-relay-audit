@@ -27,6 +27,23 @@ import {
 
 const SECRET = 'sk-dsh-secret-never-log'
 
+test('first-use help states the supported route and cost boundary', async () => {
+  const testHarness = harness({ rawInput: '--help' })
+  try {
+    const result = await executeAuditCommand(testHarness.invocation, testHarness.ctx)
+    assert.equal(result.kind, 'success')
+    assert.match(result.text, /currently accepts only/u)
+    assert.match(result.text, /routes declaring a Claude model/u)
+    assert.match(result.text, /other routes are refused before any probe/u)
+    assert.match(result.text, /full audit and may consume metered tokens/u)
+    assert.match(result.text, /--connectivity first/u)
+    assert.deepEqual(testHarness.calls.credentials, [])
+    assert.deepEqual(testHarness.calls.spawns, [])
+  } finally {
+    testHarness.cleanup()
+  }
+})
+
 function collected(text = '') {
   return {
     readFrom: () => ({ text, nextOffset: Buffer.byteLength(text), lossy: false }),
@@ -177,6 +194,39 @@ test('resolves nested DSH provider settings and partial overrides', async () => 
       url: 'https://override.example/v1',
       model: 'claude-opus-4-6',
       credentialRef: 'RELAY_API_KEY',
+    })
+  } finally {
+    testHarness.cleanup()
+  }
+})
+
+test('resolves newer DSH redacted settings descriptors', async () => {
+  const testHarness = harness()
+  const calls = []
+  testHarness.ctx.settings = {
+    describe: options => {
+      calls.push(options)
+      return [
+        { ns: 'other', value: { providers: { relay: { baseURL: 'https://wrong.example' } } } },
+        { ns: 'llm-pi-ai', value: {
+          providers: { relay: { baseURL: 'https://new.example/v1', apiKeyEnv: 'NEW_RELAY_KEY' } },
+        } },
+      ]
+    },
+  }
+  try {
+    const target = await resolveTarget(
+      testHarness.ctx,
+      testHarness.agent,
+      parseCommandInput(''),
+      testHarness.invocation.signal,
+    )
+    assert.deepEqual(calls, [{ redactSecrets: true }])
+    assert.deepEqual(target, {
+      provider: 'relay',
+      url: 'https://new.example/v1',
+      model: 'claude-opus-4-6',
+      credentialRef: 'NEW_RELAY_KEY',
     })
   } finally {
     testHarness.cleanup()
@@ -434,6 +484,8 @@ test('package metadata declares a prebuilt GitHub bundle without install hooks',
   assert.equal(manifest.scripts.build, undefined)
   assert.equal(manifest.files.includes('audit.py'), true)
   for (const [peer, range] of Object.entries(manifest.peerDependencies)) {
-    if (peer.startsWith('@deepseek-ai/dsh-')) assert.equal(range, '0.1.0-rc.6')
+    if (peer.startsWith('@deepseek-ai/dsh-')) {
+      assert.equal(range, '0.1.0-rc.6 || 0.1.7-rc.2 || 0.2.0-rc.2')
+    }
   }
 })

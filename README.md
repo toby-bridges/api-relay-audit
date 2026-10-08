@@ -1,7 +1,3 @@
-<p align="center">
-  <img alt="API Relay Audit - local AI API relay security audit with separate query families for relay audit, prompt injection audit, model substitution signals, and Web3 relay audit." src="./assets/readme-banner.png">
-</p>
-
 # API Relay Audit
 
 <p align="center">
@@ -19,22 +15,42 @@
   <a href="#deepseek-harness-dsh-plugin"><strong>DSH Plugin</strong></a>
 </p>
 
-## What Is API Relay Audit?
+## Your Agent Is Mine: what you can test locally
 
-API Relay Audit is a local security audit tool for AI API relays and LLM proxies. It keeps API relay audit, prompt injection audit, model substitution signals, and Web3 relay audit as separate query families so each result keeps a clean evidence boundary. Your API key is sent only to the relay URL you choose.
+[*Your Agent Is Mine*](https://arxiv.org/abs/2604.08407) documents malicious API
+relays injecting payloads and exfiltrating credentials.
+[Anthropic's September 10, 2026 report](https://www.anthropic.com/threat-intelligence-report-september-2026)
+describes fraudulent Claude resellers swapping models and harvesting credentials
+through their client tooling. In his
+[September 11 disclosure](https://x.com/shoucccc/status/2098169782541631871),
+co-author Chaofan Shou reports buying router data containing users' credentials.
 
-Use it when you rely on a third-party AI API relay, OpenAI-compatible proxy, Claude-compatible proxy, or Web3 agent workflow and want a repeatable Markdown report before trusting that relay with production or wallet-related traffic.
+API Relay Audit is an independent, local security audit tool for AI API relays
+and LLM proxies, informed by the paper. The current release checks observable
+relay behavior and generates a Markdown report covering:
 
-## AI API Relay Security Audit
+- **Prompt and context signals:** hidden prompt injection, instruction override,
+  and context truncation.
+- **Response integrity:** changes to pinned package-command text, error-response
+  leakage, and SSE stream anomalies.
+- **Reviewable findings:** per-step evidence and `LOW / MEDIUM / HIGH` summaries;
+  inconclusive probes remain visible.
 
-- **Detect relay tampering:** prompt injection, prompt extraction, identity consistency signals, context truncation, tool-call rewriting, error-response leakage, and SSE stream anomalies.
-- **Run locally:** the standalone `audit.py` uses only Python stdlib plus `curl`; your API key is sent only to the relay URL you choose.
-- **Produce reviewable evidence:** each run generates a structured Markdown report with per-step findings and a final `LOW / MEDIUM / HIGH` verdict.
+**See the output:** [example report (synthetic fixture)](./docs/examples/sanitized-audit-report.md)
+· **Try it:** [run a local audit](#quick-start)
+· [Coverage and limits](#what-it-does-not-claim)
+
+The standalone script uses Python's standard library plus `curl`. Your API key
+is sent only to the relay URL you choose.
+
+<p align="center">
+  <img alt="API Relay Audit - local AI API relay security audit with separate query families for relay audit, prompt injection audit, model substitution signals, and Web3 relay audit." src="./assets/readme-banner.png">
+</p>
 
 ## Quick Start
 
 ```bash
-AUDIT_SCRIPT_REF=v2.4.0
+AUDIT_SCRIPT_REF=v2.4.1
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
@@ -102,7 +118,7 @@ community TUI surfaces that use the official `@deepseek-ai/dsh-commands`
 registry. Pin an immutable commit or release tag:
 
 ```bash
-DSH_PLUGIN_REF=v2.4.0
+DSH_PLUGIN_REF=v2.4.1
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 
 # dsh-cc-tui and other compatible profile-based clients
@@ -111,8 +127,8 @@ dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGI
 
 The command reuses the current DSH provider's `baseURL`, model, and credential
 reference. The credential stays in DSH Credentials and is delivered to the
-local audit process through an environment variable, never through command
-arguments or the session log:
+local audit process through an environment variable, keeping it out of the
+plugin command input, the audit process arguments, and the session log:
 
 ```text
 /relay-audit
@@ -125,10 +141,16 @@ No arguments preserves the existing full-audit default and may consume
 metered tokens. Use `--connectivity` for a lower-cost check. This distribution
 does not add a new model baseline: the selected route must identify as Claude,
 although the relay API itself may be Anthropic-compatible or OpenAI-compatible.
+The older `v2.4.0` release can put the key in curl process arguments during
+error probes and streaming fallback. `v2.4.1` passes those headers through
+curl config stdin instead. Treat the local process list as sensitive if you
+still run `v2.4.0`.
 Independent wrappers without DSH profiles and the DSH command registry are not
 compatible with this bundle. See [agent distribution notes](./docs/skill-distribution.md).
 The exact v2.4.0 installation, runtime, and secret-scan results are recorded in
 [the DSH distribution verification](./docs/distribution-verification-v2.4.0.md).
+For the updated host matrix and verification limits, see the
+[v2.4.1 release notes](./docs/releases/v2.4.1.md).
 
 ## Retained Agent Skill Files
 
@@ -177,10 +199,10 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 
 | Metric | Current value |
 |---|---:|
-| Version | `v2.4` |
+| Version | `v2.4.1` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
-| pytest collected tests | 808 |
+| pytest collected tests | 831 |
 | CLI flags | 22 |
 | Runtime profiles | `general`, `web3`, `full` |
 
@@ -306,7 +328,7 @@ to one behavior or document.
 ## 30 秒快速开始
 
 ```bash
-AUDIT_SCRIPT_REF=v2.4.0
+AUDIT_SCRIPT_REF=v2.4.1
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
@@ -329,14 +351,14 @@ Web，以及使用 `@deepseek-ai/dsh-commands` registry 的社区 TUI。安装�
 commit 或 release tag：
 
 ```bash
-DSH_PLUGIN_REF=v2.4.0
+DSH_PLUGIN_REF=v2.4.1
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 ```
 
 插件默认复用当前 DSH provider 的 `baseURL`、model 和 credential reference；
-真实 API Key 只从 DSH Credentials 解析，并通过子进程环境变量传递，不进入命令
-参数或会话日志。
+真实 API Key 只从 DSH Credentials 解析，通过环境变量传给审计进程，不进入插件
+命令输入、审计进程参数或会话日志。
 
 ```text
 /relay-audit
@@ -349,6 +371,9 @@ dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGI
 `--connectivity`。插件不增加新的模型基线：中转接口可以兼容 Anthropic 或
 OpenAI，但被审计线路必须明确为 Claude。没有 DSH profile/plugin 机制的独立
 wrapper 不在兼容范围内。
+旧版 `v2.4.0` 的错误探针和流式 curl 请求可能短暂把 Key 放进 curl 进程参数；
+`v2.4.1` 改为经 curl 配置标准输入传递这些请求头。仍使用旧版时，应把本机
+进程列表视为敏感信息。
 
 ## 保留的 Agent Skill 文件
 
@@ -395,10 +420,10 @@ registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 
 | 指标 | 当前值 |
 |---|---:|
-| 版本 | `v2.4` |
+| 版本 | `v2.4.1` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 808 |
+| pytest collected tests | 831 |
 | CLI flags | 22 |
 | Runtime profiles | `general`, `web3`, `full` |
 
