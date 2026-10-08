@@ -119,17 +119,35 @@ class TestRender:
 
     @patch("api_relay_audit.reporter.datetime")
     def test_render_with_target_and_model(self, mock_dt, rpt):
-        mock_dt.now.return_value.strftime.return_value = "2026-03-30 12:00"
+        mock_dt.now.return_value.strftime.return_value = "2026-03-30T12:00:00Z"
         output = rpt.render(target_url="https://relay.test", model="claude-3")
         assert "`https://relay.test`" in output
         assert "`claude-3`" in output
 
     @patch("api_relay_audit.reporter.datetime")
+    def test_render_with_reproducibility_metadata(self, mock_dt, rpt):
+        mock_dt.now.return_value.strftime.return_value = "2026-03-30T12:00:00Z"
+        output = rpt.render(
+            target_url="https://relay.test",
+            model="claude-3",
+            tool_version="v2.3.0",
+            profile="full",
+            tool_commit="abc1234",
+        )
+        assert "**Generated**: 2026-03-30T12:00:00Z" in output
+        assert "**Tool Version**: `v2.3.0`" in output
+        assert "**Profile**: `full`" in output
+        assert "**Tool Commit**: `abc1234`" in output
+
+    @patch("api_relay_audit.reporter.datetime")
     def test_render_without_target_and_model(self, mock_dt, rpt):
-        mock_dt.now.return_value.strftime.return_value = "2026-03-30 12:00"
+        mock_dt.now.return_value.strftime.return_value = "2026-03-30T12:00:00Z"
         output = rpt.render()
         assert "**Target**" not in output
         assert "**Model**" not in output
+        assert "**Tool Version**" not in output
+        assert "**Profile**" not in output
+        assert "**Tool Commit**" not in output
 
     @patch("api_relay_audit.reporter.datetime")
     def test_render_includes_risk_summary(self, mock_dt, rpt):

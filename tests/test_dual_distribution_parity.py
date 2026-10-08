@@ -12,6 +12,7 @@ focused behavior/constant regression tests for public standalone semantics.
 """
 
 import ast
+import importlib.util
 import sys
 import re
 import subprocess
@@ -22,6 +23,58 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_audit_module(path, name):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _long_options(path):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_argument"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and node.args[0].value.startswith("--")
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "module_name"),
+    [
+        (REPO_ROOT / "scripts" / "audit.py", "modular_audit_no_abbrev"),
+        (REPO_ROOT / "audit.py", "standalone_audit_no_abbrev"),
+    ],
+)
+def test_all_long_option_abbreviations_are_rejected(path, module_name, monkeypatch, capsys):
+    module = _load_audit_module(path, module_name)
+    options = _long_options(path)
+    abbreviations = {
+        option[:length]
+        for option in options
+        for length in range(3, len(option))
+        if option[:length] not in options
+    }
+
+    for abbreviation in sorted(abbreviations):
+        for token in (abbreviation, f"{abbreviation}=value"):
+            monkeypatch.setattr(
+                sys,
+                "argv",
+                ["audit.py", "--key", "test-key", "--url", "https://example.invalid", token],
+            )
+            with pytest.raises(SystemExit) as exc_info:
+                module.parse_args()
+            assert exc_info.value.code == 2
+            assert "unrecognized arguments" in capsys.readouterr().err
 
 
 def test_standalone_artifact_generated_from_sources():
@@ -450,7 +503,97 @@ def test_public_help_flags_parity():
     modular_flags = _help_option_set(REPO_ROOT / "scripts" / "audit.py")
     standalone_flags = _help_option_set(REPO_ROOT / "audit.py")
     assert "--connectivity" in modular_flags
+    assert "--key-env" in modular_flags
     assert modular_flags == standalone_flags
+
+
+def test_api_key_cli_sources_are_safe_and_dual_distributed(monkeypatch, capsys):
+    """Both entrypoints accept exactly one API-key source without echoing it."""
+    import scripts.audit as modular
+
+    standalone = _load_standalone_audit()
+    secret = "sk-dsh-secret-must-not-appear"
+
+    for module in (modular, standalone):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key",
+                secret,
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        assert module.parse_args().key == secret
+
+        monkeypatch.setenv("API_RELAY_AUDIT_TEST_KEY", secret)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key-env",
+                "API_RELAY_AUDIT_TEST_KEY",
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        parsed = module.parse_args()
+        assert parsed.key == secret
+        assert parsed.key_env == "API_RELAY_AUDIT_TEST_KEY"
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key",
+                secret,
+                "--key-env",
+                "API_RELAY_AUDIT_TEST_KEY",
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        with pytest.raises(SystemExit) as conflict:
+            module.parse_args()
+        assert conflict.value.code == 2
+        assert secret not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_key_env_rejects_missing_or_empty_values_without_leaking(
+    monkeypatch, capsys, value
+):
+    import scripts.audit as modular
+
+    standalone = _load_standalone_audit()
+    name = "API_RELAY_AUDIT_EMPTY_TEST_KEY"
+    if value is None:
+        monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(name, value)
+
+    for module in (modular, standalone):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "audit.py",
+                "--key-env",
+                name,
+                "--url",
+                "https://relay.example.com/v1",
+            ],
+        )
+        with pytest.raises(SystemExit) as exc:
+            module.parse_args()
+        assert exc.value.code == 2
+        error = capsys.readouterr().err
+        assert name in error
+        assert "missing or empty" in error
 
 
 def test_profile_help_matches_current_14_step_contract():
@@ -831,16 +974,49 @@ def test_standalone_get_models_bypasses_proxy_for_loopback(monkeypatch):
     ) == ["--noproxy", "localhost,127.0.0.1,::1"]
 
 
+def test_standalone_raw_request_keeps_secret_out_of_argv(monkeypatch):
+    """The generated curl fallback protects credentials on error probes."""
+    from pathlib import Path
+
+    standalone = _load_standalone_audit()
+    captured = {}
+
+    class FakeRunResult:
+        returncode = 0
+        stdout = b"HTTP/1.1 400 Bad Request\r\n\r\nbad request"
+        stderr = b""
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["config"] = kwargs["input"]
+        captured["body_path"] = Path(cmd[cmd.index("--data-binary") + 1][1:])
+        assert captured["body_path"].read_bytes() == b"broken"
+        return FakeRunResult()
+
+    monkeypatch.setattr(standalone.subprocess, "run", fake_run)
+    client = standalone.APIClient(
+        "https://relay.example.com", "sk-test", "claude-opus-4-6", verbose=False,
+    )
+    result = client.raw_request(
+        "POST", "/v1/messages", {"x-api-key": "sk-test"}, b"broken",
+    )
+
+    assert result["status"] == 400
+    assert "sk-test" not in " ".join(captured["cmd"])
+    assert b"x-api-key: sk-test" in captured["config"]
+    assert not captured["body_path"].exists()
+
+
 def test_standalone_stream_bypasses_proxy_for_loopback(monkeypatch):
     """Standalone SSE curl path uses the same loopback proxy bypass facade."""
     from io import BytesIO
     from unittest.mock import MagicMock
 
     standalone = _load_standalone_audit()
-    captured_cmds = []
+    captured = {}
 
     def fake_popen(cmd, *args, **kwargs):
-        captured_cmds.append(cmd)
+        captured["cmd"] = cmd
         proc = MagicMock()
         proc.stdin = MagicMock()
         proc.stdout = BytesIO(
@@ -851,6 +1027,7 @@ def test_standalone_stream_bypasses_proxy_for_loopback(monkeypatch):
         proc.stderr = BytesIO(b"")
         proc.wait = MagicMock(return_value=None)
         proc.returncode = 0
+        captured["proc"] = proc
         return proc
 
     monkeypatch.setattr(standalone.subprocess, "Popen", fake_popen)
@@ -865,6 +1042,9 @@ def test_standalone_stream_bypasses_proxy_for_loopback(monkeypatch):
     signals = client.stream_call([{"role": "user", "content": "hi"}])
 
     assert signals.transport_error is None
-    cmd = captured_cmds[0]
+    cmd = captured["cmd"]
     assert "--noproxy" in cmd
     assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+    assert "sk-test" not in " ".join(cmd)
+    assert cmd[cmd.index("--config") + 1] == "-"
+    assert b"x-api-key: sk-test" in captured["proc"].stdin.write.call_args.args[0]

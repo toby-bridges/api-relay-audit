@@ -12,6 +12,7 @@ from api_relay_audit.stream_integrity import (
     KNOWN_SSE_EVENT_TYPES,
     MAX_UNKNOWN_EVENTS_REPORTED,
     StreamSignals,
+    _check_stream_complete,
     _check_stream_model,
     _check_usage_consistent,
     _check_usage_monotonic,
@@ -97,7 +98,7 @@ class TestAnalyzeStreamClean:
         """``content_block_stop`` is known and must not count as an
         anomaly. Regression guard — the v1 WebFetch summary missed it."""
         s = _make_clean_signals()
-        s.event_types.append("content_block_stop")
+        s.event_types.insert(-2, "content_block_stop")
         s.raw_event_count += 1
         result = analyze_stream(s)
         assert result["verdict"] == "clean"
@@ -208,6 +209,52 @@ class TestAnalyzeStreamAnomaly:
         assert result["stream_model_is_claude"] is False
         assert any("omitted message_start.message.model" in f for f in result["findings"])
 
+    def test_missing_message_stop_triggers_anomaly(self):
+        s = _make_clean_signals()
+        s.event_types.remove("message_stop")
+        s.has_message_stop = False
+        s.raw_event_count -= 1
+        result = analyze_stream(s)
+        assert result["verdict"] == "anomaly"
+        assert result["stream_complete"] is False
+        assert result["event_shape"] != "pass"
+        assert any("without message_stop" in finding for finding in result["findings"])
+
+    def test_duplicate_message_stop_triggers_anomaly(self):
+        s = _make_clean_signals()
+        s.event_types.append("message_stop")
+        s.raw_event_count += 1
+        result = analyze_stream(s)
+        assert result["verdict"] == "anomaly"
+        assert result["stream_complete"] is False
+        assert any("exactly once" in finding for finding in result["findings"])
+
+    def test_message_stop_before_start_triggers_anomaly(self):
+        s = _make_clean_signals()
+        s.event_types.remove("message_stop")
+        s.event_types.insert(0, "message_stop")
+        result = analyze_stream(s)
+        assert result["verdict"] == "anomaly"
+        assert result["stream_complete"] is False
+        assert any("before message_start" in finding for finding in result["findings"])
+
+    def test_non_ping_event_after_message_stop_triggers_anomaly(self):
+        s = _make_clean_signals()
+        s.event_types.append("message_delta")
+        s.raw_event_count += 1
+        result = analyze_stream(s)
+        assert result["verdict"] == "anomaly"
+        assert result["stream_complete"] is False
+        assert any("not final" in finding for finding in result["findings"])
+
+    def test_ping_after_message_stop_remains_clean(self):
+        s = _make_clean_signals()
+        s.event_types.append("ping")
+        s.raw_event_count += 1
+        result = analyze_stream(s)
+        assert result["verdict"] == "clean"
+        assert result["stream_complete"] is True
+
 
 # ---------------------------------------------------------------------------
 # Inconclusive verdicts
@@ -221,6 +268,7 @@ class TestAnalyzeStreamInconclusive:
         s.transport_error = "HTTP 422: unprocessable"
         result = analyze_stream(s)
         assert result["verdict"] == "inconclusive"
+        assert result["stream_complete"] is False
         assert any("transport error" in f.lower() for f in result["findings"])
 
     def test_zero_events_is_inconclusive(self):
@@ -258,7 +306,8 @@ class TestAnalyzeStreamInconclusive:
         for key in (
             "verdict", "event_shape", "unknown_events",
             "usage_monotonic", "usage_consistent", "signature_valid",
-            "stream_model_name", "stream_model_is_claude", "findings",
+            "stream_complete", "stream_model_name",
+            "stream_model_is_claude", "findings",
         ):
             assert key in result, f"Missing key {key} in inconclusive result"
 
@@ -269,6 +318,12 @@ class TestAnalyzeStreamInconclusive:
 
 
 class TestHelperFunctions:
+
+    def test_check_stream_complete_requires_terminal_message_stop(self):
+        s = _make_clean_signals()
+        assert _check_stream_complete(s) is True
+        s.event_types.remove("message_stop")
+        assert _check_stream_complete(s) is False
 
     def test_check_usage_monotonic_empty_list(self):
         s = StreamSignals()

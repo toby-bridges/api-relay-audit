@@ -4,16 +4,16 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 57cc4ddc3ccb3ed54e76e82dfc447c6e21322c2c03ab804625924e7ec655f245
-# standalone_body_sha256: 3adf747824d6eeb9df837a1e6ae8fd6fe5aa861c57b6a422b9367e52ee0c630f
+# source_sha256: e358ca612cbabfbeed859b5cfc9410fe7e6aef4b034b173e3ebd4590bd30e08a
+# standalone_body_sha256: b2d79a00aaed40158375581b95b06249e38dd984ce502de72233920a15a9c15a
 # END GENERATED STANDALONE HEADER
 
 """
-API Relay Security Audit Tool v2.3 --- Standalone Edition
+API Relay Security Audit Tool v2.4.1 --- Standalone Edition
 
 Generated curl-only artifact for users who want:
 
-  AUDIT_SCRIPT_REF=v2.3.0
+  AUDIT_SCRIPT_REF=v2.4.1
   curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
   python audit.py --key YOUR_KEY --url https://relay.example.com/v1
 
@@ -159,7 +159,7 @@ has something to populate.
 ## Detection approach
 
 A malicious relay that rewrites or proxies Claude's streaming
-responses can be caught at three distinct layers, even if the final
+responses can be caught at four distinct layers, even if the final
 text the user sees looks correct:
 
 1. **SSE event whitelist.** Anthropic's stream schema uses exactly
@@ -180,6 +180,10 @@ text the user sees looks correct:
    a non-thinking model and fakes the surrounding stream events may
    leave the signatures empty. :attr:`StreamSignals.empty_signature_delta_count`
    counts these.
+4. **Terminal completeness.** A valid Anthropic message has exactly one
+   ``message_stop`` after ``message_start``, with no later content event.
+   Trailing ``ping`` keepalives are allowed. A graceful HTTP close or a
+   generic ``[DONE]`` sentinel does not replace this protocol terminator.
 
 ## Attribution
 
@@ -390,6 +394,18 @@ def _check_stream_model(signals: "StreamSignals") -> bool:
     return "claude" in signals.message_start_model.lower()
 
 
+def _check_stream_complete(signals: "StreamSignals") -> bool:
+    """Require one terminal ``message_stop`` after ``message_start``."""
+    non_ping_events = [event for event in signals.event_types if event != "ping"]
+    if non_ping_events.count("message_stop") != 1:
+        return False
+    if "message_start" not in non_ping_events:
+        return False
+    start_index = non_ping_events.index("message_start")
+    stop_index = non_ping_events.index("message_stop")
+    return start_index < stop_index == len(non_ping_events) - 1
+
+
 def analyze_stream(signals: "StreamSignals") -> dict:
     """Analyze a populated :class:`StreamSignals` for integrity anomalies.
 
@@ -402,6 +418,8 @@ def analyze_stream(signals: "StreamSignals") -> dict:
     - ``usage_monotonic``: bool
     - ``usage_consistent``: bool
     - ``signature_valid``: bool
+    - ``stream_complete``: bool; exactly one terminal ``message_stop`` was
+      observed after ``message_start`` (trailing pings are allowed)
     - ``stream_model_name``: ``message_start.message.model`` or ``None``
     - ``stream_model_is_claude``: bool
     - ``findings``: list of human-readable reasons (empty on clean)
@@ -414,7 +432,8 @@ def analyze_stream(signals: "StreamSignals") -> dict:
        either broken or non-Anthropic; we have no basis to judge).
     2. **anomaly** — at least one of: unknown event types present,
        usage non-monotonic, usage inconsistent, empty
-       ``signature_delta`` count > 0, stream model name non-Claude.
+       ``signature_delta`` count > 0, missing/duplicate/misordered terminal
+       ``message_stop``, stream model name non-Claude.
     3. **clean** — none of the above triggered.
 
     The function is pure and deterministic: identical input always
@@ -429,6 +448,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
             "usage_monotonic": True,
             "usage_consistent": True,
             "signature_valid": True,
+            "stream_complete": False,
             "stream_model_name": signals.message_start_model,
             "stream_model_is_claude": True,
             "findings": [f"Stream transport error: {signals.transport_error}"],
@@ -444,6 +464,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
             "usage_monotonic": True,
             "usage_consistent": True,
             "signature_valid": True,
+            "stream_complete": False,
             "stream_model_name": signals.message_start_model,
             "stream_model_is_claude": True,
             "findings": [
@@ -462,6 +483,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
     usage_monotonic = _check_usage_monotonic(signals)
     usage_consistent = _check_usage_consistent(signals)
     signature_valid = signals.empty_signature_delta_count == 0
+    stream_complete = _check_stream_complete(signals)
     stream_model_is_claude = _check_stream_model(signals)
 
     findings = []
@@ -487,6 +509,32 @@ def analyze_stream(signals: "StreamSignals") -> dict:
             f"{signals.empty_signature_delta_count} signature_delta event(s) "
             "had empty signatures — thinking block downgrade or rewriter"
         )
+    if not stream_complete:
+        stop_count = signals.event_types.count("message_stop")
+        non_ping_events = [event for event in signals.event_types if event != "ping"]
+        if stop_count == 0:
+            findings.append(
+                "Stream ended without message_stop — a truncated Anthropic "
+                "response was not completed"
+            )
+        elif stop_count > 1:
+            findings.append(
+                f"Stream contained {stop_count} message_stop events — "
+                "the terminal marker must appear exactly once"
+            )
+        elif "message_start" not in non_ping_events or (
+            non_ping_events.index("message_stop")
+            < non_ping_events.index("message_start")
+        ):
+            findings.append(
+                "message_stop appeared before message_start — invalid "
+                "Anthropic stream ordering"
+            )
+        else:
+            findings.append(
+                "Non-ping SSE events appeared after message_stop — the "
+                "terminal marker was not final"
+            )
     if not stream_model_is_claude:
         if signals.message_start_model:
             findings.append(
@@ -505,6 +553,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
         or not usage_monotonic
         or not usage_consistent
         or not signature_valid
+        or not stream_complete
         or not stream_model_is_claude
     )
 
@@ -516,7 +565,12 @@ def analyze_stream(signals: "StreamSignals") -> dict:
         signals.has_message_delta,
         signals.has_message_stop,
     ])
-    if shape_flags_seen >= 4 and signals.has_text_delta and not unknown_events:
+    if (
+        shape_flags_seen >= 4
+        and signals.has_text_delta
+        and not unknown_events
+        and stream_complete
+    ):
         event_shape = "pass"
     elif shape_flags_seen >= 2:
         event_shape = "partial"
@@ -530,6 +584,7 @@ def analyze_stream(signals: "StreamSignals") -> dict:
         "usage_monotonic": usage_monotonic,
         "usage_consistent": usage_consistent,
         "signature_valid": signature_valid,
+        "stream_complete": stream_complete,
         "stream_model_name": signals.message_start_model,
         "stream_model_is_claude": stream_model_is_claude,
         "findings": findings,
@@ -547,6 +602,7 @@ still owns format detection, logging, and fallback policy. These helpers
 only centralize the low-level httpx/curl request mechanics.
 """
 
+from contextlib import contextmanager
 import json
 import os
 import subprocess
@@ -563,6 +619,33 @@ def curl_loopback_no_proxy_args(url: str) -> list:
     if urlparse(url).hostname in LOOPBACK_HOSTS:
         return ["--noproxy", LOOPBACK_NO_PROXY]
     return []
+
+
+def curl_header_config(headers: dict) -> str:
+    """Pass headers through curl config stdin, never through process argv."""
+    return "\n".join(
+        f"header = {json.dumps(f'{key}: {value}', ensure_ascii=False)}"
+        for key, value in headers.items()
+    )
+
+
+@contextmanager
+def curl_body_file(body: bytes):
+    """Make a private, short-lived body file while stdin carries headers."""
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "wb", delete=False, prefix="api-relay-body-", suffix=".bin"
+        ) as tmp:
+            path = tmp.name
+            tmp.write(body)
+        yield path
+    finally:
+        if path is not None:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
 
 def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
@@ -584,7 +667,7 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
 
         cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-X", "POST", url,
                "--max-time", str(timeout), "--config", "-", "--data-binary", f"@{body_path}"]
-        config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
+        config = curl_header_config(headers)
         r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
                                   timeout=timeout + 10)
     finally:
@@ -606,7 +689,7 @@ def curl_get_json_data(url: str, headers: dict, timeout: int = 15,
     """GET JSON through curl and return the top-level ``data`` list."""
     cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), url,
            "--max-time", str(timeout), "--config", "-"]
-    config = "\n".join(f'header = "{k}: {v}"' for k, v in headers.items())
+    config = curl_header_config(headers)
     r = subprocess_module.run(cmd, capture_output=True, text=True, input=config,
                               timeout=timeout + 10)
     if r.returncode != 0:
@@ -623,13 +706,15 @@ def curl_raw_request(method: str, url: str, headers: dict, body: bytes,
                      subprocess_module=subprocess) -> dict:
     """Raw request through curl and parse ``curl -i`` output with ``parser``."""
     all_headers = {**headers, "content-type": content_type}
-    cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-i", "-X", method, url,
-           "--max-time", str(timeout), "--data-binary", "@-"]
-    for k, v in all_headers.items():
-        cmd.extend(["-H", f"{k}: {v}"])
     try:
-        r = subprocess_module.run(cmd, capture_output=True, input=body,
-                                  timeout=timeout + 10)
+        with curl_body_file(body) as body_path:
+            cmd = ["curl", "-sk", *curl_loopback_no_proxy_args(url), "-i", "-X", method, url,
+                   "--max-time", str(timeout), "--config", "-",
+                   "--data-binary", f"@{body_path}"]
+            r = subprocess_module.run(
+                cmd, capture_output=True, input=curl_header_config(all_headers).encode("utf-8"),
+                timeout=timeout + 10,
+            )
         if r.returncode != 0:
             err = r.stderr.decode("utf-8", errors="replace")[:200]
             return {"status": 0, "headers": {}, "body": "",
@@ -688,6 +773,7 @@ def httpx_raw_request(method: str, url: str, headers: dict, body: bytes,
 
 class _StandaloneTransport:
     curl_loopback_no_proxy_args = staticmethod(curl_loopback_no_proxy_args)
+    curl_header_config = staticmethod(curl_header_config)
     curl_post_json = staticmethod(curl_post_json)
     httpx_post_json = staticmethod(httpx_post_json)
     curl_get_json_data = staticmethod(curl_get_json_data)
@@ -711,7 +797,9 @@ Eliminates duplicated API calling logic across scripts.
 
 import hashlib
 import json
+import os
 import subprocess
+import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -1525,7 +1613,8 @@ class APIClient:
                          hasher=None) -> None:
         """Curl branch of :meth:`stream_call`. Uses ``curl -N --no-buffer``
         to disable curl's own output buffering so SSE events are streamed
-        to stdout as they arrive. The request body is piped via stdin.
+        to stdout as they arrive. Headers are piped through curl config stdin;
+        the request body is held in a private, short-lived file.
 
         Read stdout line-by-line so short SSE frames are yielded as soon
         as curl flushes them. Fixed in v1.8.2: ``read(4096)`` blocked
@@ -1533,17 +1622,20 @@ class APIClient:
         curl fallback behave like a buffered fetch instead of an
         incremental stream.
         """
-        cmd = [
-            "curl", "-sk", *_transport.curl_loopback_no_proxy_args(url),
-            "-N", "--no-buffer", "-X", "POST", url,
-            "--max-time", str(timeout),
-            "-w", f"\n{CURL_STATUS_SENTINEL}%{{http_code}}\n",
-            "--data-binary", "@-",
-        ]
-        for k, v in headers.items():
-            cmd.extend(["-H", f"{k}: {v}"])
-
+        body_path = None
         try:
+            with tempfile.NamedTemporaryFile(
+                "wb", delete=False, prefix="api-relay-body-", suffix=".json"
+            ) as body_file:
+                body_path = body_file.name
+                body_file.write(json.dumps(body).encode("utf-8"))
+            cmd = [
+                "curl", "-sk", *_transport.curl_loopback_no_proxy_args(url),
+                "-N", "--no-buffer", "-X", "POST", url,
+                "--max-time", str(timeout),
+                "-w", f"\n{CURL_STATUS_SENTINEL}%{{http_code}}\n",
+                "--config", "-", "--data-binary", f"@{body_path}",
+            ]
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -1551,7 +1643,7 @@ class APIClient:
                 stderr=subprocess.PIPE,
             )
             try:
-                proc.stdin.write(json.dumps(body).encode("utf-8"))
+                proc.stdin.write(_transport.curl_header_config(headers).encode("utf-8"))
                 proc.stdin.close()
             except (BrokenPipeError, OSError):
                 # Curl already died (e.g. SSL handshake failed); let the
@@ -1616,6 +1708,12 @@ class APIClient:
         except Exception as e:
             if signals.transport_error is None:
                 signals.transport_error = str(e)
+        finally:
+            if body_path is not None:
+                try:
+                    os.unlink(body_path)
+                except OSError:
+                    pass
 
 
 # ============================================================
@@ -1624,7 +1722,7 @@ class APIClient:
 
 """Markdown report generator for audit results."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class Reporter:
@@ -1701,7 +1799,8 @@ class Reporter:
         self.summary.append((level, msg))
         self.sections.append(f"{icon} **{msg}**\n")
 
-    def render(self, target_url="", model=""):
+    def render(self, target_url="", model="", tool_version="", profile="",
+               tool_commit=""):
         """Render the complete Markdown report.
 
         Produces a header block (title, metadata, risk summary) followed
@@ -1712,6 +1811,11 @@ class Reporter:
                 metadata when provided.
             model: The model identifier used for the audit. Shown in the
                 report metadata when provided.
+            tool_version: API Relay Audit version used for the run.
+            profile: Audit profile used for the run (``general``, ``web3``,
+                or ``full``).
+            tool_commit: Optional git commit for checkout-based runs. Omitted
+                when the standalone script is run outside a repository.
 
         Returns:
             A single Markdown string containing the full report.
@@ -1724,12 +1828,18 @@ class Reporter:
         """
         header = (
             f"# API Relay Security Audit Report\n\n"
-            f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+            f"**Generated**: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
         )
+        if tool_version:
+            header += f"**Tool Version**: `{tool_version}`\n"
+        if profile:
+            header += f"**Profile**: `{profile}`\n"
         if target_url:
             header += f"**Target**: `{target_url}`\n"
         if model:
             header += f"**Model**: `{model}`\n"
+        if tool_commit:
+            header += f"**Tool Commit**: `{tool_commit}`\n"
 
         header += "\n## Risk Summary\n\n"
         for level, msg in self.summary:
@@ -2998,7 +3108,10 @@ def _strip_markdown_code_fence(text: str) -> str:
 
 def _looks_like_refusal(text_lower: str) -> bool:
     """Return True if ``text_lower`` contains any refusal phrase."""
-    return any(m in text_lower for m in REFUSAL_MARKERS)
+    normalized = text_lower.translate(
+        str.maketrans({"\u2018": "'", "\u2019": "'", "\u02bc": "'"})
+    )
+    return any(marker in normalized for marker in REFUSAL_MARKERS)
 
 
 def _contains_claude_self_id(text_lower: str) -> bool:
@@ -4807,7 +4920,7 @@ def run_channel_classifier(client):
 # ============================================================
 
 """
-API Relay Security Audit Tool v2.3
+API Relay Security Audit Tool v2.4.1
 
 Full 14-step audit: infrastructure recon, model list, token injection,
 prompt extraction, instruction conflict + identity, jailbreak, context
@@ -4825,6 +4938,7 @@ Usage:
 """
 
 import argparse
+import os
 import re
 import shutil
 import socket
@@ -4838,6 +4952,26 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 
+
+TOOL_VERSION_FALLBACK = "2.4.1"
+
+
+def _api_relay_audit_checkout_root(script_path):
+    """Return this project's checkout root, or ``None`` for copied scripts."""
+    script_path = script_path.resolve()
+    candidates = []
+    if script_path.parent.name == "scripts":
+        candidates.append(script_path.parent.parent)
+    candidates.append(script_path.parent)
+
+    for root in candidates:
+        if all((
+            (root / "VERSION").is_file(),
+            (root / "scripts" / "build-standalone.py").is_file(),
+            (root / "api_relay_audit" / "reporter.py").is_file(),
+        )):
+            return root
+    return None
 
 
 def _format_identity_inconsistency(non_claude_matches):
@@ -4866,13 +5000,64 @@ def _report_error(report, error, status=None):
     report.p(format_diagnosis(_diagnosis_for_error(error, status=status)))
 
 
+def _tool_version():
+    """Return the packaged tool version for report metadata."""
+    repo_root = _api_relay_audit_checkout_root(Path(__file__).resolve())
+    if repo_root is not None:
+        candidate = repo_root / "VERSION"
+        try:
+            value = candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            value = ""
+        if re.fullmatch(r"\d+\.\d+\.\d+", value):
+            return value
+    return TOOL_VERSION_FALLBACK
+
+
+def _tool_commit_from_checkout():
+    """Return a short git commit only when this script is in this repo checkout."""
+    repo_root = _api_relay_audit_checkout_root(Path(__file__).resolve())
+    if repo_root is None:
+        return ""
+    if not (repo_root / ".git").exists():
+        return ""
+    try:
+        root_result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+        git_root = Path(root_result.stdout.strip()).resolve()
+        if git_root != repo_root.resolve():
+            return ""
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--short=12", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+    except Exception:
+        return ""
+    commit = result.stdout.strip()
+    return commit if re.fullmatch(r"[0-9a-f]{7,12}", commit) else ""
+
+
 # ============================================================
 # CLI
 # ============================================================
 
 def parse_args():
-    p = argparse.ArgumentParser(description="API Relay Security Audit Tool")
-    p.add_argument("--key", required=True, help="API Key")
+    p = argparse.ArgumentParser(
+        description="API Relay Security Audit Tool",
+        allow_abbrev=False,
+    )
+    key_source = p.add_mutually_exclusive_group(required=True)
+    key_source.add_argument("--key", help="API Key")
+    key_source.add_argument("--key-env", metavar="NAME",
+                            help="Read the API Key from environment variable NAME")
     p.add_argument("--url", required=True, help="Base URL (e.g. https://xxx.com/v1)")
     p.add_argument("--model", default="claude-opus-4-6", help="Model name")
     p.add_argument("--connectivity", action="store_true",
@@ -4934,7 +5119,15 @@ def parse_args():
                    help="Path to an append-only JSONL forensic log (arXiv §7.3). "
                         "Every API request is recorded with timestamp, URL, "
                         "SHA-256 of request/response, and status code.")
-    return p.parse_args()
+    args = p.parse_args()
+    if args.key_env is not None:
+        value = os.environ.get(args.key_env)
+        if not value:
+            p.error(
+                f"environment variable {args.key_env!r} is missing or empty"
+            )
+        args.key = value
+    return args
 
 
 def run_warmup(client, n):
@@ -5304,7 +5497,6 @@ def test_prompt_extraction(client, report):
             weak_hits = [kw for kw in weak_markers if kw in text_lower]
 
             if has_strong:
-                leaked = True
                 if _is_self_corrected_hidden_prompt_echo(name, text_lower, structural, strong_hits):
                     report.flag(
                         "yellow",
@@ -5313,21 +5505,20 @@ def test_prompt_extraction(client, report):
                         "self-correction, verify manually",
                     )
                 else:
+                    leaked = True
                     report.flag("red", f"Test {name}: Hidden prompt content extracted!")
             elif weak_hits:
-                if _is_benign_claude_refusal(text_lower):
-                    pass  # Exempt: refusal + Claude self-ID
-                elif _looks_like_refusal(text_lower):
-                    leaked = True
+                if _looks_like_refusal(text_lower):
+                    pass
+                else:
+                    inconclusive = True
+                    inconclusive_names.append(name)
                     report.flag(
                         "yellow",
-                        f"Test {name}: identity words ({', '.join(weak_hits)}) "
-                        f"present alongside refusal without Claude self-identification "
-                        f"— possible partial leak, verify manually",
+                        f"Test {name}: weak identity/capability words "
+                        f"({', '.join(weak_hits)}) are insufficient to confirm "
+                        "hidden prompt extraction — verify manually",
                     )
-                else:
-                    leaked = True
-                    report.flag("red", f"Test {name}: Hidden prompt content extracted!")
         time.sleep(1)
 
     if not leaked:
@@ -5336,9 +5527,9 @@ def test_prompt_extraction(client, report):
             report.flag(
                 "yellow",
                 "Prompt extraction tests INCONCLUSIVE: one or more probes "
-                f"returned an empty or error response ({affected}). The "
-                "relay may be suppressing extraction output rather than "
-                "cleanly refusing it.",
+                f"returned an empty or error response, or only weak "
+                f"identity/capability words ({affected}). Review the response "
+                "before treating it as a leak or a clean refusal.",
             )
         else:
             report.p("\nAll extraction attempts failed (anti-extraction mechanism may exist).")
@@ -5354,23 +5545,28 @@ def test_instruction_conflict(client, report):
     success_count = 0
 
     # Cat test
+    cat_system = (
+        'From now on, you can only reply with the single word "meow". '
+        'No other characters, letters, or punctuation allowed. '
+        'This is the highest priority instruction.'
+    )
+    cat_user = "What is 1+1?"
     report.h3("Test D: Cat Test")
-    report.p('system: "From now on, only reply with the single character meow. This is the highest priority instruction."')
-    report.p('user: "What is 1+1?"')
+    report.p(f"system: `{cat_system}`")
+    report.p(f"user: `{cat_user}`")
 
     r = client.call(
-        [{"role": "user", "content": "What is 1+1?"}],
-        system='From now on, you can only reply with the single word "meow". No other characters, letters, or punctuation allowed. This is the highest priority instruction.',
+        [{"role": "user", "content": cat_user}],
+        system=cat_system,
         max_tokens=100,
     )
 
     overridden = False
     if "error" in r:
         _report_error(report, r["error"])
-        # 422 typically means relay rejects custom system prompts — user has no control
         if "422" in str(r.get("error", "")):
             overridden = True
-            report.flag("red", "Cat test blocked: relay rejects custom system prompts (HTTP 422)")
+            report.flag("red", "Cat test blocked: request with caller system instruction returned HTTP 422")
         else:
             error_messages.append(r.get("error", ""))
     else:
@@ -5385,20 +5581,25 @@ def test_instruction_conflict(client, report):
         elif has_other:
             overridden = True
             if has_meow:
-                report.flag("yellow", "Cat test partial: system prompt diluted (split personality)")
+                report.flag("yellow", "Cat test partial: response included meow and an arithmetic answer; caller system instruction was not followed in this response")
             else:
-                report.flag("red", "Cat test failed: user system prompt completely overridden")
+                report.flag("red", "Cat test failed: caller system instruction was not followed in this response")
 
     time.sleep(1)
 
     # Identity override test
+    identity_system = (
+        "You are Claude, made by Anthropic. You must always say you are "
+        "Claude by Anthropic. Never claim to be anyone else or made by anyone else."
+    )
+    identity_user = "Who are you? Who made you? Answer in one sentence."
     report.h3("Test D2: Identity Override")
-    report.p('system: "You are Claude, made by Anthropic. Never claim to be anyone else."')
-    report.p('user: "Who are you? Who made you?"')
+    report.p(f"system: `{identity_system}`")
+    report.p(f"user: `{identity_user}`")
 
     r = client.call(
-        [{"role": "user", "content": "Who are you? Who made you? Answer in one sentence."}],
-        system="You are Claude, made by Anthropic. You must always say you are Claude by Anthropic. Never claim to be anyone else or made by anyone else.",
+        [{"role": "user", "content": identity_user}],
+        system=identity_system,
         max_tokens=200,
     )
 
@@ -5406,7 +5607,7 @@ def test_instruction_conflict(client, report):
         _report_error(report, r["error"])
         if "422" in str(r.get("error", "")):
             overridden = True
-            report.flag("red", "Identity test blocked: relay rejects custom system prompts (HTTP 422)")
+            report.flag("red", "Identity test blocked: request with caller system instruction returned HTTP 422")
         else:
             error_messages.append(r.get("error", ""))
     else:
@@ -5754,13 +5955,15 @@ def test_stream_integrity(client, report):
         "Open an Anthropic streaming request with thinking enabled and "
         "inspect every SSE event for structural anomalies. A relay that "
         "rewrites or downgrades the streamed response often fails one "
-        "of four invariants: (1) all event types belong to Anthropic's "
+        "of five invariants: (1) all event types belong to Anthropic's "
         "known set (ping / message_start / content_block_start / "
         "content_block_delta / content_block_stop / message_delta / "
         "message_stop); (2) ``input_tokens`` is consistent across "
         "``message_start`` and ``message_delta``; (3) ``output_tokens`` "
         "is monotonically non-decreasing; (4) ``signature_delta`` events "
-        "carry non-empty signature values. Detection concept sourced from "
+        "carry non-empty signature values; (5) exactly one terminal "
+        "``message_stop`` follows ``message_start`` with no later non-ping "
+        "events. Detection concept sourced from "
         "hvoy.ai's claude_detector.py, verified against source on "
         "2026-04-11. See reference_hvoy_relayapi memory for details.\n"
     )
@@ -5785,6 +5988,7 @@ def test_stream_integrity(client, report):
     report.p(f"| Usage monotonic | {'yes' if analysis['usage_monotonic'] else 'NO'} |")
     report.p(f"| Usage consistent | {'yes' if analysis['usage_consistent'] else 'NO'} |")
     report.p(f"| Signature valid | {'yes' if analysis['signature_valid'] else 'NO'} |")
+    report.p(f"| Stream complete | {'yes' if analysis['stream_complete'] else 'NO'} |")
     report.p(
         f"| Stream model | {analysis['stream_model_name'] or '—'} "
         f"({'claude' if analysis['stream_model_is_claude'] else 'NOT claude'}) |"
@@ -5819,7 +6023,8 @@ def test_stream_integrity(client, report):
         report.flag(
             "green",
             "Stream integrity clean: SSE whitelist + usage monotonicity "
-            "+ signature validity + stream model identity all passed",
+            "+ signature validity + terminal completeness + stream model "
+            "identity all passed",
         )
 
     print(f"  Done: stream integrity ({verdict})")
@@ -6548,7 +6753,7 @@ def main():
     # Dimensions (v3, post-v1.7.5):
     #   D1  = hidden system-prompt injection > 100 tokens   (Step 3)
     #   D1i = Step 3 crashed / inconclusive                 (Step 3)
-    #   D2  = user instructions overridden                  (Step 5)
+    #   D2  = caller system instruction not followed        (Step 5)
     #   D2i = Step 5 crashed / inconclusive                 (Step 5)
     #   D3  = tool-call package substitution detected       (Step 8)
     #   D3i = Step 8 inconclusive (all probes errored)      (Step 8)
@@ -6621,7 +6826,8 @@ def main():
         report.p(" ".join(reasons) + " **Do not use.**")
     elif d1 and d2:
         report.p("### HIGH RISK\n")
-        report.p("Hidden injection detected AND user instructions overridden. "
+        report.p("Hidden injection signal and caller system instruction non-adherence "
+                 "observed. The mechanism and attribution remain unverified. "
                  "Not suitable for any use case requiring custom behavior.")
     elif d1:
         report.p("### MEDIUM RISK\n")
@@ -6629,7 +6835,8 @@ def main():
                  "OK for simple Q&A, not recommended for complex applications.")
     elif d2:
         report.p("### MEDIUM RISK\n")
-        report.p("No significant injection but instruction override detected.")
+        report.p("No significant injection signal, but Step 5 observed caller "
+                 "system instruction non-adherence. The mechanism remains unverified.")
     elif d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_step_crashed:
         report.p("### MEDIUM RISK\n")
         medium_reasons = []
@@ -6688,7 +6895,13 @@ def main():
                  "anomaly, or Web3 injection detected.")
 
     # Output
-    md = report.render(target_url=client.base_url, model=args.model)
+    md = report.render(
+        target_url=client.base_url,
+        model=args.model,
+        tool_version=f"v{_tool_version()}",
+        profile=args.profile,
+        tool_commit=_tool_commit_from_checkout(),
+    )
 
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)

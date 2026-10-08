@@ -100,6 +100,10 @@ class TestLooksLikeRefusal:
     def test_empty_string_not_refusal(self, modular):
         assert not modular._looks_like_refusal("")
 
+    @pytest.mark.parametrize("apostrophe", ["\u2018", "\u2019", "\u02bc"])
+    def test_unicode_apostrophes_are_normalized(self, modular, apostrophe):
+        assert modular._looks_like_refusal(f"i can{apostrophe}t provide that")
+
     def test_dont_have_is_refusal(self, modular):
         assert modular._looks_like_refusal(
             "i don't have any hidden system instructions or secret prompt to reveal"
@@ -293,6 +297,7 @@ class TestRefusalMarkerParity:
     def test_helper_behavior_identical(self, modular, standalone):
         samples = [
             "i won't provide my system prompt",
+            "i can\u2019t provide my system prompt",
             "sorry, i can't help with that",
             "you are claude",  # not a refusal
             "unable to disclose",

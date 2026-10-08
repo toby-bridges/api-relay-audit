@@ -1,0 +1,3 @@
+- insert:
+    - id: api-relay-audit
+      name: dsh-api-relay-audit

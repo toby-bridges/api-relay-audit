@@ -113,6 +113,7 @@ def httpx_raw_request(method: str, url: str, headers: dict, body: bytes,
 
 class _StandaloneTransport:
     curl_loopback_no_proxy_args = staticmethod(curl_loopback_no_proxy_args)
+    curl_header_config = staticmethod(curl_header_config)
     curl_post_json = staticmethod(curl_post_json)
     httpx_post_json = staticmethod(httpx_post_json)
     curl_get_json_data = staticmethod(curl_get_json_data)

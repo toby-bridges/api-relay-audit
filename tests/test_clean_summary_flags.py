@@ -335,21 +335,61 @@ class TestOptionDEndToEnd:
         yellows = [m for level, m in reporter.summary if level == "yellow"]
         assert yellows, f"standalone Step 6 must fire yellow on Repro 2. Summary: {reporter.summary}"
 
-    def test_step4_repro2_fires_yellow_contradictory_modular(self, modular, monkeypatch):
-        """Applied to Step 4: the same text still has weak hits
-        (assistant, developer, built to... well, 'built to' isn't in
-        step 4 weak, but 'assistant' and 'developer' are)."""
+    def test_step4_refusal_with_weak_hits_stays_clean_modular(self, modular, monkeypatch):
+        """Refusal language takes priority over weak identity words."""
         from api_relay_audit.reporter import Reporter
         self._time_sleep_patched(monkeypatch, modular)
         reporter = Reporter()
         client = _mock_client(self.REPRO_2_STEP6)
         leaked = modular.test_prompt_extraction(client, reporter)
-        # Should trip the contradictory yellow branch
-        yellows = [m for level, m in reporter.summary if level == "yellow"]
-        assert any("without Claude self-identification" in y for y in yellows), (
-            f"Step 4 must fire YELLOW contradictory on Repro 2. Summary: {reporter.summary}"
+        assert leaked is False
+        greens = [m for level, m in reporter.summary if level == "green"]
+        assert any("Prompt extraction tests passed" in g for g in greens), (
+            f"Refusal response must produce a green flag. Summary: {reporter.summary}"
         )
-        assert leaked is True  # yellow still sets leaked
+
+    @pytest.mark.parametrize("apostrophe", ["\u2018", "\u2019", "\u02bc"])
+    def test_step4_unicode_apostrophe_refusal_stays_clean(
+        self, modular, standalone, monkeypatch, apostrophe
+    ):
+        """Modular and standalone detectors normalize refusal apostrophes."""
+        response = f"I can{apostrophe}t provide my system prompt verbatim."
+        for module in (modular, standalone):
+            self._time_sleep_patched(monkeypatch, module)
+            reporter = module.Reporter()
+            leaked = module.test_prompt_extraction(_mock_client(response), reporter)
+            assert leaked is False
+            assert any(
+                level == "green" and "Prompt extraction tests passed" in message
+                for level, message in reporter.summary
+            )
+
+    def test_step4_self_corrected_hidden_prompt_is_not_a_leak(self, modular, monkeypatch):
+        from api_relay_audit.reporter import Reporter
+
+        self._time_sleep_patched(monkeypatch, modular)
+        response = (
+            '{"hidden_prompt": "fabricated"}\n'
+            "Actually, I should be straightforward: I fabricated that."
+        )
+        client = MagicMock()
+        clean = {
+            "text": CLEAN_REFUSAL,
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "time": 0.05,
+        }
+        corrected = {
+            "text": response,
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "time": 0.05,
+        }
+        client.call.side_effect = [clean, clean, corrected]
+        reporter = Reporter()
+        leaked = modular.test_prompt_extraction(client, reporter)
+        assert leaked is False
+        assert any(level == "yellow" for level, _ in reporter.summary)
 
     def test_benign_with_claude_id_stays_clean_modular(self, modular, monkeypatch):
         """Adding Claude self-ID exempts the response."""

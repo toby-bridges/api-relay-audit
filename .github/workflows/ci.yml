@@ -32,3 +32,71 @@ jobs:
 
       - name: Check standalone help works without site packages
         run: python3 -S audit.py --help
+
+  dsh-plugin-unit:
+    name: DSH plugin (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python test dependencies
+        run: python -m pip install -r requirements.txt pytest
+
+      - name: Run DSH adapter tests
+        run: npm run test:dsh
+
+      - name: Check key-env and version integration
+        run: >-
+          python -m pytest
+          tests/test_dual_distribution_parity.py
+          tests/test_version_sync.py
+          -q
+
+      - name: Inspect prebuilt bundle contents
+        run: npm pack --dry-run
+
+  dsh-plugin-composition:
+    name: DSH 0.1.0-rc.6 composition
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11.7.0"
+
+      - name: Compose with official Web and dsh-cc-tui profiles
+        env:
+          DSH_HOME: ${{ runner.temp }}/dsh-home
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile web add .
+          npx --yes @deepseek-ai/dsh@0.1.0-rc.6 --profile web --dump-config > web-config.txt
+          grep -q "api-relay-audit" web-config.txt
+
+          if ! npx --yes @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile cc-tui add dsh-cc-tui@0.4.1; then
+            profile="$DSH_HOME/profiles/cc-tui"
+            grep -q "koffi: set this to true or false" "$profile/pnpm-workspace.yaml"
+            sed -i 's/koffi: set this to true or false/koffi: true/' "$profile/pnpm-workspace.yaml"
+            pnpm --dir "$profile" install
+          fi
+          npx --yes @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile cc-tui add .
+          npx --yes @deepseek-ai/dsh@0.1.0-rc.6 --profile cc-tui --dump-config > cc-tui-config.txt
+          grep -q "api-relay-audit" cc-tui-config.txt

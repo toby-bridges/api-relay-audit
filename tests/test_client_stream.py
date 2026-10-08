@@ -16,6 +16,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -601,10 +602,12 @@ class TestCurlNonzeroExitHandling:
         assert signals.raw_event_count == 1
 
     def test_curl_stream_bypasses_proxy_for_loopback(self):
-        captured_cmds = []
+        captured = {}
 
         def mock_popen_factory(cmd, *args, **kwargs):
-            captured_cmds.append(cmd)
+            captured["cmd"] = cmd
+            captured["body_path"] = Path(cmd[cmd.index("--data-binary") + 1][1:])
+            captured["body"] = json.loads(captured["body_path"].read_text())
             proc = MagicMock()
             proc.stdin = MagicMock()
             proc.stdout = BytesIO(
@@ -615,6 +618,7 @@ class TestCurlNonzeroExitHandling:
             proc.stderr = BytesIO(b"")
             proc.wait = MagicMock(return_value=None)
             proc.returncode = 0
+            captured["proc"] = proc
             return proc
 
         with patch("api_relay_audit.client.subprocess.Popen",
@@ -629,9 +633,14 @@ class TestCurlNonzeroExitHandling:
             )
 
         assert signals.transport_error is None
-        cmd = captured_cmds[0]
+        cmd = captured["cmd"]
         assert "--noproxy" in cmd
         assert cmd[cmd.index("--noproxy") + 1] == "localhost,127.0.0.1,::1"
+        assert "sk-test" not in " ".join(cmd)
+        assert cmd[cmd.index("--config") + 1] == "-"
+        assert b"x-api-key: sk-test" in captured["proc"].stdin.write.call_args.args[0]
+        assert captured["body"]["stream"] is True
+        assert not captured["body_path"].exists()
 
 
 # ---------------------------------------------------------------------------
