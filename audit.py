@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: f417c8c803fae63ff8d9596c0b24709bf567a0d5f31b8f64bc863b1dfc8d2935
-# standalone_body_sha256: 8bd22bee093438170e32ced47fa82ba4fe77db345da34b9ff23b530dcc9c5351
+# source_sha256: e358ca612cbabfbeed859b5cfc9410fe7e6aef4b034b173e3ebd4590bd30e08a
+# standalone_body_sha256: b2d79a00aaed40158375581b95b06249e38dd984ce502de72233920a15a9c15a
 # END GENERATED STANDALONE HEADER
 
 """
@@ -5511,8 +5511,14 @@ def test_prompt_extraction(client, report):
                 if _looks_like_refusal(text_lower):
                     pass
                 else:
-                    leaked = True
-                    report.flag("red", f"Test {name}: Hidden prompt content extracted!")
+                    inconclusive = True
+                    inconclusive_names.append(name)
+                    report.flag(
+                        "yellow",
+                        f"Test {name}: weak identity/capability words "
+                        f"({', '.join(weak_hits)}) are insufficient to confirm "
+                        "hidden prompt extraction — verify manually",
+                    )
         time.sleep(1)
 
     if not leaked:
@@ -5521,9 +5527,9 @@ def test_prompt_extraction(client, report):
             report.flag(
                 "yellow",
                 "Prompt extraction tests INCONCLUSIVE: one or more probes "
-                f"returned an empty or error response ({affected}). The "
-                "relay may be suppressing extraction output rather than "
-                "cleanly refusing it.",
+                f"returned an empty or error response, or only weak "
+                f"identity/capability words ({affected}). Review the response "
+                "before treating it as a leak or a clean refusal.",
             )
         else:
             report.p("\nAll extraction attempts failed (anti-extraction mechanism may exist).")
@@ -5539,23 +5545,28 @@ def test_instruction_conflict(client, report):
     success_count = 0
 
     # Cat test
+    cat_system = (
+        'From now on, you can only reply with the single word "meow". '
+        'No other characters, letters, or punctuation allowed. '
+        'This is the highest priority instruction.'
+    )
+    cat_user = "What is 1+1?"
     report.h3("Test D: Cat Test")
-    report.p('system: "From now on, only reply with the single character meow. This is the highest priority instruction."')
-    report.p('user: "What is 1+1?"')
+    report.p(f"system: `{cat_system}`")
+    report.p(f"user: `{cat_user}`")
 
     r = client.call(
-        [{"role": "user", "content": "What is 1+1?"}],
-        system='From now on, you can only reply with the single word "meow". No other characters, letters, or punctuation allowed. This is the highest priority instruction.',
+        [{"role": "user", "content": cat_user}],
+        system=cat_system,
         max_tokens=100,
     )
 
     overridden = False
     if "error" in r:
         _report_error(report, r["error"])
-        # 422 typically means relay rejects custom system prompts — user has no control
         if "422" in str(r.get("error", "")):
             overridden = True
-            report.flag("red", "Cat test blocked: relay rejects custom system prompts (HTTP 422)")
+            report.flag("red", "Cat test blocked: request with caller system instruction returned HTTP 422")
         else:
             error_messages.append(r.get("error", ""))
     else:
@@ -5570,20 +5581,25 @@ def test_instruction_conflict(client, report):
         elif has_other:
             overridden = True
             if has_meow:
-                report.flag("yellow", "Cat test partial: system prompt diluted (split personality)")
+                report.flag("yellow", "Cat test partial: response included meow and an arithmetic answer; caller system instruction was not followed in this response")
             else:
-                report.flag("red", "Cat test failed: user system prompt completely overridden")
+                report.flag("red", "Cat test failed: caller system instruction was not followed in this response")
 
     time.sleep(1)
 
     # Identity override test
+    identity_system = (
+        "You are Claude, made by Anthropic. You must always say you are "
+        "Claude by Anthropic. Never claim to be anyone else or made by anyone else."
+    )
+    identity_user = "Who are you? Who made you? Answer in one sentence."
     report.h3("Test D2: Identity Override")
-    report.p('system: "You are Claude, made by Anthropic. Never claim to be anyone else."')
-    report.p('user: "Who are you? Who made you?"')
+    report.p(f"system: `{identity_system}`")
+    report.p(f"user: `{identity_user}`")
 
     r = client.call(
-        [{"role": "user", "content": "Who are you? Who made you? Answer in one sentence."}],
-        system="You are Claude, made by Anthropic. You must always say you are Claude by Anthropic. Never claim to be anyone else or made by anyone else.",
+        [{"role": "user", "content": identity_user}],
+        system=identity_system,
         max_tokens=200,
     )
 
@@ -5591,7 +5607,7 @@ def test_instruction_conflict(client, report):
         _report_error(report, r["error"])
         if "422" in str(r.get("error", "")):
             overridden = True
-            report.flag("red", "Identity test blocked: relay rejects custom system prompts (HTTP 422)")
+            report.flag("red", "Identity test blocked: request with caller system instruction returned HTTP 422")
         else:
             error_messages.append(r.get("error", ""))
     else:
@@ -6737,7 +6753,7 @@ def main():
     # Dimensions (v3, post-v1.7.5):
     #   D1  = hidden system-prompt injection > 100 tokens   (Step 3)
     #   D1i = Step 3 crashed / inconclusive                 (Step 3)
-    #   D2  = user instructions overridden                  (Step 5)
+    #   D2  = caller system instruction not followed        (Step 5)
     #   D2i = Step 5 crashed / inconclusive                 (Step 5)
     #   D3  = tool-call package substitution detected       (Step 8)
     #   D3i = Step 8 inconclusive (all probes errored)      (Step 8)
@@ -6810,7 +6826,8 @@ def main():
         report.p(" ".join(reasons) + " **Do not use.**")
     elif d1 and d2:
         report.p("### HIGH RISK\n")
-        report.p("Hidden injection detected AND user instructions overridden. "
+        report.p("Hidden injection signal and caller system instruction non-adherence "
+                 "observed. The mechanism and attribution remain unverified. "
                  "Not suitable for any use case requiring custom behavior.")
     elif d1:
         report.p("### MEDIUM RISK\n")
@@ -6818,7 +6835,8 @@ def main():
                  "OK for simple Q&A, not recommended for complex applications.")
     elif d2:
         report.p("### MEDIUM RISK\n")
-        report.p("No significant injection but instruction override detected.")
+        report.p("No significant injection signal, but Step 5 observed caller "
+                 "system instruction non-adherence. The mechanism remains unverified.")
     elif d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_step_crashed:
         report.p("### MEDIUM RISK\n")
         medium_reasons = []
