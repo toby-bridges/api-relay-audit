@@ -112,7 +112,7 @@ def test_skill_surfaces_do_not_regress_to_13_step_copy():
 def test_homepage_agent_tab_matches_dsh_contract():
     text = _read(HOMEPAGE)
     assert "DeepSeek Harness plugin" in text
-    assert 'dsh plugin --profile web add "github:toby-bridges/api-relay-audit#v2.4.0"' in text
+    assert f'dsh plugin --profile web add "github:toby-bridges/api-relay-audit#{VERSION_TAG}"' in text
     assert "/relay-audit --connectivity" in text
     assert "API_RELAY_AUDIT_KEY" in text
     assert "after ClawHub publication" not in text

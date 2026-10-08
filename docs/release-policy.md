@@ -47,6 +47,22 @@ merged. If versioned skill or release docs now point at a new tag such as
 `v2.3.0`, create the draft release immediately after merge so the immutable tag
 exists before users follow those download commands.
 
+## Publish and Verify
+
+A successful draft-release workflow means only that the draft is ready for
+maintainer review. Before clicking **Publish release**, confirm that:
+
+1. The version, tag, and target commit match `VERSION` and the merged
+   release-prep commit.
+2. The release notes are complete for that version.
+3. Both `audit.py` and `audit.py.sha256` are attached, and the workflow's
+   artifact-provenance verification passed.
+
+After publication, confirm that the release is no longer a draft, GitHub's
+Latest Release matches `VERSION`, the tag resolves to the expected release
+commit, and both assets remain attached. Never replace assets on a published
+release to repair a mismatch; fix the source and publish a new patch release.
+
 ## Standalone Artifact Provenance
 
 Each release has one authoritative standalone artifact: `audit.py` at the
