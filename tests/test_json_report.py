@@ -135,6 +135,32 @@ def test_unrated_report_does_not_infer_risk_from_flags(audit_module):
     assert result["coverage"] is None
 
 
+def test_json_preserves_inconclusive_prompt_extraction_evidence(
+    audit_module, monkeypatch, capsys,
+):
+    real_step = audit_module.test_prompt_extraction
+    _stub_audit(audit_module, monkeypatch)
+
+    class WeakResponseClient(FakeClient):
+        def call(self, messages, max_tokens):
+            return {"text": "coding", "input_tokens": 0, "output_tokens": 0}
+
+    monkeypatch.setattr(audit_module, "APIClient", WeakResponseClient)
+    monkeypatch.setattr(audit_module, "test_prompt_extraction", real_step)
+    monkeypatch.setattr(audit_module.time, "sleep", lambda _: None)
+    _argv(monkeypatch, "--format", "json")
+
+    assert audit_module.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["risk_level"] == "LOW"
+    assert result["coverage"]["risk_matrix_inconclusive_steps"] == []
+    assert any(flag["level"] == "yellow" and "INCONCLUSIVE" in flag["message"]
+               for flag in result["flags"])
+    assert not any(flag["level"] == "red" for flag in result["flags"])
+    assert "INCONCLUSIVE" in result["markdown"]
+    assert "Hidden prompt content extracted" not in result["markdown"]
+
+
 def test_reporter_preserves_supplied_markdown(audit_module):
     result = audit_module.Reporter().to_dict(
         report_type="connectivity", markdown="# 自定义连通性报告\n",

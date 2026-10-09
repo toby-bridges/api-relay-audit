@@ -216,7 +216,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 | Version | `v2.4.1` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
-| pytest collected tests | 863 |
+| pytest collected tests | 885 |
 | CLI flags | 23 |
 | Runtime profiles | `general`, `web3`, `full` |
 
@@ -281,9 +281,9 @@ AGPL-3.0-only. See [LICENSE](./LICENSE).
 
 This keeps modified network-service deployments accountable to the same public source-availability standard as the relay ecosystem evidence we audit.
 
-## Citation
+## References and Citation
 
-If you use API Relay Audit in research, security reports, or public relay evaluations, please cite the software with [CITATION.cff](./CITATION.cff). The citation file also records the two academic papers that inform the audit model: Liu et al., *Your Agent Is Mine* (arXiv:2604.08407) and Zhang et al., *Real Money, Fake Models* (arXiv:2603.01919).
+The core research references are listed in [docs/references.md](./docs/references.md). If you use API Relay Audit in research, security reports, or public relay evaluations, please cite the software with [CITATION.cff](./CITATION.cff).
 
 ## How to Contribute
 
@@ -437,7 +437,7 @@ registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 | 版本 | `v2.4.1` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 863 |
+| pytest collected tests | 885 |
 | CLI flags | 23 |
 | Runtime profiles | `general`, `web3`, `full` |
 

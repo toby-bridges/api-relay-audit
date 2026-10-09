@@ -7,6 +7,14 @@
 <meta name="description" content="Audit a Claude-compatible API relay locally for prompt injection, model substitution, context truncation, tool rewriting, error leakage, and SSE anomalies.">
 <link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/guides/audit-claude-api-relay-safely.html">
 <link rel="stylesheet" href="../assets/content.css">
+<style>
+.signal-table-scroll{overflow-x:auto;margin:20px 0}
+.signal-table-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+.signal-table{display:table;table-layout:fixed;min-width:660px;margin:0}
+.signal-table th,.signal-table td{overflow-wrap:anywhere}
+.signal-table th:first-child{width:22%}
+.signal-table th:not(:first-child){width:39%}
+</style>
 </head>
 <body>
 <header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">中文</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
@@ -42,6 +50,33 @@ python audit.py \
 
   <h2>Interpreting inconclusive results</h2>
   <p>Inconclusive means the probe could not establish a clean or anomalous result. It may happen because the relay blocks a request, does not support a format, truncates an answer, or returns an ambiguous response. Do not treat inconclusive as clean.</p>
+
+  <h2 id="signal-interpretation">Interpretation guide: signals, checks, and limits</h2>
+  <p>This is an interpretation guide, not a detection-accuracy benchmark or a set of real-provider case studies. These signals call for review; none alone certifies a relay as safe or malicious.</p>
+  <div class="signal-table-scroll" role="region" aria-labelledby="signal-interpretation" tabindex="0">
+    <table class="signal-table">
+      <thead><tr><th scope="col">Observed signal</th><th scope="col">How to cross-check</th><th scope="col">What it does not establish</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Input tokens substantially exceed the estimate.</td>
+          <td>Match the model, messages, system/tool configuration, and token-counting rules. Repeat the probe; where available, compare the same request against an authorized official endpoint.</td>
+          <td>A token delta alone does not prove malicious prompt injection. The current probe uses approximate fixed baselines, not a matched official-endpoint measurement.</td>
+        </tr>
+        <tr>
+          <td>The response claims a different model identity.</td>
+          <td>Check for role-play or identity instructions. Repeat with neutral prompts, then compare response metadata with independently verifiable upstream evidence. Keep private captures local.</td>
+          <td>Self-identification or a relay-supplied <code>model</code> field alone does not prove model substitution or identify the actual upstream provider.</td>
+        </tr>
+        <tr>
+          <td>An Anthropic-style SSE stream lacks <code>message_stop</code>.</td>
+          <td>Confirm the expected protocol and inspect the full event sequence, timeouts, client cancellation, and proxy disconnects. Transport errors or no substantive events remain <code>inconclusive</code>.</td>
+          <td>An incomplete stream does not by itself prove tampering or model downgrade. Do not apply Anthropic event requirements to OpenAI-only streams; a clean stream is not a safety certificate.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Report wording caveat:</strong> v2.4.0 token reports can label a delta as detected injection. Treat that label as a heuristic finding requiring the cross-checks above, not confirmation of its cause.</p>
+  <p><strong>Related classifier limitation:</strong> the <a href="https://github.com/toby-bridges/api-relay-audit/issues/79#issuecomment-5543396106">public synthetic reproduction in issue #79</a> documents a separate prompt-extraction false positive on a pinned version. It supports manual review, not a measured error rate or a finding about any provider.</p>
 
   <h2>Example report</h2>
   <p>For the report shape without real relay data, see the <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/examples/sanitized-audit-report.md">sanitized fixture report</a>.</p>

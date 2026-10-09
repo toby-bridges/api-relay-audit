@@ -36,6 +36,11 @@ Audit `coverage` contains:
   classify every informational probe; inspect `flags` and `markdown` too.
 - `crashed_steps`: all steps caught by the existing continuation wrapper.
 
+For example, weak prompt-related wording in Step 4 remains `INCONCLUSIVE`
+in `flags` and `markdown`; it is not confirmed prompt extraction and does
+not enter the existing six-dimension rating. Read the evidence alongside
+`risk_level`, including when the final rating is `LOW`.
+
 Skipped probes are not evidence of clean behavior. A connectivity check has
 `risk_level: null` even when both chat formats respond successfully; its exit
 code remains 0 for connectivity success and 1 for failure.
