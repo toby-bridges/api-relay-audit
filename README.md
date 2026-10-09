@@ -50,7 +50,7 @@ is sent only to the relay URL you choose.
 ## Quick Start
 
 ```bash
-AUDIT_SCRIPT_REF=v2.4.1
+AUDIT_SCRIPT_REF=v2.5.0
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
@@ -60,23 +60,24 @@ python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report
 ```
 
 See a public-safe fixture report: [sanitized audit report](./docs/examples/sanitized-audit-report.md).
-Use `master` as `AUDIT_SCRIPT_REF` only when intentionally testing unreleased changes.
+Pinned v2.5.0 downloads require a published tag; a draft release alone does
+not guarantee availability. Use `master` as `AUDIT_SCRIPT_REF` only when
+intentionally testing unreleased changes.
 
 > If API Relay Audit helps you evaluate a relay before sending real traffic, [star the repository](https://github.com/toby-bridges/api-relay-audit) to follow new detector coverage and release-tested updates.
 
-## JSON Reports (Development Checkout)
+## JSON Reports
 
-The development checkout also supports `--format json` for local automation:
+v2.5.0 supports `--format json` for local automation:
 
 ```bash
-python scripts/audit.py --key-env API_RELAY_AUDIT_KEY --url <BASE_URL> --format json --output report.json
+python audit.py --key-env API_RELAY_AUDIT_KEY --url <BASE_URL> --format json --output report.json
 ```
 
 Without `--output`, stdout contains one JSON document and progress goes to
 stderr. JSON preserves the existing final risk rating and full Markdown
-evidence; it does not sanitize the report for public sharing. This option is
-not in the pinned `v2.4.1` release above. See the [JSON schema and coverage
-boundaries](./docs/json-report.md).
+evidence; it does not sanitize the report for public sharing. See the
+[JSON schema and coverage boundaries](./docs/json-report.md).
 
 ## When to Use It
 
@@ -132,7 +133,7 @@ community TUI surfaces that use the official `@deepseek-ai/dsh-commands`
 registry. Pin an immutable commit or release tag:
 
 ```bash
-DSH_PLUGIN_REF=v2.4.1
+DSH_PLUGIN_REF=v2.5.0
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 
 # dsh-cc-tui and other compatible profile-based clients
@@ -156,7 +157,7 @@ metered tokens. Use `--connectivity` for a lower-cost check. This distribution
 does not add a new model baseline: the selected route must identify as Claude,
 although the relay API itself may be Anthropic-compatible or OpenAI-compatible.
 The older `v2.4.0` release can put the key in curl process arguments during
-error probes and streaming fallback. `v2.4.1` passes those headers through
+error probes and streaming fallback. `v2.5.0` passes those headers through
 curl config stdin instead. Treat the local process list as sensitive if you
 still run `v2.4.0`.
 Independent wrappers without DSH profiles and the DSH command registry are not
@@ -164,7 +165,7 @@ compatible with this bundle. See [agent distribution notes](./docs/skill-distrib
 The exact v2.4.0 installation, runtime, and secret-scan results are recorded in
 [the DSH distribution verification](./docs/distribution-verification-v2.4.0.md).
 For the updated host matrix and verification limits, see the
-[v2.4.1 release notes](./docs/releases/v2.4.1.md).
+[v2.5.0 release notes](./docs/releases/v2.5.md).
 
 ## Retained Agent Skill Files
 
@@ -213,7 +214,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 
 | Metric | Current value |
 |---|---:|
-| Version | `v2.4.1` |
+| Version | `v2.5.0` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
 | pytest collected tests | 885 |
@@ -342,7 +343,7 @@ to one behavior or document.
 ## 30 秒快速开始
 
 ```bash
-AUDIT_SCRIPT_REF=v2.4.1
+AUDIT_SCRIPT_REF=v2.5.0
 curl -fsSL "https://raw.githubusercontent.com/toby-bridges/api-relay-audit/${AUDIT_SCRIPT_REF}/audit.py" -o audit.py
 
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
@@ -350,6 +351,10 @@ python audit.py --key <YOUR_KEY> --url <BASE_URL> --output report.md
 # Web3 / 钱包用户
 python audit.py --key <YOUR_KEY> --url <BASE_URL> --profile web3 --output report.md
 ```
+
+v2.5.0 新增 `--format json`，适用于本地自动化；默认仍输出 Markdown。
+JSON 包含完整证据，并非公开分享前已脱敏的报告。参见 [JSON 契约](./docs/json-report.md)。
+固定版本下载需要正式发布的 tag；草稿 release 本身不能证明下载可用。
 
 ## 核心覆盖
 
@@ -365,7 +370,7 @@ Web，以及使用 `@deepseek-ai/dsh-commands` registry 的社区 TUI。安装�
 commit 或 release tag：
 
 ```bash
-DSH_PLUGIN_REF=v2.4.1
+DSH_PLUGIN_REF=v2.5.0
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 ```
@@ -386,7 +391,7 @@ dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGI
 OpenAI，但被审计线路必须明确为 Claude。没有 DSH profile/plugin 机制的独立
 wrapper 不在兼容范围内。
 旧版 `v2.4.0` 的错误探针和流式 curl 请求可能短暂把 Key 放进 curl 进程参数；
-`v2.4.1` 改为经 curl 配置标准输入传递这些请求头。仍使用旧版时，应把本机
+`v2.5.0` 改为经 curl 配置标准输入传递这些请求头。仍使用旧版时，应把本机
 进程列表视为敏感信息。
 
 ## 保留的 Agent Skill 文件
@@ -434,7 +439,7 @@ registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 
 | 指标 | 当前值 |
 |---|---:|
-| 版本 | `v2.4.1` |
+| 版本 | `v2.5.0` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
 | pytest collected tests | 885 |

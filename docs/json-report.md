@@ -1,8 +1,9 @@
 # JSON reports
 
-Development checkouts support `--format json` in both `scripts/audit.py` and
-the generated standalone `audit.py`. It is not available in release v2.4.1.
-Markdown remains the default.
+Starting with v2.5.0, both `scripts/audit.py` and the generated standalone
+`audit.py` support `--format json`. Markdown remains the default. See the
+[v2.5 release notes](./releases/v2.5.md) for release status and verification
+requirements.
 
 ```bash
 export API_RELAY_AUDIT_KEY=your-relay-key

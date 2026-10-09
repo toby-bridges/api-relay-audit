@@ -14,8 +14,8 @@ safety claim.
 
 All retained integration files must stay aligned with the current audit surface:
 
-- version `2.4.1`
-- audit script ref `v2.4.1`
+- version `2.5.0`
+- audit script ref `v2.5.0`
 - 14 audit steps
 - local-first execution
 - API key not repeated in chat, logs, filenames, or public comments
@@ -37,7 +37,7 @@ allowlist. Install an immutable repository revision into each intended
 profile:
 
 ```bash
-DSH_PLUGIN_REF=v2.4.1
+DSH_PLUGIN_REF=v2.5.0
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 ```
@@ -59,7 +59,7 @@ Compatibility contract:
   stream-integrity baselines are Claude-specific;
 - writes reports under the current session workspace by default.
 
-The `v2.4.1` source accepts only the three exact DSH peer versions listed
+The `v2.5.0` source accepts only the three exact DSH peer versions listed
 above. A minimal service harness invoked each newer installed bundle's command
 handler and completed a two-format connectivity check against a local fixture.
 Interactive command rendering and Desktop profiles have not been verified. The
@@ -78,7 +78,7 @@ Both dumps must contain the `api-relay-audit` row. In a configured session,
 placing the API key in the command input, result, process argv, or logs.
 
 The release scope and evidence limits are in
-[`releases/v2.4.1.md`](./releases/v2.4.1.md). The earlier
+[`releases/v2.5.md`](./releases/v2.5.md). The earlier
 [`distribution-verification-v2.4.0.md`](./distribution-verification-v2.4.0.md)
 documents the immutable prior tag.
 

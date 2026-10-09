@@ -114,7 +114,9 @@ def test_schema_doc_mentions_required_fields():
         assert field in schema_text
     for field in STEP_REQUIRED_FIELDS:
         assert field in schema_text
-    assert "No backward compatibility or CLI JSON output is promised" in normalized
+    assert "It is separate from the local CLI" in normalized
+    assert "No compatibility or automatic export to `report-artifact-v0.1` is promised" in normalized
+    assert "neither output is automatically redacted for public sharing" in normalized
     assert "skipped/profile-gated steps must not be rendered as clean" in schema_text
 
 
