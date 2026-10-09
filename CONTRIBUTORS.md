@@ -21,6 +21,12 @@ arrives as a direct pull request.
   [PR #45](https://github.com/toby-bridges/api-relay-audit/pull/45) and
   additional tool-rewrite edge fixtures in
   [PR #46](https://github.com/toby-bridges/api-relay-audit/pull/46).
+- [@ythx-101](https://github.com/ythx-101) — proposed JSON output in
+  [PR #2](https://github.com/toby-bridges/api-relay-audit/pull/2). The focused
+  JSON report implementation independently adapts that idea from the fork's
+  [fixed source revision](https://github.com/ythx-101/api-relay-audit/tree/495e910be9bc14bef15d651a02f4fd7d5d57159c),
+  preserving the current six-dimension rating rather than deriving risk from
+  flag colors. The source snapshot uses MIT; no fork code was copied.
 
 ## Attribution Policy
 

@@ -1,4 +1,4 @@
-"""Markdown report generator for audit results."""
+"""Markdown and structured local reports for audit results."""
 
 from datetime import datetime, timezone
 
@@ -78,7 +78,7 @@ class Reporter:
         self.sections.append(f"{icon} **{msg}**\n")
 
     def render(self, target_url="", model="", tool_version="", profile="",
-               tool_commit=""):
+               tool_commit="", generated_at=None):
         """Render the complete Markdown report.
 
         Produces a header block (title, metadata, risk summary) followed
@@ -94,6 +94,7 @@ class Reporter:
                 or ``full``).
             tool_commit: Optional git commit for checkout-based runs. Omitted
                 when the standalone script is run outside a repository.
+            generated_at: Optional UTC timestamp shared with a JSON envelope.
 
         Returns:
             A single Markdown string containing the full report.
@@ -104,9 +105,11 @@ class Reporter:
             >>> rpt.flag("green", "API key accepted")
             >>> print(rpt.render(target_url="https://relay.example.com"))
         """
+        if generated_at is None:
+            generated_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         header = (
             f"# API Relay Security Audit Report\n\n"
-            f"**Generated**: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+            f"**Generated**: {generated_at}\n"
         )
         if tool_version:
             header += f"**Tool Version**: `{tool_version}`\n"
@@ -125,3 +128,39 @@ class Reporter:
             header += f"- {icon} {msg}\n"
         header += "\n---\n"
         return header + "\n".join(self.sections)
+
+    def to_dict(self, target_url="", model="", tool_version="", profile="",
+                tool_commit="", risk_level=None, coverage=None,
+                report_type="audit", markdown=None):
+        """Return a versioned local report without inferring risk from flags.
+
+        JSON output concept proposed by ythx-101 in upstream PR #2
+        (fork revision 495e910be9bc14bef15d651a02f4fd7d5d57159c).
+        Independently implemented for the current six-dimension rating.
+
+        The orchestrator supplies its final rating and coverage. An unrated
+        report keeps ``risk_level`` null. The full Markdown evidence is
+        retained; this is not a public-safe redaction/export operation.
+        ``markdown`` can supply an existing connectivity report verbatim.
+        """
+        generated_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        if markdown is None:
+            markdown = self.render(
+                target_url=target_url, model=model, tool_version=tool_version,
+                profile=profile, tool_commit=tool_commit,
+                generated_at=generated_at,
+            )
+        return {
+            "schema_version": 1,
+            "report_type": report_type,
+            "generated_at": generated_at,
+            "target": target_url,
+            "model": model,
+            "tool_version": tool_version,
+            "profile": profile,
+            "tool_commit": tool_commit,
+            "risk_level": risk_level,
+            "flags": [{"level": level, "message": msg} for level, msg in self.summary],
+            "coverage": coverage,
+            "markdown": markdown,
+        }

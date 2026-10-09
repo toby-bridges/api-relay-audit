@@ -18,6 +18,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -26,6 +27,8 @@ import ssl
 import subprocess
 import sys
 import time
+from contextlib import redirect_stdout
+from dataclasses import asdict
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib.parse import urlparse
@@ -231,7 +234,9 @@ def parse_args():
                    help="Send N benign requests before the audit to mitigate "
                         "request-count-gated backdoors (AC-1.b). Default: 0")
     p.add_argument("--timeout", type=int, default=120, help="Request timeout in seconds")
-    p.add_argument("--output", default=None, help="Report output path (markdown)")
+    p.add_argument("--output", default=None, help="Report output path")
+    p.add_argument("--format", choices=["markdown", "json"], default="markdown",
+                   help="Report format (default: markdown). JSON progress goes to stderr.")
     p.add_argument("--transparent-log", default=None, metavar="PATH",
                    help="Path to an append-only JSONL forensic log (arXiv §7.3). "
                         "Every API request is recorded with timestamp, URL, "
@@ -1673,6 +1678,25 @@ def _run_step(name, reporter, step_fn, *args, default=None, crashes=None):
 
 def main():
     args = parse_args()
+    report_stdout = sys.stdout
+    if args.format == "json":
+        # Include printing in APIClient and individual probes in this boundary.
+        # Keep the original stdout solely for the final machine-readable report.
+        with redirect_stdout(sys.stderr):
+            return _run_audit(args, report_stdout)
+    return _run_audit(args, report_stdout)
+
+
+def _write_report(text, args, report_stdout, label="Report"):
+    if args.output:
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.output).write_text(text, encoding="utf-8")
+        print(f"\n  {label} saved: {args.output}")
+    else:
+        print(text, file=report_stdout)
+
+
+def _run_audit(args, report_stdout):
     client = APIClient(args.url, args.key, args.model, timeout=args.timeout)
 
     # v1.7.7: transparent forensic log (arXiv §7.3)
@@ -1690,13 +1714,24 @@ def main():
         print(f"{'=' * 60}\n")
 
         result = run_connectivity_check(client)
-        md = result["markdown"]
-        if args.output:
-            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-            Path(args.output).write_text(md, encoding="utf-8")
-            print(f"  Connectivity report saved: {args.output}")
-        else:
-            print(md)
+        output = result["markdown"]
+        if args.format == "json":
+            data = Reporter().to_dict(
+                target_url=client.base_url, model=args.model,
+                tool_version=f"v{_tool_version()}", profile=args.profile,
+                tool_commit=_tool_commit_from_checkout(),
+                report_type="connectivity", markdown=output,
+            )
+            # The connectivity result also holds a client with credentials.
+            # Only export the existing sanitized public probe records.
+            data["connectivity"] = {
+                "verdict": result["verdict"],
+                "success": result["success"],
+                "successful_formats": result["successful_formats"],
+                "probes": [asdict(probe) for probe in result["probes"]],
+            }
+            output = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+        _write_report(output, args, report_stdout, label="Connectivity report")
 
         if _transparent_logger is not None:
             _transparent_logger.close()
@@ -1905,6 +1940,7 @@ def main():
     d6 = web3_inj_verdict == "anomaly"
     d6i = web3_inj_inconclusive
     if d3 or d4 or d5 or d6:
+        risk_level = "HIGH"
         report.p("### HIGH RISK\n")
         reasons = []
         if d3:
@@ -1943,19 +1979,23 @@ def main():
             )
         report.p(" ".join(reasons) + " **Do not use.**")
     elif d1 and d2:
+        risk_level = "HIGH"
         report.p("### HIGH RISK\n")
         report.p("Hidden injection signal and caller system instruction non-adherence "
                  "observed. The mechanism and attribution remain unverified. "
                  "Not suitable for any use case requiring custom behavior.")
     elif d1:
+        risk_level = "MEDIUM"
         report.p("### MEDIUM RISK\n")
         report.p("Hidden injection detected but instructions may partially work. "
                  "OK for simple Q&A, not recommended for complex applications.")
     elif d2:
+        risk_level = "MEDIUM"
         report.p("### MEDIUM RISK\n")
         report.p("No significant injection signal, but Step 5 observed caller "
                  "system instruction non-adherence. The mechanism remains unverified.")
     elif d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_step_crashed:
+        risk_level = "MEDIUM"
         report.p("### MEDIUM RISK\n")
         medium_reasons = []
         if any_step_crashed:
@@ -2007,27 +2047,54 @@ def main():
             )
         report.p(" ".join(medium_reasons))
     else:
+        risk_level = "LOW"
         report.p("### LOW RISK\n")
         report.p("No significant injection, instruction override, tool-call "
                  "substitution, error response leakage, stream integrity "
                  "anomaly, or Web3 injection detected.")
 
     # Output
-    md = report.render(
-        target_url=client.base_url,
-        model=args.model,
-        tool_version=f"v{_tool_version()}",
-        profile=args.profile,
-        tool_commit=_tool_commit_from_checkout(),
-    )
-
-    if args.output:
-        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.output).write_text(md, encoding="utf-8")
-        print(f"\n  Report saved: {args.output}")
+    metadata = {
+        "target_url": client.base_url,
+        "model": args.model,
+        "tool_version": f"v{_tool_version()}",
+        "profile": args.profile,
+        "tool_commit": _tool_commit_from_checkout(),
+    }
+    if args.format == "json":
+        skipped = [
+            ("Step 1 infrastructure", args.skip_infra),
+            ("Step 7 context length", args.skip_context),
+            ("Step 8 tool substitution", args.skip_tool_substitution),
+            ("Step 9 error leakage", args.skip_error_leakage),
+            ("Step 10 stream integrity", args.skip_stream_integrity),
+            ("Step 11 web3 injection", args.profile == "general" or args.skip_web3_injection),
+            ("Step 12 infra fingerprint", args.skip_infra_fingerprint),
+            ("Step 13 latency variance", args.skip_latency_variance),
+            ("Step 14 channel classifier", args.skip_channel_classifier),
+        ]
+        inconclusive = [
+            ("Step 3 token injection", d1i),
+            ("Step 5 instruction override", d2i),
+            ("Step 8 tool substitution", d3i),
+            ("Step 9 error leakage", d4i),
+            ("Step 10 stream integrity", d5i),
+            ("Step 11 web3 injection", d6i),
+        ]
+        data = report.to_dict(
+            **metadata, risk_level=risk_level,
+            coverage={
+                "skipped_steps": [name for name, omitted in skipped if omitted],
+                "risk_matrix_inconclusive_steps": [name for name, unknown in inconclusive if unknown],
+                "crashed_steps": list(step_crashes),
+            },
+        )
+        output = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     else:
-        print(f"\n{'=' * 60}")
-        print(md)
+        output = report.render(**metadata)
+        if not args.output:
+            print(f"\n{'=' * 60}")
+    _write_report(output, args, report_stdout)
 
     # Close transparent log
     if _transparent_logger is not None:
