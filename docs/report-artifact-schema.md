@@ -4,12 +4,13 @@ This is the draft data contract for public, redacted API Relay Audit report
 artifacts. It is intended to support documentation examples today and a future
 user-submission page later.
 
-It is not a required JSON output format for `audit.py` yet. The current CLI
-continues to write Markdown reports.
+`report-artifact-v0.1` is a draft documentation and public fixture contract.
+It is separate from the local CLI [JSON report schema version 1](./json-report.md)
+introduced in v2.5.0. The CLI defaults to Markdown and supports opt-in
+`--format json`; neither output is automatically redacted for public sharing.
 
-`report-artifact-v0.1` is a draft documentation and fixture contract only. No
-backward compatibility or CLI JSON output is promised until an explicit v1
-schema and implementation ship.
+No compatibility or automatic export to `report-artifact-v0.1` is promised.
+A future public submission workflow needs its own schema and redaction gate.
 
 ## Design Goals
 

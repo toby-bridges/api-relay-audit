@@ -6,8 +6,7 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-08-16 (DSH bundle added with strict adapter/runtime
-boundaries; Step 10 completeness remains in the existing 6D risk matrix)
+**Last updated**: 2026-10-09 (JSON reports merged; v2.5.0 release preparation)
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -22,6 +21,16 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
 ---
 
 ## ✅ Shipped
+
+### 2026-10-09 source — JSON reports and evidence calibration
+- Opt-in local JSON reports in both distributions preserve the existing risk
+  matrix, evidence, and connectivity exit codes; JSON is not a public export.
+- Weak prompt-extraction keywords remain inconclusive, and the Cat Test
+  records exact caller instructions without claiming mechanism or attribution.
+- Research references and signal-interpretation documentation are merged.
+- **Final test count**: 885/885 passing on the merged JSON source.
+- v2.5.0 release preparation follows these changes. Publication, GEO/SEO work,
+  and additional ecosystem connectors have separate verification gates.
 
 ### 2026-08-16 distribution — DeepSeek Harness bundle
 - **Two-profile bundle**: the repository package installs into DSH web and

@@ -13,13 +13,13 @@
 <main class="wrap">
   <div class="eyebrow">DeepSeek Harness Plugin</div>
   <h1>Run API relay audits from DeepSeek Harness</h1>
-  <p class="lead">The v2.4.1 DSH bundle registers <code>/relay-audit</code> on compatible web and cc-tui profiles and reuses the selected route. This adapter currently requires the selected model route to declare Claude.</p>
+  <p class="lead">The v2.5.0 candidate DSH bundle registers <code>/relay-audit</code> on compatible web and cc-tui profiles and reuses the selected route. This adapter currently requires the selected model route to declare Claude.</p>
 
   <section class="note">API Relay Audit does not certify that a relay is safe. Results remain local evidence with explicit clean, anomaly, and inconclusive states.</section>
 
   <h2>Install the immutable release</h2>
   <p>Official rc.6 Web and <code>dsh-cc-tui</code> <code>0.4.1</code> composition passed in CI. Isolated Web installs, boot, and installed-handler connectivity passed on DSH <code>0.1.7-rc.2</code> and <code>0.2.0-rc.2</code>. Interactive command rendering and Desktop profiles remain unverified; start with an isolated profile.</p>
-  <pre class="code"><code>DSH_PLUGIN_REF=v2.4.1
+  <pre class="code"><code>DSH_PLUGIN_REF=v2.5.0
 dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"</code></pre>
 
@@ -45,7 +45,7 @@ dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGI
 
   <h2>Evidence scope</h2>
   <p>The plugin preserves separate API relay audit, prompt injection audit, model substitution signals, and Web3 relay audit query families. Model identity is a consistency signal, not standalone provider proof. The v2.4.1 host checks covered connectivity mode against a local fixture; they do not cover a full audit or an interactive Web session.</p>
-  <p>Review the change and test boundary in the <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/releases/v2.4.1.md">v2.4.1 release notes</a>. The <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/distribution-verification-v2.4.0.md">v2.4.0 distribution verification</a> remains historical evidence for that tag.</p>
+  <p>Review the candidate scope in the <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/releases/v2.5.md">v2.5 release notes</a>. A draft alone does not make pinned downloads available. The <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/distribution-verification-v2.4.0.md">v2.4.0 distribution verification</a> remains historical evidence for that tag.</p>
 </main>
 <footer><div class="wrap">Related: <a href="audit-claude-api-relay-safely.html">audit a Claude API relay safely</a> · <a href="detect-prompt-injection-llm-api-proxies.html">prompt injection in LLM proxies</a></div></footer>
 </body>

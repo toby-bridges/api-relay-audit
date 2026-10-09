@@ -553,10 +553,10 @@ footer a:hover{color:var(--text)}
           <div class="agent-step-num">1</div>
           <div class="agent-step-title" data-i18n="agent_step1_title">Install the DSH Plugin</div>
         </div>
-        <p data-i18n="agent_step1_desc">Pin the v2.4.1 bundle in an isolated web profile:</p>
-        <div class="agent-cmd" data-cmd='dsh plugin --profile web add "github:toby-bridges/api-relay-audit#v2.4.1"'>
+        <p data-i18n="agent_step1_desc">Pin the v2.5.0 bundle in an isolated web profile:</p>
+        <div class="agent-cmd" data-cmd='dsh plugin --profile web add "github:toby-bridges/api-relay-audit#v2.5.0"'>
           <button class="copy-btn" onclick="copyAgentCmd(this)" data-i18n="copy_btn">Copy</button>
-          dsh plugin --profile web add "github:toby-bridges/api-relay-audit#v2.4.1"
+          dsh plugin --profile web add "github:toby-bridges/api-relay-audit#v2.5.0"
         </div>
       </div>
 
@@ -988,7 +988,7 @@ function generateCmd(){
   if(!url){document.getElementById('f-url').focus();return}
   if(!key){document.getElementById('f-key').focus();return}
   const win=isWindows();
-  const scriptRef='v2.4.1';
+  const scriptRef='v2.5.0';
   let cmd;
   if(win){
     // PowerShell: Invoke-WebRequest, semicolon, single-quote escaping via doubling
@@ -1097,7 +1097,7 @@ const i18n={
     cmd_history_hint:"Tip: 命令中的 Key 会留在 shell history 中。如需更安全，可改用环境变量: export KEY=sk-... 然后 --key $KEY",
     tab_human:"手动运行",tab_agent:"Agent 自动运行",
     agent_pitch:"安装 DeepSeek Harness 插件，从已配置的 DSH profile 运行本地 14 步审计。",
-    agent_step1_title:"安装 DSH 插件",agent_step1_desc:"将 v2.4.1 bundle 固定安装到隔离的 web profile：",
+    agent_step1_title:"安装 DSH 插件",agent_step1_desc:"将 v2.5.0 bundle 固定安装到隔离的 web profile：",
     agent_step2_title:"运行连通性检查",agent_step2_desc:"选择已配置的 Claude route，然后运行低成本检查：",
     agent_trigger:"/relay-audit --connectivity",
     agent_step3_title:"查看本地报告",agent_step3_desc:"连通性通过后运行 /relay-audit 完成 14 步审计；报告保留在 session workspace。",
@@ -1198,7 +1198,7 @@ const i18n={
     cmd_history_hint:"Tip: The Key in this command will persist in shell history. For better hygiene: export KEY=sk-... then use --key $KEY",
     tab_human:"Run Manually",tab_agent:"Agent Auto-Run",
     agent_pitch:"Install the DeepSeek Harness plugin and run the local 14-step audit from your configured DSH profile.",
-    agent_step1_title:"Install the DSH Plugin",agent_step1_desc:"Pin the v2.4.1 bundle in an isolated web profile:",
+    agent_step1_title:"Install the DSH Plugin",agent_step1_desc:"Pin the v2.5.0 bundle in an isolated web profile:",
     agent_step2_title:"Run a Connectivity Check",agent_step2_desc:"Select a configured Claude route, then run the lower-cost check:",
     agent_trigger:"/relay-audit --connectivity",
     agent_step3_title:"Review the Local Report",agent_step3_desc:"Run /relay-audit for the full 14-step audit after connectivity passes; reports stay in the session workspace.",

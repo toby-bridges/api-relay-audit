@@ -43,9 +43,10 @@ The release workflow validates and creates a draft GitHub Release. It must not
 edit `master`; source changes belong in the release-prep PR.
 
 Run the draft-release workflow only from `master` after the release-prep PR is
-merged. If versioned skill or release docs now point at a new tag such as
-`v2.3.0`, create the draft release immediately after merge so the immutable tag
-exists before users follow those download commands.
+merged. Create the draft release immediately after merge. A draft release can
+exist without creating a public Git tag, so it does not prove that versioned
+download commands work. State this limitation in candidate notes, and verify
+the tag and pinned downloads after publication before announcing availability.
 
 ## Publish and Verify
 
