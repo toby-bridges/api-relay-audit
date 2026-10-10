@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>API Relay Audit — 30 秒项目介绍</title>
+  <meta name="description" content="用 30 秒了解 API Relay Audit：本地审计 AI API 中转站，生成可复查的证据报告。中文旁白与字幕，合成示例画面。">
+  <link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/video.html">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #0a0e17;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+      line-height: 1.7;
+    }
+    main { width: min(100% - 40px, 1000px); margin: 36px auto 64px; }
+    a { color: #93c5fd; text-underline-offset: 4px; }
+    a:hover { color: #bfdbfe; }
+    :focus-visible { outline: 3px solid #93c5fd; outline-offset: 5px; }
+    nav { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    h1 { margin: 32px 0 8px; font-size: clamp(1.8rem, 5vw, 3rem); line-height: 1.25; }
+    .subtitle, .note { color: #94a3b8; }
+    .subtitle { margin: 0 0 24px; }
+    figure { margin: 0; }
+    video {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border: 1px solid #283548;
+      border-radius: 12px;
+    }
+    figcaption { margin-top: 12px; color: #cbd5e1; font-size: .9rem; }
+    .links { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 20px 0; }
+    .note { font-size: .92rem; }
+    details { margin-top: 28px; padding: 18px 22px; background: #111827; border: 1px solid #283548; border-radius: 12px; }
+    summary { cursor: pointer; font-weight: 600; }
+    details p:last-child { margin-bottom: 0; }
+    @media (max-width: 480px) {
+      main { width: calc(100% - 24px); margin-top: 24px; }
+      details { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <nav aria-label="项目导航">
+      <a href="./">← 项目主页</a>
+      <a href="https://github.com/toby-bridges/api-relay-audit">GitHub 仓库 ↗</a>
+    </nav>
+
+    <h1>API Relay Audit</h1>
+    <p class="subtitle">30 秒了解：在信任 AI API 中转站之前，先审计。</p>
+
+    <figure>
+      <video controls playsinline preload="metadata"
+        poster="assets/api-relay-audit-cover.png"
+        aria-label="API Relay Audit 30 秒项目介绍，中文旁白"
+        aria-describedby="video-description">
+        <source src="assets/api-relay-audit-30s.mp4" type="video/mp4">
+        <track kind="captions" src="assets/api-relay-audit-zh.vtt" srclang="zh-CN" label="中文">
+        你的浏览器无法播放此视频，请<a href="assets/api-relay-audit-30s.mp4">下载 MP4</a>观看。
+      </video>
+      <figcaption id="video-description">中文旁白 · 画面已含中文字幕 · 播放器提供可选字幕轨</figcaption>
+    </figure>
+
+    <div class="links">
+      <a href="assets/api-relay-audit-30s.mp4" download>下载 MP4</a>
+      <a href="https://github.com/toby-bridges/api-relay-audit/tree/master/video">Remotion 源码</a>
+      <a href="assets/api-relay-audit-zh.vtt" download>下载中文字幕</a>
+    </div>
+    <p class="note">基于公开版本 v2.4.1。终端与报告画面使用合成示例，不是真实审计结果。审计报告提供证据状态，不构成中转站的安全认证。</p>
+
+    <details>
+      <summary>阅读文字稿</summary>
+      <p>你的 AI API 中转，真的只是在转发吗？它可能注入隐藏提示、替换模型、截断上下文，甚至改写工具调用。</p>
+      <p>API Relay Audit 在本地运行十四步审计，不增加额外的密钥托管方，并生成可复查的 Markdown 证据报告。</p>
+      <p>Clean、Anomaly、Inconclusive，清楚区分。信任之前，先审计。</p>
+    </details>
+  </main>
+</body>
+</html>
