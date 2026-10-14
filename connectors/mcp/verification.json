@@ -1,0 +1,127 @@
+{
+  "verified_date_client_timezone": "2026-10-14 Asia/Shanghai",
+  "status": "verified-local-candidate-unpublished",
+  "baseline": {
+    "ref": "v2.5.0",
+    "commit": "75bdac000051871c9f088a3be58e6f17a8854ffb",
+    "engine_sha256": "fd99409bf745090a26bb4616fd33fbe0d873de08cfe077df413b2b93845f151d",
+    "engine_modified": false
+  },
+  "adapter": {
+    "package": "api-relay-audit-mcp",
+    "version": "2.5.0.dev1",
+    "transport": "stdio",
+    "sdk": "mcp==2.3.0",
+    "tested_python": "3.14.3",
+    "tested_os": "macOS"
+  },
+  "checks": [
+    {
+      "command": "python3 -m pytest tests/ -q",
+      "passed": 885,
+      "failed": 0
+    },
+    {
+      "command": "node --test dsh/test/*.test.js",
+      "passed": 19,
+      "failed": 0
+    },
+    {
+      "command": "connectors/mcp/.venv/bin/python -m pytest connectors/mcp/tests/ -q",
+      "passed": 70,
+      "failed": 0,
+      "note": "Final combined suite before adding the separate installed-wheel runtime case."
+    },
+    {
+      "command": "connectors/mcp/.venv/bin/python -m pytest connectors/mcp/tests/test_packaging.py::test_installed_wheel_uses_bundled_engine_over_real_stdio -q",
+      "passed": 1,
+      "failed": 0,
+      "note": "Additional unique test: temp-installed wheel, real MCP client and exact bundled CLI against loopback."
+    },
+    {
+      "command": "connectors/mcp/.venv/bin/python -m pytest connectors/mcp/tests --collect-only -q",
+      "collected": 71
+    },
+    {
+      "command": "python3 scripts/build-standalone.py --check",
+      "status": "passed"
+    },
+    {
+      "command": "python3 scripts/collect-metrics.py --check",
+      "status": "passed"
+    },
+    {
+      "command": "python3 scripts/sync-version.py --check",
+      "status": "passed"
+    },
+    {
+      "command": "connectors/mcp/.venv/bin/python -m build connectors/mcp",
+      "status": "passed"
+    },
+    {
+      "command": "git diff --cached --check",
+      "status": "passed"
+    },
+    {
+      "check": "Final archives compared against current package sources and exact release engine bytes",
+      "status": "passed"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "connectors/mcp/dist/api_relay_audit_mcp-2.5.0.dev1-py3-none-any.whl",
+      "sha256": "bcbced294a4c1a9240ad91c83de7c3558e83624173f4dfe124800b2bda50d7a7",
+      "size_bytes": 109096
+    },
+    {
+      "path": "connectors/mcp/dist/api_relay_audit_mcp-2.5.0.dev1.tar.gz",
+      "sha256": "c8488f2f117f65b94f6c18d8763721c1e605c37c0a0fea9137cf95be5d2d80e5",
+      "size_bytes": 120345
+    }
+  ],
+  "verified_behaviors": [
+    "real SDK stdio initialization and three tools",
+    "installed-wheel connectivity with bundled engine",
+    "synthetic quick audit preserving HIGH and inconclusive/skipped/crashed coverage",
+    "no raw responses, flag messages, target URL, model or credentials in tool output",
+    "SDK invalid argument input does not reflect synthetic secrets",
+    "private 0600 reports and path confinement",
+    "one execution at a time and bounded retained job count",
+    "chunked and oversize final JSON",
+    "timeout and cancel including process descendants and pending spawn",
+    "normal EOF and SIGTERM cleanup",
+    "parent curl defaults and redirect destination isolation"
+  ],
+  "independent_review": {
+    "status": "no_remaining_blockers_observed",
+    "scope": "read-only adapter/server review; tests separately executed"
+  },
+  "not_verified": [
+    "native Codex/Claude Code/Cursor/VS Code host installation and calls",
+    "Linux runtime",
+    "Python 3.10 runtime",
+    "Windows (intentionally rejected)",
+    "real provider behavior or paid calls",
+    "real provider full context scan",
+    "PyPI name availability or publication",
+    "registry acceptance or traffic uplift"
+  ],
+  "known_limits": [
+    "Exact released standalone engine uses curl -sk: TLS peer certificate is not verified.",
+    "The 1 MiB bound caps final CLI reports, not raw HTTP memory inside the unchanged engine.",
+    "Job handles do not resume after MCP server restart; completed local reports remain.",
+    "SIGKILL or interpreter/machine failure cannot execute graceful cleanup."
+  ],
+  "external_actions": {
+    "push": false,
+    "pull_request": false,
+    "publication": false,
+    "native_host_activation": false,
+    "real_credentials_used": false
+  },
+  "subagents": {
+    "packaging": "completed",
+    "tests": "completed",
+    "read_only_review": "completed"
+  }
+}

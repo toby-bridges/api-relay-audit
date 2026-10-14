@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools==82.0.1", "wheel==0.46.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "api-relay-audit-mcp"
+version = "2.5.0.dev1"
+description = "Local stdio MCP adapter for the API Relay Audit v2.5.0 engine"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+dependencies = ["mcp==2.3.0"]
+keywords = ["mcp", "api-relay", "security-audit"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+]
+
+[project.urls]
+Repository = "https://github.com/toby-bridges/api-relay-audit"
+"Engine release" = "https://github.com/toby-bridges/api-relay-audit/releases/tag/v2.5.0"
+
+[project.scripts]
+api-relay-audit-mcp = "api_relay_audit_mcp.server:main"
+
+[tool.setuptools]
+packages = ["api_relay_audit_mcp"]
+
+[tool.setuptools.package-data]
+api_relay_audit_mcp = ["provenance.json"]

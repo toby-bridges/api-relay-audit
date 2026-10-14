@@ -69,3 +69,61 @@
 ---
 
 *This file is maintained automatically during implementation.*
+
+
+---
+
+# MCP Distribution Implementation Notes
+
+> Task: Local stdio MCP distribution for API Relay Audit
+> Spec: User-approved development; remote v2.5.0, commit 75bdac000051871c9f088a3be58e6f17a8854ffb
+> Started: 2026-10-14
+> Completed: 2026-10-14 (local candidate)
+
+## Design Decisions
+
+| # | Decision | Context | Alternative considered |
+|---|----------|---------|----------------------|
+| 1 | Build in an attached isolated worktree at v2.5.0. | The original checkout is dirty and predates the release. Its files must remain untouched. | Edit the original checkout. |
+| 2 | Reuse the earlier local MCP prototype as reviewed source, retaining its privacy checks. | Commit 677171b contains two tools and synthetic tests; it is not part of the remote release. | Reimplement its established safeguards. |
+| 3 | Expose check_connectivity, run_audit and get_audit_result. Cancellation is an action on get_audit_result. | Long audits cannot occupy a host tool call indefinitely. Credentials and targets are local configuration only. | One blocking full-audit tool or many per-step tools. |
+| 4 | Run the unchanged generated standalone CLI as a subprocess and bundle the exact v2.5.0 script into install artifacts. | The release has JSON output and key-env support. Detection rules and risk ratings stay authoritative in that script. | Refactor orchestration or create a third detection engine. |
+| 5 | Return allowlisted enums, counts and step numbers; keep raw reports local. | Relay responses and flag messages may contain credentials or prompt injection. The released JSON is not a sanitized export. | Forward complete JSON or model-generated redaction. |
+| 6 | Start with local POSIX stdio execution and synthetic loopback verification. | Process-group cleanup is needed for audit and curl descendants. No real credentials, paid calls or host activation is authorized. | Remote HTTP hosting or unverified Windows support. |
+| 7 | Set a private child CURL_HOME with an empty .curlrc and DEVNULL stdin. | The fixed release engine otherwise reads the real user's curl defaults; those could add redirects, URLs or output paths. | Change the immutable audit script or trust inherited curl defaults. |
+| 8 | Track and join pending process creation before closing the connector. | Cancellation and shutdown can arrive between OS spawn and Python process registration. | Kill only processes already in the running set. |
+| 9 | Preserve the release's earlier implementation log and append this task. | The original DSH decisions remain useful evidence. | Replace the existing journal. |
+| 10 | Sanitize SDK validation errors before protocol serialization. | mcp 2.3.0's default Pydantic error includes caller input values before tool bodies run. | Catch exceptions only inside each tool. |
+
+## Deviations
+
+| # | What changed | Spec said | I did instead | Why |
+|---|-------------|-----------|---------------|-----|
+| 1 | Existing prototype is extended and repackaged. | Add an MCP distribution. | Reuse only connector files from the local prototype, based on a clean remote v2.5.0 tree. | Avoid duplicate work without bringing in unrelated local changes. |
+
+## Tradeoffs
+
+| # | Topic | Option A | Option B | Chose | Reasoning |
+|---|-------|----------|----------|-------|-----------|
+| 1 | Credential handling | Arbitrary URL and API key tool parameters | Preconfigured target IDs bound to environment credentials | B | Prevent model-visible secrets and credential reuse against a different destination. |
+| 2 | Audit lifecycle | Blocking call | Local background job with status/cancel | B | Keep protocol responsive and enforce a total deadline and bounded concurrency. |
+| 3 | TLS behavior | Modify generated audit transport | Retain exact v2.5.0 bytes and disclose curl -sk | B | This delivery adds a distribution adapter; HTTPS target validation does not prove TLS peer authenticity. |
+
+## Open Questions
+
+| # | Question | Impact | My assumption | Blocking? |
+|---|----------|--------|---------------|-----------|
+| 1 | Public package name availability and directory admission | External distribution | Use api-relay-audit-mcp as a local candidate name; publication and registry submission require separate approval. | No |
+| 2 | Actual native host compatibility | Client integration | Templates and SDK stdio tests are distinct from installation in Codex, Claude Code, Cursor or VS Code. | No |
+
+This file is maintained during implementation.
+
+## Acceptance Evidence
+
+- Existing Python suite: 885 passed. DSH suite: 19 passed.
+- MCP suite: 70 passed, then one additional installed-wheel/stdio/loopback case passed; 71 unique cases in total.
+- Standalone generation, metrics drift, version sync and diff whitespace checks passed.
+- Wheel and source archive built; installed entry points and independent source-archive rebuild verified. Final archives match current adapter sources and the exact v2.5.0 engine hash.
+- Independent review completed without remaining blockers; packaging, tests and review subagents completed.
+- Only synthetic credentials and loopback were used. No public write, paid provider call or native host activation occurred. Original dirty checkout state was preserved.
+- Detailed commands, hashes, limitations and unverified surfaces: `connectors/mcp/verification.json`.

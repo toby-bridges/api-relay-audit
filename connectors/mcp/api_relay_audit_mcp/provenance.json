@@ -1,0 +1,12 @@
+{
+  "engine_repository": "https://github.com/toby-bridges/api-relay-audit",
+  "engine_ref": "v2.5.0",
+  "engine_commit": "75bdac000051871c9f088a3be58e6f17a8854ffb",
+  "engine_sha256": "fd99409bf745090a26bb4616fd33fbe0d873de08cfe077df413b2b93845f151d",
+  "engine_license": "AGPL-3.0-only",
+  "adapter_version": "2.5.0.dev1",
+  "sdk_name": "mcp",
+  "sdk_version": "2.3.0",
+  "sdk_license": "MIT",
+  "distribution_status": "local-candidate-unpublished"
+}
