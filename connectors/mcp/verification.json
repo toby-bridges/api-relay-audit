@@ -123,5 +123,7 @@
     "packaging": "completed",
     "tests": "completed",
     "read_only_review": "completed"
-  }
+  },
+  "snapshot_scope": "Historical pre-PR local candidate acceptance at db0312c3c68225f7f92c6ba90fdd76f7aaf1cb4a; artifact hashes and external action flags describe that phase.",
+  "later_native_verification": "native/verification.json"
 }

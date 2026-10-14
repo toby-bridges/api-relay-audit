@@ -9,7 +9,9 @@ is pinned to `mcp==2.3.0`; the standalone CLI remains Python stdlib plus curl.
 
 Package `api-relay-audit-mcp`, version `2.5.0.dev1`, is a **local, unpublished
 candidate**. It has not been uploaded to PyPI, submitted to a registry, or
-installed in a native assistant host. Package version and engine version are
+published. Temporary installations have passed native Codex app-server and
+Claude Code tests on macOS with synthetic loopback fixtures; see
+[native verification](native/README.md). Package version and engine version are
 separate: the bundled engine is the verified released v2.5.0 script.
 
 ## Tools
@@ -121,8 +123,8 @@ and merge the named server entry with your existing configuration.
 
 | Host | Template | Destination | Verification boundary |
 | --- | --- | --- | --- |
-| Claude Code | `examples/claude-code.json` | Project `.mcp.json` | Official configuration shape; native session unverified. |
-| Codex | `examples/codex.toml` | `[mcp_servers.relay-audit]` in `config.toml` | Configuration recipe; native session unverified. |
+| Claude Code | `examples/claude-code.json` | Project `.mcp.json` | Native headless dispatch with temporary config and scripted local provider verified. |
+| Codex | `examples/codex.toml` | `[mcp_servers.relay-audit]` in `config.toml` | Native app-server dispatch with temporary config verified; no model turn or GUI test. |
 | Cursor | `examples/cursor.json` | `.cursor/mcp.json` | Official configuration shape; native session unverified. |
 | VS Code / Copilot | `examples/vscode-copilot.json` | Portable project `.mcp.json` | Official portable shape; native session unverified. |
 
@@ -131,8 +133,9 @@ Official references checked 2026-10-14:
 [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference),
 [Cursor](https://cursor.com/docs/mcp),
 [VS Code](https://code.visualstudio.com/docs/agent-customization/mcp-servers).
-SDK stdio tests are distinct from installing and invoking the connector in
-these hosts. DSH distribution remains independent. Remote hosting requires
+The two native tests use private generated configuration rather than merging
+these templates into an existing account. GUI setup, real model decisions,
+Cursor and VS Code sessions remain unverified. DSH distribution remains independent. Remote hosting requires
 a separate HTTP, authentication and deployment phase.
 
 ## Build and verify
@@ -152,9 +155,11 @@ paths refuse bytes that differ from the engine SHA-256 in `provenance.json`:
 
 Tests use synthetic credentials and local loopback fixtures. They cover real
 stdio initialization, schemas, status/cancel, private evidence exclusion,
-bounded input, process cleanup and package contents. Real-provider behavior,
-Linux runtime, native host activation and public package/registry acceptance
-remain unverified. Public distribution needs a separate approved release step;
+bounded input, process cleanup and package contents. Opt-in
+[native host scripts](native/README.md) separately verify installed-wheel
+dispatch, actual audit/cancel and host-exit cleanup. Real-provider behavior,
+Linux runtime, GUI setup and public package/registry acceptance remain
+unverified. Public distribution needs a separate approved release step;
 the candidate package name has not been reserved or verified available.
 
 ## License and provenance

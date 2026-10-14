@@ -127,3 +127,50 @@ This file is maintained during implementation.
 - Independent review completed without remaining blockers; packaging, tests and review subagents completed.
 - Only synthetic credentials and loopback were used. No public write, paid provider call or native host activation occurred. Original dirty checkout state was preserved.
 - Detailed commands, hashes, limitations and unverified surfaces: `connectors/mcp/verification.json`.
+
+## Native Host Verification (2026-10-14)
+
+User authorized local native-host testing after PR #110 was created. This phase
+uses only synthetic credentials, installed local wheel artifacts and loopback
+fixtures. Global host settings, account login and system configuration remain
+outside its scope.
+
+| Decision | Reason |
+|---|---|
+| Use documented state-root variables only in child environment dictionaries pointing to fresh directories. | Avoid loading real host config/auth while leaving the parent environment and existing state unchanged. |
+| Codex calls through app-server without starting a model turn. | Exercise real native MCP dispatch independently of model selection and cost. |
+| Claude Code uses bare mode and a separate local Anthropic SSE fixture. | The native host's tool scheduler still needs model-shaped responses; scripted tool_use/tool_result exercises it without a real account. |
+| Save only allowlisted assertions, versions, counts and hashes. | Raw host logs/config responses can contain private fields; mock traffic receipts are not packet capture. |
+| Keep configuration isolation distinct from physical egress enforcement and clean-machine certification. | No firewall, proxy, certificate or system-account changes are authorized or needed for this phase. |
+
+Native acceptance completed on the final rebuilt wheel:
+
+- Codex `0.162.0-alpha.17.2`: 18 checks passed using app-server native MCP
+  dispatch, without starting a model turn. Connectivity remained unrated;
+  quick audit preserved HIGH and skipped steps; actual slow jobs cancelled.
+  stdin EOF exited without harness termination, with three observed
+  descendants and zero live descendants afterwards.
+- Claude Code `2.1.299`: smoke, lifecycle and exit-running scenarios passed.
+  The local scripted provider received 76 requests and 73 tool results. Actual
+  quick audit completed HIGH; cancellation and exit during slow relay traffic
+  passed with zero surviving observed descendants in all three scenarios.
+- The incremental Codex stdout privacy check initially failed (exit 1).
+  A bounded initialization/config-read diagnostic established that the only
+  markers were in the operator-requested administrative config response.
+  The revised check exempts only one outstanding successful `config/read`
+  response with the expected object structure; all tool results, errors,
+  notifications, stderr and other protocol outputs remain strict. The final
+  run observed one administrative receipt and no markers elsewhere.
+- README is wheel metadata, so documentation changes required a new build
+  and both native runs against its final SHA-256. The MCP suite then passed
+  all 71 cases together (37.51 seconds); standalone generation passed. Archive
+  sources/templates and engine bytes were checked against the checkout.
+- Independent native implementation/research/isolation review agents completed.
+  No real credential, real model, paid provider or global host-setting change
+  was used. The original checkout remained outside all edits.
+- Reproduction and final artifact hashes: `connectors/mcp/native/README.md`
+  and `connectors/mcp/native/verification.json`. The earlier
+  `connectors/mcp/verification.json` remains an explicitly historical snapshot.
+- GUI, real-model decisions, Cursor/VS Code, clean-user installation and
+  physical egress enforcement remain separate unverified gates. Package
+  publication and PR merge remain outside the authorization for this phase.
