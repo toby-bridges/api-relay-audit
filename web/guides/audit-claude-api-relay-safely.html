@@ -21,65 +21,66 @@
 <main class="wrap">
   <div class="eyebrow">Guide</div>
   <h1>How to audit a Claude API relay safely</h1>
-  <p class="lead">To audit a Claude-compatible relay safely, run the audit locally, point it only at the relay URL you intend to test, and review each finding as evidence rather than as a safety certificate.</p>
+  <p class="lead">Audit a Claude-compatible API relay by reviewing a fixed script locally, checking connectivity, then running behavioral probes against an endpoint you are authorized to test. Keep the evidence local and review individual findings. A successful connection or a <code>LOW</code> summary rating is not a safety certificate.</p>
+  <p>This guide covers <strong>v2.5.0</strong>, commit <a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/scripts/audit.py"><code>75bdac0</code></a>, checked October 17, 2026. For signal classification and an offline synthetic example, see <a href="detect-prompt-injection-llm-api-proxies.html">detecting prompt injection in LLM API proxies</a>.</p>
 
-  <h2>Safe audit checklist</h2>
-  <ol>
-    <li>Use a scoped API key with limited budget when possible.</li>
-    <li>Run the standalone `audit.py` locally so the key does not pass through a separate web checker.</li>
-    <li>Save the Markdown report and review red, yellow, and inconclusive items.</li>
-    <li>Do not publish real relay credentials, private domains, wallet addresses tied to private use, or raw traffic captures.</li>
-  </ol>
+  <h2>1. Download and inspect the fixed version</h2>
+  <p>The standalone script requires Python 3 and curl. Downloading contacts GitHub; after download, <code>--help</code> makes no relay request. Read the script before running probes.</p>
+  <pre class="code"><code>curl -fsSL https://raw.githubusercontent.com/toby-bridges/api-relay-audit/75bdac000051871c9f088a3be58e6f17a8854ffb/audit.py -o audit.py
+python3 audit.py --help</code></pre>
 
-  <h2>Command</h2>
-  <pre class="code"><code>curl -sO https://raw.githubusercontent.com/toby-bridges/api-relay-audit/master/audit.py
-python audit.py \
-  --key &lt;YOUR_KEY&gt; \
-  --url &lt;BASE_URL&gt; \
-  --model claude-opus-4-6 \
-  --output claude-relay-audit.md</code></pre>
+  <h2>2. Check connectivity with a scoped key</h2>
+  <p>Set <code>API_RELAY_AUDIT_KEY</code> through your existing secret handling. Prefer a limited-budget key; <code>--key-env</code> avoids putting its value in the command. Replace the illustrative URL and model with authorized, supported values.</p>
+  <pre class="code"><code>python3 audit.py --key-env API_RELAY_AUDIT_KEY \
+  --url https://relay.example.com/v1 --model claude-opus-4-6 \
+  --connectivity --output connectivity.md</code></pre>
+  <p>This sends actual API requests and may incur charges. It checks connectivity, not security.</p>
 
-  <h2>Claude-specific checks</h2>
-  <table>
-    <tr><th>Area</th><th>What API Relay Audit checks</th></tr>
-    <tr><td>Identity</td><td>Non-Claude identity leaks, model substitution wording, and stream model identity where available.</td></tr>
-    <tr><td>Streaming</td><td>Anthropic-style SSE event types, usage monotonicity, thinking signature presence, and stream model consistency.</td></tr>
-    <tr><td>Prompt path</td><td>Token injection, prompt extraction, instruction conflict, and jailbreak behavior.</td></tr>
-    <tr><td>Tool path</td><td>Text-echo package command integrity for tool-call rewriting risks.</td></tr>
-  </table>
-
-  <h2>Interpreting inconclusive results</h2>
-  <p>Inconclusive means the probe could not establish a clean or anomalous result. It may happen because the relay blocks a request, does not support a format, truncates an answer, or returns an ambiguous response. Do not treat inconclusive as clean.</p>
+  <h2>3. Start with a reduced audit</h2>
+  <pre class="code"><code>python3 audit.py --key-env API_RELAY_AUDIT_KEY \
+  --url https://relay.example.com/v1 --model claude-opus-4-6 \
+  --skip-context --output relay-audit.md</code></pre>
+  <p><code>--skip-context</code> omits context testing; this is not full coverage. Other checks still send requests, including deliberately malformed error probes, and may incur charges. Leave <code>--aggressive-error-probes</code> off for the initial run.</p>
+  <p>If budgeted, replace <code>--skip-context</code> with <code>--fast-context</code>. Its reduced ladder uses 10K/50K/100K/200K <strong>characters, not tokens</strong>. The <a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/api_relay_audit/context.py">context probe</a> asks the model to recall five canaries; it does not certify a context-window size.</p>
 
   <h2 id="signal-interpretation">Interpretation guide: signals, checks, and limits</h2>
-  <p>This is an interpretation guide, not a detection-accuracy benchmark or a set of real-provider case studies. These signals call for review; none alone certifies a relay as safe or malicious.</p>
+  <p>These are interpretation examples, not a detection-accuracy benchmark or real-provider case studies.</p>
   <div class="signal-table-scroll" role="region" aria-labelledby="signal-interpretation" tabindex="0">
     <table class="signal-table">
       <thead><tr><th scope="col">Observed signal</th><th scope="col">How to cross-check</th><th scope="col">What it does not establish</th></tr></thead>
       <tbody>
         <tr>
           <td>Input tokens substantially exceed the estimate.</td>
-          <td>Match the model, messages, system/tool configuration, and token-counting rules. Repeat the probe; where available, compare the same request against an authorized official endpoint.</td>
-          <td>A token delta alone does not prove malicious prompt injection. The current probe uses approximate fixed baselines, not a matched official-endpoint measurement.</td>
+          <td>Match model, messages, system/tool settings, and token-counting rules. Repeat; compare the same request with an authorized official endpoint where available.</td>
+          <td>A delta does not prove malicious injection. v2.5.0 uses fixed approximate baselines, not a matched official-endpoint measurement.</td>
         </tr>
         <tr>
           <td>The response claims a different model identity.</td>
-          <td>Check for role-play or identity instructions. Repeat with neutral prompts, then compare response metadata with independently verifiable upstream evidence. Keep private captures local.</td>
-          <td>Self-identification or a relay-supplied <code>model</code> field alone does not prove model substitution or identify the actual upstream provider.</td>
+          <td>Check role-play and identity instructions. Repeat neutral prompts; compare metadata with independently verifiable upstream evidence.</td>
+          <td>Self-identification and relay-supplied <code>model</code> fields do not authenticate the actual upstream provider.</td>
         </tr>
         <tr>
           <td>An Anthropic-style SSE stream lacks <code>message_stop</code>.</td>
-          <td>Confirm the expected protocol and inspect the full event sequence, timeouts, client cancellation, and proxy disconnects. Transport errors or no substantive events remain <code>inconclusive</code>.</td>
-          <td>An incomplete stream does not by itself prove tampering or model downgrade. Do not apply Anthropic event requirements to OpenAI-only streams; a clean stream is not a safety certificate.</td>
+          <td>Confirm protocol; inspect event order, timeouts, cancellation, and disconnects. Transport failures or no substantive events remain <code>inconclusive</code>.</td>
+          <td>Incomplete streams do not prove tampering. Anthropic event requirements do not apply to OpenAI-only streams.</td>
+        </tr>
+        <tr>
+          <td>A package-command echo changes.</td>
+          <td>Compare expected and received text; distinguish package changes from model commentary or refusals.</td>
+          <td><a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/api_relay_audit/tool_substitution.py">Step 8</a> tests four text echoes without execution. It does not validate structured <code>tool_calls</code>/<code>tool_use</code> or reassemble streamed arguments.</td>
         </tr>
       </tbody>
     </table>
   </div>
-  <p><strong>Report wording caveat:</strong> v2.4.0 token reports can label a delta as detected injection. Treat that label as a heuristic finding requiring the cross-checks above, not confirmation of its cause.</p>
-  <p><strong>Related classifier limitation:</strong> the <a href="https://github.com/toby-bridges/api-relay-audit/issues/79#issuecomment-5543396106">public synthetic reproduction in issue #79</a> documents a separate prompt-extraction false positive on a pinned version. It supports manual review, not a measured error rate or a finding about any provider.</p>
+  <p><strong>Report wording caveat:</strong> v2.5.0 still labels token deltas as detected injection; treat that as a heuristic. The historical coding-word false positive in <a href="https://github.com/toby-bridges/api-relay-audit/issues/79#issuecomment-5543396106">issue #79</a> has a <a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/tests/test_prompt_extraction_regression.py">specific regression fix</a> in this version. Neither establishes a general false-positive rate.</p>
+
+  <h2>Coverage and operational limits</h2>
+  <p>The <a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/api_relay_audit/stream_integrity.py">SSE checks</a> inspect event types, usage consistency/monotonicity, model metadata, terminal completeness, and non-empty thinking signatures. Signature presence is not cryptographic verification. <a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/api_relay_audit/error_leakage.py">Error checks</a> scan triggered responses for known leaks, not every exfiltration channel. Web3 refusal probes require <code>--profile web3</code> or <code>full</code>; the default general profile omits them.</p>
+  <p>The existing standalone <a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/api_relay_audit/_transport.py">curl transport</a> uses <code>-sk</code>, disabling TLS certificate verification. A completed run does not establish server authenticity. Local execution avoids a separate web checker, but your key and requests still go to the selected relay.</p>
+  <p>Review detailed sections even when the summary is <code>LOW</code>. <code>Inconclusive</code> means a blocked, failed, or ambiguous probe could not establish a definitive result. Inconclusive and skipped probes are not passes; some findings sit outside the rating matrix. Reports are not automatically sanitized. Redact keys, private URLs, model responses, and personal data before sharing.</p>
 
   <h2>Example report</h2>
-  <p>For the report shape without real relay data, see the <a href="https://github.com/toby-bridges/api-relay-audit/blob/master/docs/examples/sanitized-audit-report.md">sanitized fixture report</a>.</p>
+  <p>The <a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/docs/examples/sanitized-audit-report.md">sanitized fixture report</a> illustrates historical v2.3 / draft <code>report-artifact-v0.1</code> shape. It is synthetic, not a real-provider audit or current v2.5.0 JSON output. See the separate <a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/docs/json-report.md">JSON report contract</a>.</p>
 </main>
 <footer><div class="wrap">Related: <a href="what-is-ai-api-relay-proxy.html">what is an AI API relay?</a> · <a href="compare-api-relay-audit-hvoy-cctest.html">tool comparison</a></div></footer>
 </body>

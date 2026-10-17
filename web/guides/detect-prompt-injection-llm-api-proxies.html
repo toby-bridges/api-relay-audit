@@ -4,32 +4,64 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Detecting Prompt Injection in LLM API Proxies</title>
-<meta name="description" content="How to detect prompt injection and hidden instruction changes in LLM API proxies with local probes and reviewable audit evidence.">
+<meta name="description" content="Test an LLM API proxy for hidden instruction changes with reproducible local probes, a synthetic example, and versioned evidence limits.">
 <link rel="canonical" href="https://toby-bridges.github.io/api-relay-audit/guides/detect-prompt-injection-llm-api-proxies.html">
 <link rel="stylesheet" href="../assets/content.css">
+<style>
+.signal-table-scroll{overflow-x:auto;margin:20px 0}
+.signal-table-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+.signal-table{display:table;table-layout:fixed;min-width:660px;margin:0}
+.signal-table th,.signal-table td{overflow-wrap:anywhere}
+.signal-table th:first-child{width:22%}
+.signal-table th:not(:first-child){width:39%}
+</style>
 </head>
 <body>
 <header><div class="wrap nav"><a class="brand" href="../">API Relay Audit</a><div class="links"><a href="../">Home</a><a href="../zh/">中文</a><a href="https://github.com/toby-bridges/api-relay-audit">GitHub</a></div></div></header>
 <main class="wrap">
   <div class="eyebrow">Guide</div>
   <h1>Detecting prompt injection in LLM API proxies</h1>
-  <p class="lead">Prompt injection in an LLM API proxy means the intermediary may add hidden instructions, identity text, or policy text to your request before it reaches the model. Local detection works by combining token-delta evidence, extraction probes, identity checks, and instruction-conflict tests.</p>
+  <p class="lead">To investigate hidden instructions added by an LLM API proxy, combine token-count differences, prompt-extraction probes, and instruction-conflict tests. Repeat controlled requests and cross-check the findings against a trusted upstream path where available. API Relay Audit gathers behavioral evidence; a single unusual answer does not establish that the relay changed your request.</p>
+  <p>Checked against <a href="https://github.com/toby-bridges/api-relay-audit/tree/75bdac000051871c9f088a3be58e6f17a8854ffb">v2.5.0, commit <code>75bdac0</code></a> on <time datetime="2026-10-17">2026-10-17</time>.</p>
 
-  <h2>Signals to look for</h2>
-  <div class="grid">
-    <section class="card"><h3>Unexpected token delta</h3><p>If a small request produces a much larger prompt-token count than expected, the relay may be adding hidden context.</p></section>
-    <section class="card"><h3>Prompt extraction</h3><p>If the model reveals hidden relay instructions under recall, translation, or continuation probes, the relay path is not transparent.</p></section>
-    <section class="card"><h3>Identity conflict</h3><p>If a Claude-compatible route leaks GPT, GLM, DeepSeek, Qwen, or other non-claimed identities, model substitution or prompt injection may be involved.</p></section>
+  <h2 id="signal-triage">What each signal tells you</h2>
+  <div class="signal-table-scroll" role="region" aria-labelledby="signal-triage" tabindex="0">
+    <table class="signal-table">
+      <thead><tr><th scope="col">Observed signal</th><th scope="col">Next check</th><th scope="col">Evidence limit</th></tr></thead>
+      <tbody>
+        <tr><td>Unexpected input-token delta</td><td>Repeat with the same model, messages, and system/tool configuration. Compare an authorized direct-provider request where possible.</td><td>v2.5.0 uses fixed approximate baselines of 10, 20, and 15 tokens. It does not automatically measure a matched official endpoint; tokenizer or wrapper differences can explain a delta.</td></tr>
+        <tr><td>Hidden instruction text appears</td><td>Inspect the recall, translation, and continuation responses for actual instruction text and structural markers.</td><td>Weak keyword matches can be <code>inconclusive</code>. A recognized refusal can be clean for that probe; neither outcome establishes the whole request path.</td></tr>
+        <tr><td>Caller instructions are contradicted</td><td>Repeat the harmless arithmetic and identity conflict tests; inspect the response and HTTP status separately.</td><td>Model behavior or legitimate policies can explain a contradiction. A rejected request, including HTTP 422, is not proof of relay tampering.</td></tr>
+        <tr><td>The model names another identity</td><td>Compare neutral prompts, response metadata, and independently verifiable upstream records.</td><td>Generated self-identification, relay-supplied model fields, and latency do not authenticate the serving model.</td></tr>
+        <tr><td>A package command changes</td><td>Compare the expected and returned text, including extra wording or refusal.</td><td>Step 8 has four text-echo probes. It never executes a tool or install command and does not validate structured <code>tool_calls</code>/<code>tool_use</code> or streamed tool arguments.</td></tr>
+      </tbody>
+    </table>
   </div>
 
-  <h2>Run the local probe set</h2>
-  <pre class="code"><code>python audit.py --key &lt;YOUR_KEY&gt; --url &lt;BASE_URL&gt; --output prompt-injection-audit.md</code></pre>
+  <h2>Start with a fixed version</h2>
+  <p>Use the <a href="audit-claude-api-relay-safely.html">staged local audit guide</a> to download the pinned v2.5.0 script, inspect <code>--help</code>, supply a scoped key through <code>--key-env</code>, and test connectivity before broader probes. Network probes send requests to your chosen relay and may incur charges. That guide also covers report privacy and the standalone transport's TLS limitation.</p>
 
-  <h2>Why one signal is not enough</h2>
-  <p>Token counts can be noisy, extraction probes can be refused, and identity wording can produce false positives. API Relay Audit records multiple probe families so a reviewer can see whether the evidence is consistent, contradictory, or inconclusive.</p>
+  <h2 id="synthetic-example">Reproduce a text comparison offline</h2>
+  <p>After downloading and reviewing <code>audit.py</code>, run this synthetic example from the same directory. It calls the bundled comparator without making relay requests or installing packages. The misspelled package name is deliberate test input.</p>
+  <pre class="code"><code>python3 - &lt;&lt;'PY'
+import runpy
+api = runpy.run_path("audit.py", run_name="synthetic_guide_demo")
+expected = "pip install requests==2.31.0"
+for received in (expected, expected + "\n", "pip install reqeusts==2.31.0"):
+    print(api["classify"](expected, received))
+PY</code></pre>
+  <p>Expected output:</p>
+  <pre class="code"><code>exact
+whitespace
+substituted</code></pre>
+  <p>This demonstrates three comparator labels, not detector accuracy or a real-provider result. The comparator normalizes some framing; extra commentary or ordinary model refusal can still be classified as <code>substituted</code>. Review the returned text before attributing a change to the relay.</p>
 
-  <h2>Useful follow-up issue</h2>
-  <p>For reproducible examples and detector gaps, track <a href="https://github.com/toby-bridges/api-relay-audit/issues/31">issue #31: relay prompt injection examples and detection gaps</a>.</p>
+  <h2>Record findings with their limits</h2>
+  <p>Keep the script commit, endpoint, requested model, timestamps, parameters, repeat count, and detailed findings together in private audit records. Use synthetic prompts and review reports for credentials or private response content before sharing. A skipped check has no result, <code>inconclusive</code> is unresolved, and a <code>LOW</code> summary is not a safety certificate.</p>
+  <p>The <a href="https://github.com/toby-bridges/api-relay-audit/issues/79#issuecomment-5543396106">historical synthetic reproduction in issue #79</a> exposed a prompt-extraction false positive involving the word <code>coding</code>. That specific regression was fixed in v2.5.0; it does not establish a general false-positive rate. Report reproducible detector gaps in <a href="https://github.com/toby-bridges/api-relay-audit/issues/31">issue #31</a> with sanitized evidence.</p>
+
+  <h2>Versioned implementation sources</h2>
+  <p>The pinned <a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/scripts/audit.py">audit orchestration</a> defines the token, extraction, and instruction-conflict probes. The <a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/api_relay_audit/tool_substitution.py">text-substitution module</a> defines the comparator shown above. Read these sources when checking what a report label actually means.</p>
 </main>
 <footer><div class="wrap">Related: <a href="what-is-ai-api-relay-proxy.html">what is an LLM proxy?</a> · <a href="web3-wallet-prompt-injection-ai-agents.html">Web3 wallet prompt injection</a></div></footer>
 </body>
