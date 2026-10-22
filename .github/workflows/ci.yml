@@ -74,9 +74,6 @@ jobs:
     name: DSH 0.1.0-rc.6 composition
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    env:
-      DSH_HOME: ${{ runner.temp }}/dsh-home
-      DSH_CLI: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
     steps:
       - uses: actions/checkout@v4
 
@@ -91,6 +88,14 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: "11.7.0"
+
+      - name: Set isolated DSH paths
+        shell: bash
+        run: |
+          printf '%s\n' \
+            "DSH_HOME=$RUNNER_TEMP/dsh-home" \
+            "DSH_CLI=$RUNNER_TEMP/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+            >> "$GITHUB_ENV"
 
       # Install once: later commands execute this exact CLI directly rather
       # than entering npm's resolution/cache path again through npx.
