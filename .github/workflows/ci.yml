@@ -27,6 +27,9 @@ jobs:
       - name: Check version surfaces
         run: python3 scripts/sync-version.py --check
 
+      - name: Check CI command deadlines
+        run: python3 -m unittest discover -s scripts -p test_run_ci_command.py -v
+
       - name: Run test suite
         run: python3 -m pytest tests/ -q
 
@@ -70,6 +73,10 @@ jobs:
   dsh-plugin-composition:
     name: DSH 0.1.0-rc.6 composition
     runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DSH_HOME: ${{ runner.temp }}/dsh-home
+      DSH_CLI: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
     steps:
       - uses: actions/checkout@v4
 
@@ -77,26 +84,66 @@ jobs:
         with:
           node-version: "22.19.0"
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - uses: pnpm/action-setup@v4
         with:
           version: "11.7.0"
 
-      - name: Compose with official Web and dsh-cc-tui profiles
-        env:
-          DSH_HOME: ${{ runner.temp }}/dsh-home
+      # Install once: later commands execute this exact CLI directly rather
+      # than entering npm's resolution/cache path again through npx.
+      - name: Install pinned DSH CLI
+        run: >-
+          python3 scripts/run-ci-command.py --name install-dsh-cli --timeout 600 --
+          npm install --prefix "${{ runner.temp }}/dsh-cli"
+          --no-audit --no-fund @deepseek-ai/dsh@0.1.0-rc.6
+
+      - name: Compose official Web profile
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile web add .
-          npx --yes @deepseek-ai/dsh@0.1.0-rc.6 --profile web --dump-config > web-config.txt
+          python3 scripts/run-ci-command.py --name web-add --timeout 900 -- \
+            node "$DSH_CLI" plugin --profile web add .
+          python3 scripts/run-ci-command.py --name web-dump-config --timeout 60 -- \
+            node "$DSH_CLI" --profile web --dump-config > web-config.txt
           grep -q "api-relay-audit" web-config.txt
 
-          if ! npx --yes @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile cc-tui add dsh-cc-tui@0.4.1; then
+      - name: Install official cc-tui profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          python3 scripts/run-ci-command.py --name cc-tui-install --timeout 300 -- \
+            node "$DSH_CLI" plugin --profile cc-tui add dsh-cc-tui@0.4.1 || status=$?
+          if [ "$status" -ne 0 ]; then
+            # Only the known pnpm build-policy failure permits this recovery;
+            # a timed-out or otherwise failed install must remain a failure.
+            if [ "$status" -eq 124 ]; then exit "$status"; fi
             profile="$DSH_HOME/profiles/cc-tui"
             grep -q "koffi: set this to true or false" "$profile/pnpm-workspace.yaml"
             sed -i 's/koffi: set this to true or false/koffi: true/' "$profile/pnpm-workspace.yaml"
-            pnpm --dir "$profile" install
+            python3 scripts/run-ci-command.py --name cc-tui-koffi-install --timeout 180 -- \
+              pnpm --dir "$profile" install
           fi
-          npx --yes @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile cc-tui add .
-          npx --yes @deepseek-ai/dsh@0.1.0-rc.6 --profile cc-tui --dump-config > cc-tui-config.txt
+
+      - name: Compose official cc-tui profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/run-ci-command.py --name cc-tui-add --timeout 300 -- \
+            node "$DSH_CLI" plugin --profile cc-tui add .
+          python3 scripts/run-ci-command.py --name cc-tui-dump-config --timeout 60 -- \
+            node "$DSH_CLI" --profile cc-tui --dump-config > cc-tui-config.txt
           grep -q "api-relay-audit" cc-tui-config.txt
+
+      - name: Retain composition diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-composition-configs
+          path: |
+            web-config.txt
+            cc-tui-config.txt
+          if-no-files-found: ignore
