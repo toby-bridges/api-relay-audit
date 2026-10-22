@@ -1,0 +1,36 @@
+{
+  "name": "api-relay-audit-video",
+  "version": "1.0.0",
+  "description": "30-second Remotion product film for API Relay Audit",
+  "repository": {},
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "dependencies": {
+    "@remotion/captions": "4.0.526",
+    "@remotion/cli": "4.0.526",
+    "@remotion/media": "4.0.526",
+    "@remotion/transitions": "4.0.526",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.526"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.526",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "eslint": "9.19.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion bundle",
+    "render": "remotion render src/index.ts ApiRelayAudit30 out/api-relay-audit-30s.mp4 --codec=h264 --audio-codec=aac --crf=18 --pixel-format=yuv420p --color-space=bt709 --image-format=png",
+    "still": "remotion still src/index.ts ApiRelayAudit30 out/api-relay-audit-cover.png --frame=820 --image-format=png",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src && tsc"
+  },
+  "sideEffects": [
+    "*.css"
+  ]
+}

@@ -15,6 +15,16 @@
   <a href="#deepseek-harness-dsh-plugin"><strong>DSH Plugin</strong></a>
 </p>
 
+<p align="center">
+  <a href="https://toby-bridges.github.io/api-relay-audit/video.html"><img src="./web/assets/api-relay-audit-cover.png" width="720" alt="Watch the 30-second API Relay Audit introduction — Chinese narration and subtitles"></a>
+  <br>
+  <a href="https://toby-bridges.github.io/api-relay-audit/video.html"><strong>▶ Watch the 30-second introduction</strong></a>
+  · <a href="./web/assets/api-relay-audit-30s.mp4">MP4</a>
+  · <a href="./video/">Remotion source</a>
+</p>
+
+Chinese narration and subtitles · v2.4.1 public release · synthetic demo data.
+
 ## Your Agent Is Mine: what you can test locally
 
 [*Your Agent Is Mine*](https://arxiv.org/abs/2604.08407) documents malicious API
@@ -315,6 +325,10 @@ to one behavior or document.
 
 <details id="chinese-readme">
 <summary>中文 README</summary>
+
+[▶ 观看 30 秒项目介绍](https://toby-bridges.github.io/api-relay-audit/video.html)
+· [MP4](./web/assets/api-relay-audit-30s.mp4)
+· [Remotion 源码](./video/)。中文旁白与字幕，基于 v2.4.1，画面使用合成示例。
 
 ## API Relay Audit 是什么？
 
