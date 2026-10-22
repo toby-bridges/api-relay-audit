@@ -1,0 +1,17 @@
+{
+  "baseline_commit": "390de58b83f8e3a7b6c54944c78eae286238dbf5",
+  "state": "uncommitted_local_candidate",
+  "files": {
+    "SKILL.md": "ea87b5105efb7bdb1124e7c079d9ea006066828dad65807e92b5394c76049423",
+    "skills/api-relay-audit/SKILL.md": "76583d9b9b357f9dbbc6d23e0ef2c2bb2142a1a6cb12dcc004abe1a58377c633",
+    "docs/skill-distribution.md": "86a706488214c133eb36168240f9b1a3603506cb9f1f5234af3999a3b4260e27",
+    "implementation-notes.md": "6dbde6abd7dcb3f7d7f0668da15c160103f1b9b6549ac52f8e4bbf019159f735",
+    "docs/distribution/skills-cursor/README.md": "1b409e834a052c476319a0161db200b281840efb42218eabe23fd908ccb0229c",
+    "docs/distribution/skills-cursor/cursor-directory.json": "ab55d5114bbe531fbc19a9c6de945564af93bebd11a8636250ae0c48008418e0",
+    "docs/distribution/skills-cursor/cursor-directory.md": "d5271725a3eb89d347ecd90f2f2a52f87a8a9248f974c79622c3edb30ad0c673",
+    "docs/distribution/skills-cursor/skills-sh.md": "a6f259abb3815c402a9c68db6c5258235b1ac6abc0ffe1c1fe3ef66e1ef49662",
+    "docs/distribution/skills-cursor/verification.json": "e8682adae3bd744636a49a6a85c379519b07e39f0d2c190e38abb41b69ebc63f",
+    "docs/distribution/skills-cursor/verify-cursor-detector.mjs": "9bdaf3ad3869b05283facce24fc125fcaff20b9cab20b880b5cb0b268fc9d9ef",
+    "docs/distribution/skills-cursor/verify-local.py": "fdaddcf1d70bdecbc3ad2d4cce656658cbeb5ea69888c5871aa05ec7a78ec826"
+  }
+}
