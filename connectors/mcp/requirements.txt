@@ -1,0 +1,2 @@
+# Optional adapter only; the standalone audit remains curl + Python stdlib.
+mcp==2.3.0

@@ -1,0 +1,13 @@
+{
+  "report_root": "/absolute/path/to/private/reports",
+  "timeout_seconds": 30,
+  "audit_timeout_seconds": 300,
+  "max_jobs": 32,
+  "targets": {
+    "relay": {
+      "url": "https://relay.example.invalid/v1",
+      "model": "claude-sonnet-4-5",
+      "key_env": "API_RELAY_AUDIT_RELAY_KEY"
+    }
+  }
+}

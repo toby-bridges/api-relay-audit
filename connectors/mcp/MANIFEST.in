@@ -1,0 +1,4 @@
+include LICENSE README.md config.example.json requirements.txt
+recursive-include examples *.json *.toml
+recursive-include tests *.py
+include api_relay_audit_mcp/provenance.json

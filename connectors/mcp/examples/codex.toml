@@ -1,0 +1,5 @@
+[mcp_servers.relay-audit]
+command = "/absolute/path/to/connector-venv/bin/python"
+args = ["-m", "api_relay_audit_mcp", "--config", "/absolute/path/to/private/connector.json"]
+env_vars = ["API_RELAY_AUDIT_RELAY_KEY"]
+tool_timeout_sec = 40

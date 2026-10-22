@@ -79,6 +79,10 @@ stderr. JSON preserves the existing final risk rating and full Markdown
 evidence; it does not sanitize the report for public sharing. See the
 [JSON schema and coverage boundaries](./docs/json-report.md).
 
+An optional [local MCP distribution candidate](./connectors/mcp/README.md)
+provides connectivity, background audit jobs and private result summaries,
+using the unchanged v2.5.0 engine. It is locally developed and unpublished.
+
 ## When to Use It
 
 - You use a third-party AI API relay, mirror, gateway, or LLM proxy.

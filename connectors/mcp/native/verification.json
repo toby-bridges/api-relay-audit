@@ -1,0 +1,259 @@
+{
+  "verified_date_client_timezone": "2026-10-14 Asia/Shanghai",
+  "status": "passed-native-configuration-isolated-local-candidate",
+  "engine_baseline": {
+    "ref": "v2.5.0",
+    "commit": "75bdac000051871c9f088a3be58e6f17a8854ffb",
+    "sha256": "fd99409bf745090a26bb4616fd33fbe0d873de08cfe077df413b2b93845f151d",
+    "modified": false
+  },
+  "runtime": {
+    "os": "Darwin",
+    "python": "3.14.3",
+    "mcp_sdk": "2.3.0"
+  },
+  "artifacts": [
+    {
+      "path": "connectors/mcp/dist/api_relay_audit_mcp-2.5.0.dev1-py3-none-any.whl",
+      "sha256": "caa526c4a6992c84212219d70d947e92817fd71a629dffc959186388edaa88e9",
+      "size_bytes": 109282
+    },
+    {
+      "path": "connectors/mcp/dist/api_relay_audit_mcp-2.5.0.dev1.tar.gz",
+      "sha256": "bd801ee9e7e01f560de8b8c6aeda87725baccb3e51e49aaa92f31abd2f377826",
+      "size_bytes": 120723
+    }
+  ],
+  "harness_sha256": {
+    "anthropic_fixture.py": "ee92418692310b67316d003bd01f8796d24bbdb1317df8f966bd5d7d988563b4",
+    "claude_host.py": "077142d05c5d0fa7bc0a07ead84a223486a4d55c2eda36dcfd4ecf4bbc6c5f9e",
+    "codex_host.py": "0d85c82427cb5d9659c2eadd8936af1849b9657e15f673783b3580c2808adc53",
+    "common.py": "bc2543f48e891f0b5bf18e6e9a465fc252faf8dd34b0567c3096fdf79d2f9614"
+  },
+  "checks": [
+    {
+      "command": "connectors/mcp/.venv/bin/python -m build connectors/mcp",
+      "exit_code": 0
+    },
+    {
+      "command": "connectors/mcp/.venv/bin/python -m pytest connectors/mcp/tests/ -q",
+      "passed": 71,
+      "failed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/build-standalone.py --check",
+      "exit_code": 0
+    },
+    {
+      "check": "wheel source files, templates and bundled engine match checkout; sdist engine and README match checkout",
+      "status": "passed"
+    },
+    {
+      "command": "connectors/mcp/.venv/bin/python connectors/mcp/native/codex_host.py --output connectors/mcp/reports/native-codex.json",
+      "exit_code": 0
+    },
+    {
+      "command": "connectors/mcp/.venv/bin/python connectors/mcp/native/claude_host.py --output connectors/mcp/reports/native-claude.json",
+      "exit_code": 0
+    }
+  ],
+  "hosts": {
+    "codex": {
+      "host": "codex-app-server",
+      "scope": "configuration-isolated-native-host-loopback",
+      "real_provider_used": false,
+      "real_credentials_used": false,
+      "physical_network_isolation_verified": false,
+      "host_version": "codex-cli 0.162.0-alpha.17.2",
+      "adapter_wheel_sha256": "caa526c4a6992c84212219d70d947e92817fd71a629dffc959186388edaa88e9",
+      "checks": {
+        "native_initialize": true,
+        "managed_provider_does_not_override_fixture": true,
+        "effective_local_provider_and_analytics_disabled": true,
+        "ephemeral_native_thread": true,
+        "exact_three_tools_and_one_server": true,
+        "connectivity_success_is_unrated": true,
+        "fixed_unknown_target_error": true,
+        "fixed_invalid_argument_error": true,
+        "native_quick_audit_preserves_high_and_skips": true,
+        "private_tool_results": true,
+        "native_active_job_cancelled": true,
+        "active_job_at_host_exit_witnessed": true,
+        "native_eof_exit_without_harness_termination": true,
+        "native_host_exit_reaped_mcp_server": true,
+        "native_exit_reaped_audit_and_curl_descendants": true,
+        "no_model_turn_or_fixture_model_request": true,
+        "native_notifications_and_stderr_privacy": true,
+        "all_native_output_scanned_with_admin_config_separated": true
+      },
+      "passed_check_count": 18,
+      "relay": {
+        "request_count": 34,
+        "endpoint_counts": {
+          "POST /v1/messages": 26,
+          "POST /v1/chat/completions": 1,
+          "GET /v1/models": 4,
+          "POST /v1/nonexistent-route": 1,
+          "GET /": 1,
+          "GET /nonexistent-abc12345xyz": 1
+        },
+        "slow_request_count": 4,
+        "synthetic_auth_match_count": 30
+      },
+      "native_ui_verified": false,
+      "observed_descendants_at_exit": 3,
+      "live_descendants_after_exit": 0,
+      "teardown_method": "stdin_eof",
+      "native_stdout_lines_scanned": 151,
+      "native_stderr_lines_scanned": 0,
+      "fixture_marker_receipts": {
+        "administrative_config_response": 1
+      },
+      "personal_credentials_supplied": false,
+      "existing_account_credentials_configured": false
+    },
+    "claude_code": {
+      "host": "Claude Code",
+      "scope": "configuration-isolated-native-host-loopback",
+      "real_provider_used": false,
+      "real_credentials_used": false,
+      "physical_network_isolation_verified": false,
+      "host_version": "2.1.299 (Claude Code)",
+      "test_kind": "native dispatch with scripted localhost provider; real model decisions not tested",
+      "installed_wheel_sha256": "caa526c4a6992c84212219d70d947e92817fd71a629dffc959186388edaa88e9",
+      "scenarios": [
+        {
+          "provider_requests": 2,
+          "discovered_tools": [
+            "mcp__relay_audit__check_connectivity",
+            "mcp__relay_audit__get_audit_result",
+            "mcp__relay_audit__run_audit"
+          ],
+          "unexpected_tools_count": 0,
+          "tool_dispatch_counts": {
+            "check_connectivity": 1,
+            "run_audit": 0,
+            "get_audit_result": 0
+          },
+          "tool_result_count": 1,
+          "connectivity_success": true,
+          "audit_completed": false,
+          "risk_level": null,
+          "audit_cancelled": false,
+          "running_job_returned": false,
+          "slow_relay_request_started": false,
+          "failures": [],
+          "scenario": "smoke",
+          "exit_code": 0,
+          "timed_out": false,
+          "native_result_success": true,
+          "native_connector_connected": true,
+          "native_other_servers_count": 0,
+          "output_privacy_passed": true,
+          "observed_descendant_count": 7,
+          "live_descendant_count_after_exit": 0
+        },
+        {
+          "provider_requests": 72,
+          "discovered_tools": [
+            "mcp__relay_audit__check_connectivity",
+            "mcp__relay_audit__get_audit_result",
+            "mcp__relay_audit__run_audit"
+          ],
+          "unexpected_tools_count": 0,
+          "tool_dispatch_counts": {
+            "check_connectivity": 1,
+            "run_audit": 2,
+            "get_audit_result": 68
+          },
+          "tool_result_count": 71,
+          "connectivity_success": true,
+          "audit_completed": true,
+          "risk_level": "HIGH",
+          "audit_cancelled": true,
+          "running_job_returned": true,
+          "slow_relay_request_started": true,
+          "failures": [],
+          "scenario": "lifecycle",
+          "exit_code": 0,
+          "timed_out": false,
+          "native_result_success": true,
+          "native_connector_connected": true,
+          "native_other_servers_count": 0,
+          "output_privacy_passed": true,
+          "observed_descendant_count": 8,
+          "live_descendant_count_after_exit": 0
+        },
+        {
+          "provider_requests": 2,
+          "discovered_tools": [
+            "mcp__relay_audit__check_connectivity",
+            "mcp__relay_audit__get_audit_result",
+            "mcp__relay_audit__run_audit"
+          ],
+          "unexpected_tools_count": 0,
+          "tool_dispatch_counts": {
+            "check_connectivity": 0,
+            "run_audit": 1,
+            "get_audit_result": 0
+          },
+          "tool_result_count": 1,
+          "connectivity_success": false,
+          "audit_completed": false,
+          "risk_level": null,
+          "audit_cancelled": false,
+          "running_job_returned": true,
+          "slow_relay_request_started": true,
+          "failures": [],
+          "scenario": "exit_running",
+          "exit_code": 0,
+          "timed_out": false,
+          "native_result_success": true,
+          "native_connector_connected": true,
+          "native_other_servers_count": 0,
+          "output_privacy_passed": true,
+          "observed_descendant_count": 4,
+          "live_descendant_count_after_exit": 0
+        }
+      ],
+      "relay": {
+        "request_count": 36,
+        "endpoint_counts": {
+          "POST /v1/messages": 27,
+          "POST /v1/chat/completions": 2,
+          "GET /v1/models": 4,
+          "POST /v1/nonexistent-route": 1,
+          "GET /": 1,
+          "GET /nonexistent-abc12345xyz": 1
+        },
+        "slow_request_count": 4,
+        "synthetic_auth_match_count": 32
+      }
+    }
+  },
+  "privacy_boundary": "Full tool results, notifications, stderr and all non-admin native output pass fixture-marker checks. The matched successful config/read admin response intentionally contains supplied synthetic configuration; only its marker count is recorded.",
+  "independent_review": {
+    "status": "completed_without_remaining_blockers",
+    "scope": "read-only native harness and isolation review; root performed final artifact reruns"
+  },
+  "not_verified": [
+    "GUI setup or interaction",
+    "real model tool selection",
+    "real provider or account behavior",
+    "Cursor and VS Code native sessions",
+    "fresh-machine or clean-user installation",
+    "Linux runtime",
+    "physical network isolation or absence of all host bootstrap access",
+    "PyPI or MCP registry publication/admission"
+  ],
+  "external_actions": {
+    "native_host_activation": "temporary generated configuration only",
+    "real_credentials_used": false,
+    "paid_provider_calls": false,
+    "global_host_settings_changed": false,
+    "package_published": false,
+    "pr_merged": false
+  },
+  "ci_boundary": "Native scripts are opt-in local verification; existing hosted CI does not run them or the optional MCP suite."
+}
