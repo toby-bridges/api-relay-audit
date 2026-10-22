@@ -96,14 +96,28 @@ jobs:
             "DSH_HOME=$RUNNER_TEMP/dsh-home" \
             "DSH_CLI=$RUNNER_TEMP/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js" \
             >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/dsh-cli"
+          # Match the reviewed install hooks of this toolchain. Other native
+          # package versions or new lifecycle scripts still require review.
+          cat > "$RUNNER_TEMP/dsh-cli/pnpm-workspace.yaml" <<'BUILDS'
+          packages:
+            - .
+          allowBuilds:
+            "koffi@3.3.3": true
+            "node-pty@1.2.0-beta.15": true
+            "protobufjs@7.6.6": true
+            "@google/genai@1.52.0": true
+            "@deepseek-ai/dsh-subprocess-local@0.1.0-rc.8": true
+          BUILDS
 
       # Install once: later commands execute this exact CLI directly rather
       # than entering npm's resolution/cache path again through npx.
       - name: Install pinned DSH CLI
         run: >-
-          python3 scripts/run-ci-command.py --name install-dsh-cli --timeout 600 --
-          npm install --prefix "${{ runner.temp }}/dsh-cli"
-          --no-audit --no-fund @deepseek-ai/dsh@0.1.0-rc.6
+          python3 scripts/run-ci-command.py --name install-dsh-cli --timeout 300 --
+          pnpm --dir "${{ runner.temp }}/dsh-cli" add --save-exact
+          --reporter=append-only --registry=https://registry.npmjs.org
+          @deepseek-ai/dsh@0.1.0-rc.6
 
       - name: Compose official Web profile
         shell: bash
