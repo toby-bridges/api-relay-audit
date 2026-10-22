@@ -68,4 +68,19 @@
 
 ---
 
+## skills.sh and Cursor Directory preparation (2026-10-22)
+
+- Task: prepare local installation evidence and English submission materials; publication remains subject to user approval.
+- Baseline: remote master `390de58b83f8e3a7b6c54944c78eae286238dbf5`, with the released v2.5.0 audit engine unchanged.
+- Decision: keep the root OpenClaw and nested Hermes metadata for compatibility, but share one host-neutral instruction body. The two channels select different files.
+- Decision: recommend the explicit `skills/api-relay-audit` source path. The skills CLI's default root discovery otherwise copies the repository as a skill bundle.
+- Decision: run installation in disposable project directories with telemetry disabled and network denied during the CLI checks; do not change user-level skill installations.
+- Evidence boundary: a Cursor Directory source-parser replay and filesystem installation do not prove a hosted listing or a model-selected Cursor run.
+- Approval gate: no push, PR, directory submission, listing-triggering telemetry, or account authorization in this preparation task.
+- Validation repair: the first focused run found one legacy frontmatter-format assertion; retained the nested plain YAML description and reran all 21 focused cases successfully.
+- Environment repair: the sandbox denied loopback binding with PermissionError 1; reran with local-listening permission, synthetic credentials, a loopback-only curl wrapper, and telemetry disabled.
+- Independent review found no blocking defect; clarified Windows command selection and the application-level network-guard evidence boundary.
+- Final local proof: 28 integration checks, 21 focused pytest cases, standalone artifact parity, submission-payload consistency/privacy checks, and diff whitespace check passed. Runtime evidence and draft fields are under docs/distribution/skills-cursor/.
+- State: uncommitted local candidate on codex/skills-cursor-preparation; no external write. Next gate is user review before any push, PR, merge, authorization, or channel submission.
+
 *This file is maintained automatically during implementation.*

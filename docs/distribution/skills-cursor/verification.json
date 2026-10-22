@@ -1,0 +1,326 @@
+{
+  "status": "local_verified_publication_pending",
+  "baseline_commit": "390de58b83f8e3a7b6c54944c78eae286238dbf5",
+  "verified_at_utc": "2026-10-22T03:53:01.346383+00:00",
+  "runtime": {
+    "node": "v25.9.0",
+    "python": "3.14.3",
+    "skills_cli": "1.7.4",
+    "cli_sha256": "b7d92e2a619e8982d38390572750efb8c2ec81cdf23c33aed2fa426d080a1e4e"
+  },
+  "candidate": {
+    "root_sha256": "ea87b5105efb7bdb1124e7c079d9ea006066828dad65807e92b5394c76049423",
+    "nested_sha256": "76583d9b9b357f9dbbc6d23e0ef2c2bb2142a1a6cb12dcc004abe1a58377c633",
+    "body_sha256": "21362ded8fc754c6d473218ab3db4f6c82d9f2890c85dc8d8b70816bbc524e75"
+  },
+  "passed": 28,
+  "failed": 0,
+  "checks": [
+    {
+      "name": "skills_cli_pinned",
+      "passed": true,
+      "evidence": "1.7.4"
+    },
+    {
+      "name": "shared_neutral_body",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "credential_recipe_uses_env_name",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "all_three_profiles_documented",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "root_discovery_one_skill",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "nested_discovery_one_skill",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "cursor_install_success",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "cursor_documented_install_path",
+      "passed": true,
+      "evidence": ".agents/skills/api-relay-audit/SKILL.md"
+    },
+    {
+      "name": "installed_bytes_match",
+      "passed": true,
+      "evidence": "76583d9b9b357f9dbbc6d23e0ef2c2bb2142a1a6cb12dcc004abe1a58377c633"
+    },
+    {
+      "name": "single_file_bundle",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "copy_is_independent",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "cursor_list_recognizes_skill",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "full_instructions_load_without_model",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "cursor_directory_single_skill",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "cursor_copy_preserves_whole_body",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "released_engine_hash",
+      "passed": true,
+      "evidence": "fd99409bf745090a26bb4616fd33fbe0d873de08cfe077df413b2b93845f151d"
+    },
+    {
+      "name": "worktree_engine_unchanged",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "installed_hash_recipe_accepts_release",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "installed_hash_recipe_rejects_mismatch",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "installed_recipe_reaches_both_protocols",
+      "passed": true,
+      "evidence": {
+        "fixture_requests": 2
+      }
+    },
+    {
+      "name": "connectivity_success",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "connectivity_not_a_safety_rating",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "curl_requests_loopback_only",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "key_absent_from_curl_argv",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "key_absent_from_report",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "key_absent_from_recorded_commands",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "fixture_shutdown",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "cli_attempted_no_network",
+      "passed": true,
+      "evidence": null
+    }
+  ],
+  "cursor_directory": {
+    "upstream_sha": "e81660652954a089f443d0032afd7de3bea73217",
+    "source_sha256": {
+      "parse.ts": "a9c6d9d18c9813e56a8c39e3d67934d025a66e1914ec20d2cc7cc8dfc103d788",
+      "slug.ts": "fea2e12d8af3c8b5332662643288be14c116c6b8627200e4dc9ea3a38ccfa02a"
+    },
+    "actual_network_requests": 0,
+    "mocked_requests": 10,
+    "root_and_nested_bodies_equal": true,
+    "component": {
+      "type": "skill",
+      "name": "api-relay-audit",
+      "slug": "api-relay-audit",
+      "description": "Use when auditing third-party AI API relays, LLM proxies, gateways, or resale APIs locally before trusting coding, tool, or wallet-sensitive traffic; works with Cursor, OpenClaw, Hermes, and other skill-capable agents.",
+      "content_sha256": "21362ded8fc754c6d473218ab3db4f6c82d9f2890c85dc8d8b70816bbc524e75",
+      "content_bytes": 7398,
+      "copied_frontmatter": false
+    }
+  },
+  "commands": [
+    {
+      "label": "node-version",
+      "argv": [
+        "node",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "9b8856ee50cf06a9ce94d984812927448e9be59b03931bc1478b1d1d49a0d7b5",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "root-discovery",
+      "argv": [
+        "node",
+        "$TOOLS/node_modules/skills/bin/cli.mjs",
+        "add",
+        "$CANDIDATE",
+        "--list"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "636846c20934623b8cb0cc6f238c0636abffe5c12baacd770bbbe76393e6215c",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "nested-discovery",
+      "argv": [
+        "node",
+        "$TOOLS/node_modules/skills/bin/cli.mjs",
+        "add",
+        "$CANDIDATE/skills/api-relay-audit",
+        "--list"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "c3535e00338a027b7d5f8f8d250e4c1827147e1fe8b2cfc4fb8d02e7300da299",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "cursor-install",
+      "argv": [
+        "node",
+        "$TOOLS/node_modules/skills/bin/cli.mjs",
+        "add",
+        "$CANDIDATE/skills/api-relay-audit",
+        "--skill",
+        "api-relay-audit",
+        "--agent",
+        "cursor",
+        "--copy",
+        "--yes",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "336cc00807917d2cf276fda97737dfa033950e772b0ca47d148757eea722eb96",
+      "stderr_sha256": "d4888238be3d3a7fb934b4d317286f18e6e6d9932e6a2471ce16686b4ee7e44a"
+    },
+    {
+      "label": "cursor-list",
+      "argv": [
+        "node",
+        "$TOOLS/node_modules/skills/bin/cli.mjs",
+        "list",
+        "--agent",
+        "cursor",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "886578cca5f9b4e480f32cafa8aba30c9fff07fdf68ec14cf240b2de03c69b5b",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "prompt-load-no-model",
+      "argv": [
+        "node",
+        "$TOOLS/node_modules/skills/bin/cli.mjs",
+        "use",
+        "$TEMP/cursor-project/.agents/skills/api-relay-audit",
+        "--skill",
+        "api-relay-audit"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "23dd92e35ab3fd70e5087a957dcc1cea8d17ce09d0304b7c06b34a0b6807d0e9",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "cursor-directory-detector",
+      "argv": [
+        "node",
+        "--disable-warning=ExperimentalWarning",
+        "$CANDIDATE/docs/distribution/skills-cursor/verify-cursor-detector.mjs",
+        "$CANDIDATE",
+        "$TOOLS/cursor-source"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "30be6fb9dbdb95639cb4769fc6b6e511b627f6f572f6f735b3a42979fd3ff692",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "installed-connectivity-recipe",
+      "argv": [
+        "/bin/bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        ": \"${API_RELAY_AUDIT_KEY:?Configure the key through your secure environment}\"\n: \"${API_RELAY_AUDIT_URL:?Configure the relay base URL}\"\npython3 \"$AUDIT_WORKDIR/audit.py\" \\\n  --key-env API_RELAY_AUDIT_KEY \\\n  --url \"$API_RELAY_AUDIT_URL\" \\\n  --model \"${API_RELAY_AUDIT_MODEL:-claude-opus-4-6}\" \\\n  --connectivity --format json \\\n  --output \"$AUDIT_WORKDIR/connectivity.json\""
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "6e9dbfd68f3f1297dad47f38f3920e71c502d1e8b9f8aa2aa1df2d8ac64d7983"
+    }
+  ],
+  "boundaries": {
+    "telemetry_disabled": true,
+    "cli_api_guard_no_network_attempts": true,
+    "synthetic_key_only": true,
+    "real_provider_calls": 0,
+    "model_turns": 0,
+    "directory_submissions": 0,
+    "user_level_installations": 0,
+    "temporary_installations_removed": true
+  },
+  "additional_gates": {
+    "focused_pytest": {
+      "command": "python3 -m pytest tests/test_skill_distribution.py tests/test_example_report.py -q",
+      "passed": 21,
+      "failed": 0
+    },
+    "standalone": {
+      "command": "python3 scripts/build-standalone.py --check",
+      "exit_code": 0
+    },
+    "diff": {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    "submission_payload": {
+      "description_and_body_match": true,
+      "single_skill": true,
+      "schema_minimums": true
+    },
+    "evidence_privacy": {
+      "absolute_user_paths": false,
+      "synthetic_key_retained": false
+    }
+  }
+}

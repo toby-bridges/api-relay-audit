@@ -84,6 +84,21 @@ documents the immutable prior tag.
 
 ## Non-Primary Integrations
 
+### skills.sh and Cursor Directory preparation
+
+The shared instruction body in `SKILL.md` and
+`skills/api-relay-audit/SKILL.md` is being prepared for these two discovery
+channels. The nested directory is the recommended installation source; a root
+installation can copy the whole repository. OpenClaw and Hermes metadata remain
+for existing direct users.
+
+See [the local preparation and approval packet](distribution/skills-cursor/README.md)
+for installation evidence and proposed submission fields. This is an unpublished
+candidate: local installation and detector checks do not establish a hosted
+listing. Public repository changes and channel submissions require approval.
+
+### Other retained integrations
+
 The root OpenClaw `SKILL.md` and Hermes
 `skills/api-relay-audit/SKILL.md` remain available to existing direct users.
 They are maintained for compatibility, but neither is an active registry
