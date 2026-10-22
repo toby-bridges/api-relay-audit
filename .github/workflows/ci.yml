@@ -125,7 +125,7 @@ jobs:
           if [ "$status" -ne 0 ]; then
             # Only the known pnpm build-policy failure permits this recovery;
             # a timed-out or otherwise failed install must remain a failure.
-            if [ "$status" -eq 124 ]; then exit "$status"; fi
+            if [ "$status" -eq 124 ] || [ "$status" -ge 128 ]; then exit "$status"; fi
             profile="$DSH_HOME/profiles/cc-tui"
             grep -q "koffi: set this to true or false" "$profile/pnpm-workspace.yaml"
             sed -i 's/koffi: set this to true or false/koffi: true/' "$profile/pnpm-workspace.yaml"
