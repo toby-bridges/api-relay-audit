@@ -1,0 +1,4 @@
+[ERROR] Command failed with exit code 128: git ls-remote "https://github.com/toby-bridges/api-relay-audit.git" HEAD "HEAD^{}"
+fatal: unable to access 'https://github.com/toby-bridges/api-relay-audit.git/': CONNECT tunnel failed, response 502
+dsh: pnpm failed in profile directory <PROFILE>
+dsh: git-hosted plugins build on install via their prepare script, which pnpm blocks until allowed — add the exact key pnpm printed above under allowBuilds in <PROFILE>/pnpm-workspace.yaml, then re-run

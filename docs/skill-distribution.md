@@ -42,6 +42,13 @@ dsh plugin --profile web add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_R
 dsh plugin --profile cc-tui add "github:toby-bridges/api-relay-audit#${DSH_PLUGIN_REF}"
 ```
 
+A prebuilt npm distribution and real Windows package acceptance are prepared
+separately from publication. See [the preparation runbook](./distribution/dsh-npm-preparation.md)
+for candidate verification, registry integrity, and approval gates. Keep the
+Git instructions above until the public registry package has been verified;
+neither a passing CI run nor a GitHub Release publishes an npm package or
+updates an existing user's profile.
+
 Compatibility contract:
 
 - official rc.6 Web and `dsh-cc-tui` `0.4.1` composition passed in CI;

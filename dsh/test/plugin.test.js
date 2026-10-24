@@ -475,13 +475,18 @@ test('registers a non-recording human command with only the planned services', (
   assert.equal(typeof registered.handler, 'function')
 })
 
-test('package metadata declares a prebuilt GitHub bundle without install hooks', () => {
+test('package metadata declares a prebuilt public npm bundle without install hooks', () => {
   const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
   assert.equal(manifest.name, 'dsh-api-relay-audit')
-  assert.equal(manifest.private, true)
+  assert.equal(manifest.private, undefined)
+  assert.deepEqual(manifest.publishConfig, {
+    access: 'public',
+    registry: 'https://registry.npmjs.org/',
+  })
   assert.deepEqual(manifest.dsh, { bundle: { patch: './dsh/cordis.patch.yml' } })
-  assert.equal(manifest.scripts.prepare, undefined)
-  assert.equal(manifest.scripts.build, undefined)
+  for (const hook of ['prepare', 'build', 'prepack', 'postpack', 'preinstall', 'install', 'postinstall', 'prepublish', 'prepublishOnly', 'publish', 'postpublish']) {
+    assert.equal(manifest.scripts[hook], undefined)
+  }
   assert.equal(manifest.files.includes('audit.py'), true)
   for (const [peer, range] of Object.entries(manifest.peerDependencies)) {
     if (peer.startsWith('@deepseek-ai/dsh-')) {

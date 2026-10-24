@@ -1,0 +1,85 @@
+name: DSH npm package acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: Build one npm candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check acceptance fixtures
+        run: node --test scripts/dsh-acceptance/*.test.mjs
+      - name: Replay pinned Hub classification evidence
+        run: node scripts/dsh-evidence/replay.mjs
+      - name: Build and verify publish candidate
+        run: npm run verify:package -- --output-dir "${{ runner.temp }}/npm candidate"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-npm-candidate
+          path: ${{ runner.temp }}/npm candidate/
+          if-no-files-found: error
+          retention-days: 14
+
+  acceptance:
+    name: Real DSH npm consumer (${{ matrix.os }})
+    needs: candidate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: dsh-npm-candidate
+          path: ${{ runner.temp }}/npm candidate
+      # Bootstrap has Git available because the host may need it. The runner
+      # then narrows PATH and asserts ENOENT for Git before candidate install,
+      # fixed-version update, command invocation and uninstall. No user DSH
+      # home, real credentials, external API, or npm publish is involved.
+      - name: Install, invoke, update and remove the same candidate without Git
+        run: >-
+          node scripts/dsh-acceptance/run.mjs
+          --package-dir "${{ runner.temp }}/npm candidate"
+          --artifacts "${{ runner.temp }}/dsh acceptance evidence"
+      # The mechanism probe is an independent required check. Running it after
+      # the consumer keeps a probe defect from preventing the host observations;
+      # either failure still makes this job fail.
+      - name: Check lifecycle observer against a held output pipe
+        if: always()
+        run: node --test scripts/dsh-evidence/lifecycle.test.mjs
+      - name: Retain diagnostics on success and failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-npm-acceptance-${{ matrix.os }}
+          path: ${{ runner.temp }}/dsh acceptance evidence/
+          if-no-files-found: warn
+          retention-days: 14
