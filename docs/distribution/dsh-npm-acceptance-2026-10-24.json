@@ -1,0 +1,87 @@
+{
+  "schema": "api-relay-audit-dsh-acceptance/v1",
+  "verifiedDate": "2026-10-24",
+  "pullRequest": "https://github.com/toby-bridges/api-relay-audit/pull/114",
+  "testedHead": "6346378ca5e7cda2df0e78da4bcd53fb4ed76ab3",
+  "base": "bd405e8eaa2234118f942fec353324c718ab46d6",
+  "integrationSource": "56b41bd79e881a91b7f3e35197903b3b468b1e19",
+  "workflow": "https://github.com/toby-bridges/api-relay-audit/actions/runs/40108752088",
+  "scope": "Official DSH CLI plus headless Loader/commands; one unpublished npm candidate; synthetic loopback APIs only.",
+  "candidate": {
+    "name": "dsh-api-relay-audit",
+    "version": "2.5.0",
+    "files": 8,
+    "sha256": "3034dd118f766ad11f328f3f8eeeca132d1653aa00e850f5a40cd971d75a1283",
+    "integrity": "sha512-+/Xmsc54wPjeqyGaK4b3iKejSLA7r2QxHelQUe4ClCQWkCSWDiK8/Hla0y3IbS8qnXGQhqiu84Zfq8Q4k0USBA==",
+    "sourceFilesIndependentlyMatched": true,
+    "published": false
+  },
+  "platforms": [
+    {
+      "platform": "win32",
+      "runner": "windows-latest",
+      "job": "https://github.com/toby-bridges/api-relay-audit/actions/runs/40108752088/job/120915897511",
+      "node": "22.19.0",
+      "dsh": "0.1.7-rc.2",
+      "pnpm": "11.7.0",
+      "result": "passed",
+      "expectedStages": 19,
+      "syntheticApiRequests": 12,
+      "gitUnavailable": true,
+      "installedFileHashesMatched": true,
+      "failedVersionPreservedProfileBytes": true,
+      "cancelledMetadataRequestPreservedProfileBytes": true,
+      "observedCancelledProcessTreeExited": true,
+      "oldCommandWorkedBeforeRetry": true,
+      "retrySucceeded": true,
+      "fixedVersionUpdateSucceeded": true,
+      "uninstalledCommandAbsent": true,
+      "temporaryRootRemoved": true
+    },
+    {
+      "platform": "linux",
+      "runner": "ubuntu-latest",
+      "job": "https://github.com/toby-bridges/api-relay-audit/actions/runs/40108752088/job/120915897400",
+      "node": "22.19.0",
+      "dsh": "0.1.7-rc.2",
+      "pnpm": "11.7.0",
+      "result": "passed",
+      "expectedStages": 19,
+      "syntheticApiRequests": 12,
+      "gitUnavailable": true,
+      "installedFileHashesMatched": true,
+      "failedVersionPreservedProfileBytes": true,
+      "cancelledMetadataRequestPreservedProfileBytes": true,
+      "observedCancelledProcessTreeExited": true,
+      "oldCommandWorkedBeforeRetry": true,
+      "retrySucceeded": true,
+      "fixedVersionUpdateSucceeded": true,
+      "uninstalledCommandAbsent": true,
+      "temporaryRootRemoved": true
+    }
+  ],
+  "localChecks": {
+    "pythonPassed": 885,
+    "adapterAndPackagePassed": 27,
+    "acceptanceFixturePassed": 7,
+    "syntheticMechanismPassed": 1,
+    "pinnedSourceHashesVerified": 8,
+    "classifierBaselineObservationsMatched": 6,
+    "desiredClassificationsMatched": 1,
+    "desiredClassificationsTotal": 6
+  },
+  "ciChecksPassed": 12,
+  "evidenceReview": {
+    "downloadedSummariesAndTarballIndependentlyVerified": true,
+    "rawPrivateReportsIncluded": false,
+    "productionCredentialsUsed": false
+  },
+  "notVerified": [
+    "Browser UI interaction",
+    "Original Windows environment and root cause of issue #101",
+    "Cancellation during profile commit",
+    "Public npm publication and public-registry installation",
+    "Hub or DSH upstream repair implementation"
+  ],
+  "publicationAndUpstreamCommunication": "Separate owner approval required."
+}

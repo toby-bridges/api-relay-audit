@@ -1,0 +1,51 @@
+{
+  "mode": "pinned-baseline-observation",
+  "sourceHashesVerified": 8,
+  "baselineAssertionsPassed": 6,
+  "desiredClassificationsMatched": 1,
+  "desiredClassificationsTotal": 6,
+  "results": [
+    {
+      "source": "hub-current-classifier",
+      "issue": 99,
+      "actual": "pluginPrepare",
+      "expected": "network",
+      "correct": false
+    },
+    {
+      "source": "hub-current-classifier",
+      "issue": 101,
+      "actual": "timeout",
+      "expected": "timeout",
+      "correct": true
+    },
+    {
+      "source": "hub-current-classifier",
+      "issue": 103,
+      "actual": "pnpmIgnoredBuild",
+      "expected": "gitMissing",
+      "correct": false
+    },
+    {
+      "source": "hub-historical-classifier",
+      "issue": 99,
+      "actual": "pluginPrepare",
+      "expected": "network",
+      "correct": false
+    },
+    {
+      "source": "hub-historical-classifier",
+      "issue": 101,
+      "actual": "repo",
+      "expected": "timeout",
+      "correct": false
+    },
+    {
+      "source": "hub-historical-classifier",
+      "issue": 103,
+      "actual": "repo",
+      "expected": "gitMissing",
+      "correct": false
+    }
+  ]
+}
