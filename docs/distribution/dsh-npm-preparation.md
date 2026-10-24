@@ -83,6 +83,11 @@ The [upstream evidence package](./dsh-root-cause/README.md) tracks issues #99,
 #101 and #103 separately. A successful npm acceptance run does not prove that
 the reporter's historical #101 environment has been reproduced or repaired.
 
+The [2026-10-24 acceptance receipt](./dsh-npm-acceptance-2026-10-24.json)
+records the exact tested PR head, integration commit, candidate integrity and
+successful Windows/Ubuntu results. Its evidence is scoped to those identities;
+future releases require acceptance of their own exact candidate.
+
 ## Publication approval checklist
 
 Publication remains a separate manual action after PR review and merge:

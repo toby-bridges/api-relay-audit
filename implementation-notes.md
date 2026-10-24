@@ -93,6 +93,7 @@
 > Spec: User approval in this chat; deliver through a PR. Publication and upstream communication require separate approval.
 > Started: 2026-10-24
 > Baseline: bd405e8eaa2234118f942fec353324c718ab46d6 (master)
+> Completed: 2026-10-24 (npm preparation, hosted Windows/Linux acceptance, evidence package, and PR delivery; publication excluded)
 
 ## Design Decisions
 
@@ -140,3 +141,4 @@
 - First hosted run: Ubuntu's 19 real host stages passed. Windows exposed a defect in the independent synthetic pipe fixture before reaching the host stages. Node 22.19's Windows implementation puts non-detached children in a parent-owned kill-on-close Job; `unref()` did not keep the fixture holder alive. The fixture now uses explicit detachment, an IPC readiness handshake and observer-controlled release without increasing the 2.5-second watchdog. New test against the old fixture failed; the corrected fixture passed locally and awaits hosted Windows confirmation.
 - Keep the independent mechanism probe after the real consumer in CI, with both failures still failing the job. This preserves host observations when a probe has a defect.
 - The owner separately approved the required `release:minor` PR label after automatic approval rejected it. The label was applied; no release workflow or publication was triggered.
+- Hosted acceptance at PR head `6346378` passed on Windows and Ubuntu: 19 expected stages and 12 synthetic API requests per platform. Downloaded summaries confirmed cancelled process-tree exit, profile-byte preservation, old-command behavior before retry and successful cleanup. All 12 current CI checks passed. Permanent sanitized receipt: `docs/distribution/dsh-npm-acceptance-2026-10-24.json`. The receipt records the tested head/integration commit explicitly; later documentation commits do not replace that source identity.
