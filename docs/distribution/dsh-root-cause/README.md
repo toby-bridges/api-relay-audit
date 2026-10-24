@@ -45,7 +45,11 @@ That gate exits nonzero on these pinned sources. It is not a passing CI test. Up
 
 The lifecycle test is **synthetic**: a short-lived Node child exits 0 while its Node descendant still owns the inherited output pipe. It distinguishes `exit` from `close`, has a bounded watchdog and cleans up failed runs. It runs neither pnpm nor DSH and is not a reproduction or diagnosis of issue 101. Platform-specific host reproduction is a separate gate in [the acceptance matrix](acceptance-matrix.md).
 
-[verification.json](verification.json) records the local commands and outcomes. These evidence-package checks ran on macOS with Node 25.9.0. Their green result is not Windows acceptance.
+[verification.json](verification.json) records the local commands and outcomes. The original evidence-package checks ran on macOS with Node 25.9.0; the revised lifecycle fixture was also checked on macOS with Node 22.19.0. These local results are not Windows acceptance.
+
+The [first Windows CI run](https://github.com/toby-bridges/api-relay-audit/actions/runs/40107990920) failed the original synthetic fixture before the real DSH consumer step. Its parent exited and the pipe closed before the holder's release was observed. The original holder used `unref()` without `detached`; on Windows, [Node v22.19.0's libuv creates a kill-on-close Job](https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/win/process.c#L69-L96) and [assigns non-detached child processes to it](https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/win/process.c#L1082-L1102). That design is consistent with the early holder termination. The CI run did not instrument the Job itself, so its exact outer Job configuration is not claimed.
+
+The corrected fixture explicitly detaches the holder, waits for its IPC readiness acknowledgement, disconnects that IPC channel, and releases the inherited pipe through an isolated temporary marker only after the observer sees the direct parent's `exit`. The holder has a 1.5-second self-cleanup deadline; the controller's original 2.5-second watchdog remains unchanged. This replaces a timing assumption with a startup/release protocol. It does not skip Windows, extend the install timeout or reproduce issue 101. Windows confirmation belongs to the next PR CI run; detachment does not imply escaping an outer CI Job.
 
 ## Review and delivery
 

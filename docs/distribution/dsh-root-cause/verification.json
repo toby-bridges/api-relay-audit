@@ -24,7 +24,12 @@
       "exitCode": 0,
       "passed": 1,
       "failed": 0,
-      "scope": "synthetic Node exit/close mechanism only"
+      "scope": "synthetic Node exit/close mechanism only",
+      "revisedFixtureNode": "v22.19.0",
+      "revisedFixturePlatform": "darwin",
+      "protocol": "detached holder; IPC startup acknowledgement; release only after observed parent exit",
+      "controllerWatchdogMs": 2500,
+      "holderSelfCleanupMs": 1500
     },
     {
       "command": "node scripts/dsh-evidence/replay.mjs --source-dir PINNED_SOURCE_DIRECTORY --require-correct-classification",
@@ -33,6 +38,12 @@
       "reason": "The pinned current classifier maps issue 99 to pluginPrepare instead of network."
     }
   ],
+  "lifecycleFixtureWindows": {
+    "originalRun": "https://github.com/toby-bridges/api-relay-audit/actions/runs/40107990920",
+    "originalOutcome": "failed before real DSH consumer acceptance; holder release was not observed",
+    "revisedOutcome": "pending a fresh Windows PR CI run",
+    "boundary": "The synthetic fixture is not an original issue 101 reproduction."
+  },
   "notVerified": [
     "Original Windows issue 101 reproduction",
     "Hub/DSH upstream repair implementation",
