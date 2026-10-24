@@ -1,0 +1,154 @@
+{
+  "schema": "dsh-root-cause-evidence-v1",
+  "verifiedDate": "2026-10-24",
+  "boundary": "Public-safe local evidence preparation. No upstream fix, Windows reproduction, package publication or external reply is implied.",
+  "sources": [
+    {
+      "id": "hub-current-classifier",
+      "repository": "dshplugin/dsh-plugin-hub",
+      "commit": "f17814f949604a727c708accf10f2b68cdfa63bd",
+      "path": "src/client/logic/failures.ts",
+      "sha256": "08a0f099824cecd0c2877b07f4cb8faa8e8007b9b6893949002678998ea809a8",
+      "gitBlobSha": "e71734379d67fb62866b56d989a66bcfb667b0f2",
+      "role": "classifier",
+      "localFile": "hub-current-classifier.ts",
+      "license": "MIT",
+      "licenseFile": "licenses/hub-MIT.txt",
+      "url": "https://github.com/dshplugin/dsh-plugin-hub/blob/f17814f949604a727c708accf10f2b68cdfa63bd/src/client/logic/failures.ts",
+      "rawUrl": "https://raw.githubusercontent.com/dshplugin/dsh-plugin-hub/f17814f949604a727c708accf10f2b68cdfa63bd/src/client/logic/failures.ts"
+    },
+    {
+      "id": "hub-historical-classifier",
+      "repository": "dshplugin/dsh-plugin-hub",
+      "commit": "641b71666fd20cf9b0226106c879e60c33e0df26",
+      "path": "src/client/logic/failures.ts",
+      "sha256": "e17d44fd7afbf192151fdaccc94fe4bb00132a3bcf3eac38fc85c0dc3ba24898",
+      "gitBlobSha": "f1464ac93b0522eaf9cde1a599a338c970819e00",
+      "role": "classifier",
+      "localFile": "hub-historical-classifier.ts",
+      "license": "MIT",
+      "licenseFile": "licenses/hub-MIT.txt",
+      "url": "https://github.com/dshplugin/dsh-plugin-hub/blob/641b71666fd20cf9b0226106c879e60c33e0df26/src/client/logic/failures.ts",
+      "rawUrl": "https://raw.githubusercontent.com/dshplugin/dsh-plugin-hub/641b71666fd20cf9b0226106c879e60c33e0df26/src/client/logic/failures.ts"
+    },
+    {
+      "id": "hub-current-task-queue",
+      "repository": "dshplugin/dsh-plugin-hub",
+      "commit": "f17814f949604a727c708accf10f2b68cdfa63bd",
+      "path": "src/server/services/install/task-queue.ts",
+      "sha256": "66dfd074b4f5d62ac3407b5d1a4bd001a16ead3a1525a94616d033a2b7830d2b",
+      "gitBlobSha": "862c5cb1e6ebd136eeafd9b12b48bff8d2c6a8be",
+      "role": "supporting-source",
+      "localFile": "hub-current-task-queue.ts",
+      "license": "MIT",
+      "licenseFile": "licenses/hub-MIT.txt",
+      "url": "https://github.com/dshplugin/dsh-plugin-hub/blob/f17814f949604a727c708accf10f2b68cdfa63bd/src/server/services/install/task-queue.ts",
+      "rawUrl": "https://raw.githubusercontent.com/dshplugin/dsh-plugin-hub/f17814f949604a727c708accf10f2b68cdfa63bd/src/server/services/install/task-queue.ts"
+    },
+    {
+      "id": "hub-current-http-install",
+      "repository": "dshplugin/dsh-plugin-hub",
+      "commit": "f17814f949604a727c708accf10f2b68cdfa63bd",
+      "path": "src/server/http/install.ts",
+      "sha256": "e9378fa26bfaf7ba6e2f09949e983bc61272264ee765dc4a73976b70c081bcaf",
+      "gitBlobSha": "c8f928f38e1adfb31cbc0725e3fdb4d100fd1d4b",
+      "role": "supporting-source",
+      "localFile": "hub-current-http-install.ts",
+      "license": "MIT",
+      "licenseFile": "licenses/hub-MIT.txt",
+      "url": "https://github.com/dshplugin/dsh-plugin-hub/blob/f17814f949604a727c708accf10f2b68cdfa63bd/src/server/http/install.ts",
+      "rawUrl": "https://raw.githubusercontent.com/dshplugin/dsh-plugin-hub/f17814f949604a727c708accf10f2b68cdfa63bd/src/server/http/install.ts"
+    },
+    {
+      "id": "dsh-current-cli-plugin",
+      "repository": "deepseek-ai/deepseek-harness",
+      "commit": "22ddee3792402c3e70ec5f86a63c3e3e895a2f60",
+      "path": "apps/cli/src/plugin.ts",
+      "sha256": "a0689e50958440d208dbcbcd8376a230ec5babb6b04a19d7adaaabb2cacd8a11",
+      "gitBlobSha": "baad6e32f516b94eab10f2e0ab336d2f4ce3f5fc",
+      "role": "supporting-source",
+      "localFile": "dsh-current-cli-plugin.ts",
+      "license": "MIT",
+      "licenseFile": "licenses/dsh-MIT.txt",
+      "url": "https://github.com/deepseek-ai/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/apps/cli/src/plugin.ts",
+      "rawUrl": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/apps/cli/src/plugin.ts"
+    },
+    {
+      "id": "dsh-historical-cli-plugin",
+      "repository": "deepseek-ai/deepseek-harness",
+      "commit": "dd6322d604e00eec1ba5e0c8541159906a21094a",
+      "path": "apps/cli/src/plugin.ts",
+      "sha256": "97375a55d91953ad0f37d630aa052ecfee24a15d9ee1277416dda0c773d51423",
+      "gitBlobSha": "70741703c45945b197204c99e5fcea2e5c63be1e",
+      "role": "supporting-source",
+      "localFile": "dsh-historical-cli-plugin.ts",
+      "license": "MIT",
+      "licenseFile": "licenses/dsh-MIT.txt",
+      "url": "https://github.com/deepseek-ai/deepseek-harness/blob/dd6322d604e00eec1ba5e0c8541159906a21094a/apps/cli/src/plugin.ts",
+      "rawUrl": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/dd6322d604e00eec1ba5e0c8541159906a21094a/apps/cli/src/plugin.ts"
+    },
+    {
+      "id": "hub-MIT",
+      "repository": "dshplugin/dsh-plugin-hub",
+      "commit": "f17814f949604a727c708accf10f2b68cdfa63bd",
+      "path": "LICENSE",
+      "sha256": "cfe2cfbf64c098650d6ccb4fc80a0ba698542435d7f90430d5b647320bc60a8c",
+      "gitBlobSha": "2a472f86b9ed26e8e8529dfd3749f3770a6352ab",
+      "role": "license",
+      "localFile": "hub-MIT.txt",
+      "license": "MIT",
+      "licenseFile": "licenses/hub-MIT.txt",
+      "url": "https://github.com/dshplugin/dsh-plugin-hub/blob/f17814f949604a727c708accf10f2b68cdfa63bd/LICENSE",
+      "rawUrl": "https://raw.githubusercontent.com/dshplugin/dsh-plugin-hub/f17814f949604a727c708accf10f2b68cdfa63bd/LICENSE"
+    },
+    {
+      "id": "dsh-MIT",
+      "repository": "deepseek-ai/deepseek-harness",
+      "commit": "22ddee3792402c3e70ec5f86a63c3e3e895a2f60",
+      "path": "LICENSE",
+      "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be",
+      "gitBlobSha": "c1f7a78e89e4e4dc7b86664c3b3c76eb5eee1785",
+      "role": "license",
+      "localFile": "dsh-MIT.txt",
+      "license": "MIT",
+      "licenseFile": "licenses/dsh-MIT.txt",
+      "url": "https://github.com/deepseek-ai/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/LICENSE",
+      "rawUrl": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/LICENSE"
+    }
+  ],
+  "classificationCases": [
+    {
+      "issue": 99,
+      "url": "https://github.com/toby-bridges/api-relay-audit/issues/99",
+      "file": "issue-99.sanitized.log",
+      "sha256": "436fda1c6f4f257bb79cf93dc2a9cf34453328ffc148a257864f68fe9a0278e1",
+      "expected": "network",
+      "observed": {
+        "hub-historical-classifier": "pluginPrepare",
+        "hub-current-classifier": "pluginPrepare"
+      }
+    },
+    {
+      "issue": 101,
+      "url": "https://github.com/toby-bridges/api-relay-audit/issues/101",
+      "file": "issue-101.sanitized.log",
+      "sha256": "4a1bf7fca637be337303d2f0b1972c5b198499c0ce07ec79bb7217bdc6f4bc73",
+      "expected": "timeout",
+      "observed": {
+        "hub-historical-classifier": "repo",
+        "hub-current-classifier": "timeout"
+      }
+    },
+    {
+      "issue": 103,
+      "url": "https://github.com/toby-bridges/api-relay-audit/issues/103",
+      "file": "issue-103.sanitized.log",
+      "sha256": "e44260e4c8eb11db6ec5fb4805dfed21b7458f7b1ac4fe99690bfffab40596e5",
+      "expected": "gitMissing",
+      "observed": {
+        "hub-historical-classifier": "repo",
+        "hub-current-classifier": "pnpmIgnoredBuild"
+      }
+    }
+  ]
+}

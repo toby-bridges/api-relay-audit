@@ -1,7 +1,6 @@
 {
   "name": "dsh-api-relay-audit",
   "version": "2.5.0",
-  "private": true,
   "description": "DeepSeek Harness bundle for running API Relay Audit locally",
   "type": "module",
   "main": "./dsh/index.js",
@@ -20,7 +19,13 @@
     "VERSION"
   ],
   "scripts": {
-    "test:dsh": "node --test dsh/test/*.test.js"
+    "test:dsh": "node --test dsh/test/*.test.js",
+    "test:npm-package": "node --test dsh/test/npm-package.test.js",
+    "verify:package": "node scripts/verify-npm-package.mjs"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"

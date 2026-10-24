@@ -84,3 +84,56 @@
 - State: uncommitted local candidate on codex/skills-cursor-preparation; no external write. Next gate is user review before any push, PR, merge, authorization, or channel submission.
 
 *This file is maintained automatically during implementation.*
+
+---
+
+## npm Distribution and Windows Acceptance (2026-10-24)
+
+> Task: Prepare npm distribution, Windows acceptance, and upstream root-cause evidence for DSH issues #99, #101, and #103.
+> Spec: User approval in this chat; deliver through a PR. Publication and upstream communication require separate approval.
+> Started: 2026-10-24
+> Baseline: bd405e8eaa2234118f942fec353324c718ab46d6 (master)
+
+## Design Decisions
+
+| # | Decision | Context | Alternative considered |
+|---|----------|---------|------------------------|
+| 1 | Use a new managed worktree and codex/dsh-npm-windows branch. | The original checkout contains unrelated user changes. | Reusing the original checkout. |
+| 2 | Prepare a prebuilt npm tarball without install/build lifecycle hooks. | The adapter already ships its runtime; Git and source builds are unnecessary consumer requirements. | Installing the source repository. |
+| 3 | Keep publication manual and unperformed. | Approval covers preparation, tests, push, and PR creation, not npm publication or upstream outreach. | An automatic publishing workflow. |
+| 4 | Validate real Windows behavior in GitHub-hosted Windows CI and retain structured evidence. | This workstation is macOS; platform mocks cannot establish Windows acceptance. | Treating adapter unit tests as Windows host acceptance. |
+| 5 | Build one candidate on Ubuntu and consume identical bytes through a loopback npm registry on Windows and Ubuntu. | Public npm publication remains unapproved; local-directory installation does not exercise registry resolution and integrity. | Publishing a test package or independently packing on each OS. |
+| 6 | Use the already declared DSH 0.1.7-rc.2 host with a real headless Loader and commands service. | Earlier rc.6 empty-Web controls exposed an unrelated HMR composition failure. Browser interaction and historical issue #101 are separate evidence gates. | Calling the adapter directly or claiming browser UI acceptance. |
+| 7 | Preserve the known classifier outputs as fixed-source observations. | Green reproducibility checks must not imply that upstream misclassifications are repaired. | Making known upstream defects silently pass the desired-behavior gate. |
+| 8 | Cancel at an observed real metadata request and verify the owned process tree independently. | Synthetic process tests alone do not prove that the DSH/pnpm writer stopped or the prior profile survived. | Treating a taskkill attempt or files on disk as cleanup proof. |
+
+## Deviations
+
+| # | What changed | Spec said | I did instead | Why |
+|---|--------------|-----------|---------------|-----|
+
+## Tradeoffs
+
+| # | Topic | Option A | Option B | Chose | Reasoning |
+|---|-------|----------|----------|-------|-----------|
+| 1 | Upstream scope | Modify or fork Hub/DSH now | Prepare reproducible, pinned evidence and proposed fixes | B | User requested an evidence package; upstream communication remains gated. |
+
+## Open Questions
+
+| # | Question | Impact | My assumption | Blocking? |
+|---|----------|--------|---------------|-----------|
+| 1 | npm package ownership and final release version | Required before publication | Do not claim registry availability or ownership; retain VERSION until release preparation. | Publication only |
+| 2 | Exact cause of issue #101 on the reporter's Windows environment | Required before claiming its root cause fixed | Preserve separate exit, stream-close, configuration, and load observations. | Root-cause conclusion only |
+
+### Local verification
+
+- Python regression: `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q -p no:cacheprovider` — 885 passed; loopback fixtures require permission to bind localhost in this workstation's sandbox.
+- Adapter/package behavior: `npm run test:dsh` — 27 passed.
+- Candidate: `npm run verify:package` — exact eight-file archive, source bytes, extracted adapter and Python help checks passed. This is preparation, not publication.
+- Source consistency: standalone generation, version synchronization, metrics drift and whitespace checks passed.
+- Evidence: eight pinned upstream source hashes and six baseline classifier observations reproduced; only one of six matches the desired classification. The explicit correctness gate remains red by design.
+- Synthetic lifecycle/acceptance-tool checks: six passed on macOS. Windows acceptance remains pending until the hosted runner completes.
+- Final acceptance fixture checks: seven passed under Node 22.19.0; the independent synthetic pipe test is a separate check.
+- Real macOS DSH 0.1.7-rc.2 / pnpm 11.7.0 run: all 19 stages matched their expected outcomes, including a missing-version failure and metadata-phase cancellation. Twelve loopback API requests succeeded. Both observed cancellation PIDs exited; original manifest/lock bytes and old command behavior survived before retry.
+- Independent review found and closed a Windows path-redaction defect: raw, JSON-escaped, slash-normalized, file-URL and encoded-space path forms now have behavior tests. No production credentials or raw private evidence are included.
+- Hosted Windows and Ubuntu results belong to the exact PR commit and workflow artifacts. Local macOS success is not a substitute for either hosted result; original issue #101 and interruption during profile commit remain separate upstream gates.

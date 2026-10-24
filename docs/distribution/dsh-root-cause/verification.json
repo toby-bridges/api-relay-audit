@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-24",
+  "platform": "darwin",
+  "node": "v25.9.0",
+  "checks": [
+    {
+      "command": "node scripts/dsh-evidence/replay.mjs",
+      "mode": "fixed-commit-public-download",
+      "exitCode": 0,
+      "sourceHashesVerified": 8,
+      "baselineAssertionsPassed": 6,
+      "desiredClassificationsMatched": 1,
+      "desiredClassificationsTotal": 6
+    },
+    {
+      "command": "node scripts/dsh-evidence/replay.mjs --source-dir PINNED_SOURCE_DIRECTORY",
+      "mode": "offline",
+      "exitCode": 0,
+      "sourceHashesVerified": 8,
+      "baselineAssertionsPassed": 6
+    },
+    {
+      "command": "node --test scripts/dsh-evidence/lifecycle.test.mjs",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0,
+      "scope": "synthetic Node exit/close mechanism only"
+    },
+    {
+      "command": "node scripts/dsh-evidence/replay.mjs --source-dir PINNED_SOURCE_DIRECTORY --require-correct-classification",
+      "exitCode": 1,
+      "expectedFailure": true,
+      "reason": "The pinned current classifier maps issue 99 to pluginPrepare instead of network."
+    }
+  ],
+  "notVerified": [
+    "Original Windows issue 101 reproduction",
+    "Hub/DSH upstream repair implementation",
+    "Package publication or public registry consumption",
+    "Issue resolution on reporter machines"
+  ]
+}

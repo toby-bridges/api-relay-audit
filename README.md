@@ -167,6 +167,10 @@ The exact v2.4.0 installation, runtime, and secret-scan results are recorded in
 For the updated host matrix and verification limits, see the
 [v2.5.0 release notes](./docs/releases/v2.5.md).
 
+Registry distribution is being prepared with real tarball and Windows
+acceptance checks. This does not establish an npm publication; see the
+[npm preparation and approval gates](./docs/distribution/dsh-npm-preparation.md).
+
 ## Retained Agent Skill Files
 
 The repository retains its existing OpenClaw and Hermes skill files for direct
@@ -393,6 +397,9 @@ wrapper 不在兼容范围内。
 旧版 `v2.4.0` 的错误探针和流式 curl 请求可能短暂把 Key 放进 curl 进程参数；
 `v2.5.0` 改为经 curl 配置标准输入传递这些请求头。仍使用旧版时，应把本机
 进程列表视为敏感信息。
+
+npm 分发准备与 Windows 验收见[分发说明](./docs/distribution/dsh-npm-preparation.md)。
+准备完成不代表 npm 已发布；公开安装入口须在发布批准和 registry 核验后更新。
 
 ## 保留的 Agent Skill 文件
 
