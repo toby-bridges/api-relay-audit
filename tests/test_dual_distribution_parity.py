@@ -480,6 +480,78 @@ def test_standalone_ensure_format_real_body_detects_anthropic(monkeypatch):
     assert calls[0][2]["max_tokens"] == 1
 
 
+def test_standalone_tool_probe_uses_curl_adapter_and_normalizes_call(monkeypatch):
+    """The generated public interface must retain the curl-only transport."""
+    standalone = _load_standalone_audit()
+    client = standalone.APIClient(
+        "https://relay.example.com/v1",
+        "sk-test",
+        "claude-3-haiku",
+        verbose=False,
+    )
+    client._format = "anthropic"
+    calls = []
+
+    def fake_curl_post(url, headers, body):
+        calls.append((url, headers, body))
+        return {
+            "content": [{
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "record_probe_fixed",
+                "input": {"probe_token": "TC_fixed"},
+            }],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 9, "output_tokens": 3},
+        }
+
+    monkeypatch.setattr(client, "_curl_post", fake_curl_post)
+    result = client.call_tool_probe(
+        [{"role": "user", "content": "call it"}],
+        {
+            "name": "record_probe_fixed",
+            "description": "inert",
+            "input_schema": {
+                "type": "object",
+                "properties": {"probe_token": {"type": "string"}},
+                "required": ["probe_token"],
+                "additionalProperties": False,
+            },
+        },
+    )
+
+    assert result["tool_calls"][0]["arguments"] == {"probe_token": "TC_fixed"}
+    assert calls[0][0] == "https://relay.example.com/v1/messages"
+    assert calls[0][2]["tools"][0]["strict"] is True
+    assert calls[0][2]["tool_choice"]["disable_parallel_tool_use"] is True
+
+
+def test_standalone_tool_call_preview_redacts_secret_values():
+    standalone = _load_standalone_audit()
+    caller_key = "sk-caller-key-abcdefghijklmnopqrstuvwxyz"
+    upstream_key = "sk-upstream-key-abcdefghijklmnopqrstuvwxyz"
+
+    preview = standalone.format_tool_calls_preview(
+        [{
+            "type": "function",
+            "name": "must-not-be-rendered",
+            "arguments": {
+                "caller": caller_key,
+                "upstream": upstream_key,
+            },
+            "arguments_error": None,
+        }],
+        max_chars=500,
+        api_key=caller_key,
+    )
+
+    assert caller_key not in preview
+    assert caller_key[:8] not in preview
+    assert upstream_key not in preview
+    assert "must-not-be-rendered" not in preview
+    assert "<REDACTED" in preview
+
+
 def _help_option_set(path):
     text = _help_text(path)
     return set(re.findall(r"--[a-z0-9-]+", text))
@@ -745,14 +817,20 @@ def _run_stubbed_audit_and_rating(module, monkeypatch, tmp_path, case_name, scen
         "test_instruction_conflict",
         lambda *args: scenario.get("overridden", False),
     )
-    monkeypatch.setattr(
-        module,
-        "test_tool_substitution",
-        lambda *args: (
-            scenario.get("substitution_detected", False),
-            scenario.get("substitution_inconclusive", False),
-        ),
-    )
+    if scenario.get("forbid_tool_substitution"):
+        def forbidden_tool_substitution(*args):
+            raise AssertionError("skip flag must not send any Step 8 request")
+
+        monkeypatch.setattr(module, "test_tool_substitution", forbidden_tool_substitution)
+    else:
+        monkeypatch.setattr(
+            module,
+            "test_tool_substitution",
+            lambda *args: (
+                scenario.get("substitution_detected", False),
+                scenario.get("substitution_inconclusive", False),
+            ),
+        )
     monkeypatch.setattr(
         module,
         "test_error_leakage",
@@ -779,23 +857,22 @@ def _run_stubbed_audit_and_rating(module, monkeypatch, tmp_path, case_name, scen
     )
 
     output = tmp_path / f"{module.__name__.replace('.', '_')}-{case_name}.md"
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "audit.py",
-            "--key",
-            "sk-test",
-            "--url",
-            "https://relay.example.com/v1",
-            "--model",
-            "claude-test",
-            "--profile",
-            "full",
-            "--output",
-            str(output),
-        ],
-    )
+    argv = [
+        "audit.py",
+        "--key",
+        "sk-test",
+        "--url",
+        "https://relay.example.com/v1",
+        "--model",
+        "claude-test",
+        "--profile",
+        "full",
+        "--output",
+        str(output),
+    ]
+    if scenario.get("skip_tool_substitution"):
+        argv.append("--skip-tool-substitution")
+    monkeypatch.setattr(sys, "argv", argv)
 
     module.main()
     return _extract_overall_rating(output.read_text(encoding="utf-8"))
@@ -808,6 +885,12 @@ def _run_stubbed_audit_and_rating(module, monkeypatch, tmp_path, case_name, scen
         ("d1_only", {"injection": 101}, "MEDIUM"),
         ("d1_and_d2", {"injection": 101, "overridden": True}, "HIGH"),
         ("d3_substitution", {"substitution_detected": True}, "HIGH"),
+        ("d3_inconclusive", {"substitution_inconclusive": True}, "MEDIUM"),
+        (
+            "step8_skipped",
+            {"skip_tool_substitution": True, "forbid_tool_substitution": True},
+            "LOW",
+        ),
         ("d4_medium", {"error_severity": "medium"}, "MEDIUM"),
         ("d4_high", {"error_severity": "high"}, "HIGH"),
         ("d5_anomaly", {"stream_verdict": "anomaly"}, "HIGH"),
