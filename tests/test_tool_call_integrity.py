@@ -39,6 +39,7 @@ def test_exact_single_tool_call_is_clean():
         "name_match": True,
         "arguments_match": True,
         "findings": [],
+        "protocol_notes": [],
     }
 
 
@@ -205,6 +206,7 @@ def test_no_tool_call_is_inconclusive_when_relay_does_not_honor_forcing():
         "findings": [
             "Forced tool request returned no structured Tool Call; support could not be verified"
         ],
+        "protocol_notes": [],
     }
 
 

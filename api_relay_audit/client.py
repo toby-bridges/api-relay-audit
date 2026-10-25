@@ -44,6 +44,31 @@ def _extract_anthropic_text(content) -> str:
     return "".join(parts)
 
 
+TOOL_PROBE_TEXT_LIMIT = 200
+
+
+def _is_token_char(char) -> bool:
+    return char.isalnum() or char in "-_.~+/="
+
+
+def _clip_probe_text(text, limit=TOOL_PROBE_TEXT_LIMIT) -> str:
+    """Bound the text a no-call Tool Call probe returned.
+
+    When the cut lands inside a token, the partial token is dropped so a
+    truncated credential cannot fall below the redaction patterns' minimum
+    length before the report layer redacts the excerpt.
+    """
+    if not isinstance(text, str):
+        return ""
+    if len(text) <= limit:
+        return text
+    end = limit
+    if _is_token_char(text[limit]):
+        while end and _is_token_char(text[end - 1]):
+            end -= 1
+    return text[:end]
+
+
 def _parse_curl_i_output(output: str) -> dict:
     """Parse ``curl -i`` (or ``curl -sk -i``) stdout into a response dict.
 
@@ -463,13 +488,17 @@ class APIClient:
                 })
 
         usage = data.get("usage", {})
-        return {
+        result = {
+            "protocol": "anthropic",
             "tool_calls": tool_calls,
             "stop_reason": data.get("stop_reason"),
             "input_tokens": usage.get("input_tokens", 0),
             "output_tokens": usage.get("output_tokens", 0),
             "raw": data,
         }
+        if not tool_calls:
+            result["text"] = _clip_probe_text(_extract_anthropic_text(content))
+        return result
 
     def _prepare_tool_probe_openai(self, messages, tool_spec, max_tokens=256):
         url = self.base_url
@@ -560,13 +589,19 @@ class APIClient:
             })
 
         usage = data.get("usage", {})
-        return {
+        result = {
+            "protocol": "openai",
             "tool_calls": tool_calls,
             "stop_reason": choice.get("finish_reason"),
             "input_tokens": usage.get("prompt_tokens", 0),
             "output_tokens": usage.get("completion_tokens", 0),
             "raw": data,
         }
+        if not tool_calls:
+            content = message.get("content")
+            text = content if isinstance(content, str) else _extract_anthropic_text(content)
+            result["text"] = _clip_probe_text(text)
+        return result
 
     # -- Public API -----------------------------------------------------------
 

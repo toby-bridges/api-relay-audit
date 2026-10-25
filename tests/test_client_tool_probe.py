@@ -67,6 +67,8 @@ def test_anthropic_tool_probe_forces_one_strict_tool_and_normalizes_response(
         "arguments_error": None,
     }]
     assert result["stop_reason"] == "tool_use"
+    assert result["protocol"] == "anthropic"
+    assert "text" not in result
     assert result["input_tokens"] == 11
     assert result["output_tokens"] == 4
     assert result["raw"] == response.json.return_value
@@ -123,6 +125,7 @@ def test_openai_tool_probe_forces_one_strict_function_and_parses_arguments(
         "arguments_error": None,
     }]
     assert result["stop_reason"] == "tool_calls"
+    assert result["protocol"] == "openai"
     assert result["input_tokens"] == 13
     assert result["output_tokens"] == 5
 
@@ -230,7 +233,7 @@ def test_tool_probe_transparent_log_hashes_exact_wire_body(mock_post, tmp_path):
 def test_tool_probe_uses_existing_format_detection_before_adapter(mock_post):
     response = MagicMock(status_code=200)
     response.json.return_value = {
-        "content": [],
+        "content": [{"type": "text", "text": "Tools are disabled on this relay."}],
         "stop_reason": "end_turn",
         "usage": {},
     }
@@ -247,6 +250,8 @@ def test_tool_probe_uses_existing_format_detection_before_adapter(mock_post):
 
     client.ensure_format.assert_called_once_with()
     assert result["tool_calls"] == []
+    assert result["protocol"] == "anthropic"
+    assert result["text"] == "Tools are disabled on this relay."
     assert mock_post.call_args.args[0].endswith("/messages")
 
 

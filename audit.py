@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: fe0edb2cd2b43f870cd3c0cebf03a7bd34c4c7a044c42c090cf23b6dbf74d036
-# standalone_body_sha256: 4189fe94b7c805dda53527b58667d84077169f8a45b99c36c3a1cd4d22be1999
+# source_sha256: ebd222b3bb1cf5ad8a6d60008efa28af6e91432251f94b2d22e66403a0777c61
+# standalone_body_sha256: e5450c5ef7ac3615e3e75c35e6c4b3d65061e356820a5ad23535acbc602964ac
 # END GENERATED STANDALONE HEADER
 
 """
@@ -831,6 +831,31 @@ def _extract_anthropic_text(content) -> str:
     return "".join(parts)
 
 
+TOOL_PROBE_TEXT_LIMIT = 200
+
+
+def _is_token_char(char) -> bool:
+    return char.isalnum() or char in "-_.~+/="
+
+
+def _clip_probe_text(text, limit=TOOL_PROBE_TEXT_LIMIT) -> str:
+    """Bound the text a no-call Tool Call probe returned.
+
+    When the cut lands inside a token, the partial token is dropped so a
+    truncated credential cannot fall below the redaction patterns' minimum
+    length before the report layer redacts the excerpt.
+    """
+    if not isinstance(text, str):
+        return ""
+    if len(text) <= limit:
+        return text
+    end = limit
+    if _is_token_char(text[limit]):
+        while end and _is_token_char(text[end - 1]):
+            end -= 1
+    return text[:end]
+
+
 def _parse_curl_i_output(output: str) -> dict:
     """Parse ``curl -i`` (or ``curl -sk -i``) stdout into a response dict.
 
@@ -1250,13 +1275,17 @@ class APIClient:
                 })
 
         usage = data.get("usage", {})
-        return {
+        result = {
+            "protocol": "anthropic",
             "tool_calls": tool_calls,
             "stop_reason": data.get("stop_reason"),
             "input_tokens": usage.get("input_tokens", 0),
             "output_tokens": usage.get("output_tokens", 0),
             "raw": data,
         }
+        if not tool_calls:
+            result["text"] = _clip_probe_text(_extract_anthropic_text(content))
+        return result
 
     def _prepare_tool_probe_openai(self, messages, tool_spec, max_tokens=256):
         url = self.base_url
@@ -1347,13 +1376,19 @@ class APIClient:
             })
 
         usage = data.get("usage", {})
-        return {
+        result = {
+            "protocol": "openai",
             "tool_calls": tool_calls,
             "stop_reason": choice.get("finish_reason"),
             "input_tokens": usage.get("prompt_tokens", 0),
             "output_tokens": usage.get("completion_tokens", 0),
             "raw": data,
         }
+        if not tool_calls:
+            content = message.get("content")
+            text = content if isinstance(content, str) else _extract_anthropic_text(content)
+            result["text"] = _clip_probe_text(text)
+        return result
 
     # -- Public API -----------------------------------------------------------
 
@@ -2541,6 +2576,7 @@ returned tool call and never sends a ``tool_result`` follow-up request.
 """
 
 import json
+import re
 import uuid
 
 
@@ -2553,6 +2589,7 @@ PROBE_DESCRIPTION = (
     "Record an inert relay-audit canary. This tool performs no I/O, "
     "has no side effects, and will not be executed. Call it exactly once."
 )
+TEXT_EXCERPT_LIMIT = 200
 
 
 def _json_deep_equal(left, right):
@@ -2572,6 +2609,16 @@ def _json_deep_equal(left, right):
     return left == right
 
 
+def _markdown_safe(text, max_chars, api_key=""):
+    """Redact secrets, escape Markdown table/code delimiters, then bound."""
+    text = redact_sensitive_text(text, api_key)
+    text = text.replace("|", "\\|").replace("`", "\\`")
+    limit = max(3, int(max_chars))
+    if len(text) > limit:
+        return text[:limit - 3] + "..."
+    return text
+
+
 def format_tool_calls_preview(calls, max_chars=240, api_key=""):
     """Return a redacted, Markdown-safe, bounded preview of arguments only."""
     arguments = [
@@ -2584,16 +2631,45 @@ def format_tool_calls_preview(calls, max_chars=240, api_key=""):
         separators=(",", ":"),
         default=str,
     )
-    text = redact_sensitive_text(text, api_key)
-    text = text.replace("|", "\\|").replace("`", "\\`")
-    limit = max(3, int(max_chars))
-    if len(text) > limit:
-        return text[:limit - 3] + "..."
-    return text
+    return _markdown_safe(text, max_chars, api_key)
 
 
-def analyze_tool_call_integrity(response, expected_name, expected_arguments):
-    """Compare a normalized Tool Call response with the forced expectation."""
+def format_text_excerpt(text, max_chars=TEXT_EXCERPT_LIMIT, api_key=""):
+    """Return a redacted, Markdown-safe, single-line excerpt of returned text."""
+    return _markdown_safe(" ".join(str(text).split()), max_chars, api_key)
+
+
+def _id_prefix(value):
+    if not isinstance(value, str) or not value:
+        return "missing"
+    match = re.match(r"[A-Za-z]{1,16}_", value)
+    return match.group(0) if match else "none"
+
+
+def _describe_stop_reason(value):
+    if value is None:
+        return "missing"
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z][A-Za-z_]{0,31}", value):
+        return f"'{value}'"
+    return "a non-standard value"
+
+
+def analyze_tool_call_integrity(response, expected_name, expected_arguments,
+                                api_key=""):
+    """Compare a normalized Tool Call response with the forced expectation.
+
+    When the client marks ``protocol`` as ``anthropic``, two protocol checks
+    apply. A ``tool_use`` id without the ``toolu_`` prefix is recorded in
+    ``protocol_notes`` only: a non-standard id alone is not rewriting
+    evidence. A returned call whose stop reason is not ``tool_use`` is an
+    anomaly, because agent loops key on that field and may ignore the call.
+    OpenAI-format forced calls may finish with ``stop`` or ``tool_calls``, so
+    neither value is flagged. A response without ``protocol`` keeps the
+    protocol-neutral checks only. When no call is returned, a redacted,
+    bounded ``text_excerpt`` records what the relay said instead.
+
+    Concept inspired by canarybyte/veridrop structured_output.py (AGPL-3.0); reimplemented independently.
+    """
     if not isinstance(response, dict):
         response = {}
     if "error" in response:
@@ -2606,6 +2682,7 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments):
             "findings": [
                 "Structured Tool Call probe failed; support could not be verified"
             ],
+            "protocol_notes": [],
         }
     calls = response.get("tool_calls", [])
     if not isinstance(calls, list) or any(not isinstance(call, dict) for call in calls):
@@ -2616,10 +2693,11 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments):
             "name_match": None,
             "arguments_match": None,
             "findings": ["Structured Tool Call response format was invalid"],
+            "protocol_notes": [],
         }
     if not calls:
         claimed_tool_stop = response.get("stop_reason") in {"tool_use", "tool_calls"}
-        return {
+        result = {
             "verdict": "anomaly" if claimed_tool_stop else "inconclusive",
             "expected_count": 1,
             "received_count": 0,
@@ -2631,7 +2709,12 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments):
                 "Forced tool request returned no structured Tool Call; "
                 "support could not be verified"
             ]),
+            "protocol_notes": [],
         }
+        text = response.get("text")
+        if isinstance(text, str) and text.strip():
+            result["text_excerpt"] = format_text_excerpt(text, api_key=api_key)
+        return result
     call = calls[0]
     count_match = len(calls) == 1
     type_match = call.get("type") == "function"
@@ -2655,10 +2738,33 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments):
         )
     elif not arguments_match:
         findings.append("Tool arguments differed from the forced canary payload")
+    protocol_notes = []
+    stop_reason_match = True
+    if response.get("protocol") == "anthropic":
+        unprefixed = [
+            item.get("id") for item in calls
+            if not (isinstance(item.get("id"), str) and item["id"].startswith("toolu_"))
+        ]
+        if unprefixed:
+            protocol_notes.append(
+                f"{len(unprefixed)} of {len(calls)} Anthropic tool_use id(s) lacked "
+                "the standard toolu_ prefix (first observed prefix: "
+                f"{_id_prefix(unprefixed[0])}); recorded for context, not counted "
+                "as rewriting"
+            )
+        stop_reason = response.get("stop_reason")
+        if stop_reason != "tool_use":
+            stop_reason_match = False
+            findings.append(
+                f"Anthropic stop reason was {_describe_stop_reason(stop_reason)}, "
+                "not 'tool_use', although a Tool Call was returned; agent loops "
+                "keyed on stop_reason may ignore the call"
+            )
     return {
         "verdict": (
             "clean"
-            if count_match and type_match and name_match and arguments_match
+            if (count_match and type_match and name_match and arguments_match
+                and stop_reason_match)
             else "anomaly"
         ),
         "expected_count": 1,
@@ -2666,6 +2772,7 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments):
         "name_match": name_match,
         "arguments_match": arguments_match,
         "findings": findings,
+        "protocol_notes": protocol_notes,
     }
 
 
@@ -2710,6 +2817,7 @@ def run_tool_call_integrity_test(client, nonce_factory=None):
         response,
         expected_name=tool_name,
         expected_arguments=expected_arguments,
+        api_key=getattr(client, "api_key", ""),
     )
     result["expected_name"] = tool_name
     result["expected_arguments"] = expected_arguments
@@ -6287,6 +6395,7 @@ def test_tool_substitution(client, report):
             "findings": [
                 "Structured Tool Call probe failed; support could not be verified"
             ],
+            "protocol_notes": [],
             "received_calls": [],
         }
 
@@ -6314,6 +6423,16 @@ def test_tool_substitution(client, report):
         for finding in structured["findings"]:
             safe = str(finding)[:240].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
             report.p(f"- {safe}")
+    if structured.get("protocol_notes"):
+        report.p("\n**Protocol notes (informational, not scored):**")
+        for note in structured["protocol_notes"]:
+            safe = str(note)[:240].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
+            report.p(f"- {safe}")
+    if structured.get("text_excerpt"):
+        # Already redacted, Markdown-escaped, and bounded by the detector;
+        # re-bound and flatten here without escaping twice.
+        excerpt = " ".join(str(structured["text_excerpt"]).split())[:240]
+        report.p(f"**Text returned instead of a Tool Call (redacted excerpt)**: `{excerpt}`")
 
     structured_anomaly = structured["verdict"] == "anomaly"
     structured_inconclusive = structured["verdict"] == "inconclusive"
@@ -7357,8 +7476,8 @@ def _run_audit(args, report_stdout):
             reasons.append(
                 "**Tool-call integrity anomaly detected (AC-1 / AC-1.a).** "
                 "A malicious middleware may be rewriting a structured tool name, "
-                "arguments, call count, or package-install command on the return "
-                "path -- a code-execution-level finding."
+                "arguments, call count, stop reason, or package-install command on "
+                "the return path -- a code-execution-level finding."
             )
         if err_severity == "critical":
             reasons.append(

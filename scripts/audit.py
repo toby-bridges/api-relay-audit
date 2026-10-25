@@ -959,6 +959,7 @@ def test_tool_substitution(client, report):
             "findings": [
                 "Structured Tool Call probe failed; support could not be verified"
             ],
+            "protocol_notes": [],
             "received_calls": [],
         }
 
@@ -986,6 +987,16 @@ def test_tool_substitution(client, report):
         for finding in structured["findings"]:
             safe = str(finding)[:240].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
             report.p(f"- {safe}")
+    if structured.get("protocol_notes"):
+        report.p("\n**Protocol notes (informational, not scored):**")
+        for note in structured["protocol_notes"]:
+            safe = str(note)[:240].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
+            report.p(f"- {safe}")
+    if structured.get("text_excerpt"):
+        # Already redacted, Markdown-escaped, and bounded by the detector;
+        # re-bound and flatten here without escaping twice.
+        excerpt = " ".join(str(structured["text_excerpt"]).split())[:240]
+        report.p(f"**Text returned instead of a Tool Call (redacted excerpt)**: `{excerpt}`")
 
     structured_anomaly = structured["verdict"] == "anomaly"
     structured_inconclusive = structured["verdict"] == "inconclusive"
@@ -2030,8 +2041,8 @@ def _run_audit(args, report_stdout):
             reasons.append(
                 "**Tool-call integrity anomaly detected (AC-1 / AC-1.a).** "
                 "A malicious middleware may be rewriting a structured tool name, "
-                "arguments, call count, or package-install command on the return "
-                "path -- a code-execution-level finding."
+                "arguments, call count, stop reason, or package-install command on "
+                "the return path -- a code-execution-level finding."
             )
         if err_severity == "critical":
             reasons.append(

@@ -66,16 +66,23 @@ def test_structured_anomaly_sets_d3(monkeypatch):
 
 
 def test_structured_inconclusive_sets_d3i(monkeypatch):
+    structured = _structured("inconclusive")
+    structured["protocol_notes"] = ["note with | pipe"]
+    structured["text_excerpt"] = "Tools are disabled \\| here"
     monkeypatch.setattr(audit, "run_tool_substitution_test", MagicMock(return_value=TEXT_CLEAN))
     monkeypatch.setattr(
         audit,
         "run_tool_call_integrity_test",
-        MagicMock(return_value=_structured("inconclusive")),
+        MagicMock(return_value=structured),
     )
     report = Reporter()
 
     assert audit.test_tool_substitution(MagicMock(), report) == (False, True)
     assert report.summary[-1][0] == "yellow"
+    rendered = "".join(report.sections)
+    assert "- note with \\| pipe" in rendered
+    assert "`Tools are disabled \\| here`" in rendered
+    assert "\\\\|" not in rendered
 
 
 def test_text_anomaly_wins_over_structured_inconclusive(monkeypatch):
