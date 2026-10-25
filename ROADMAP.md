@@ -815,12 +815,19 @@ Final test count: 1071/1071 passing (pytest full run on v26-integration d2a2c08;
 #### 2.8.2 Step 14 OpenAI 格式 usage 异源字段（P2b）✅ 分支 feat/v26-p2b-openai-usage-source
 Final test count: 1071/1071 passing (pytest full run on v26-integration d2a2c08; collect-only under tests/: 1063)
 Tier 1 信息性规则：claude_cache_creation* 键 → anthropic-translated；input_tokens+output_tokens 成对且无 *_details、且缺 OpenAI 命名或带 Anthropic cache 键 → anthropic-translated；usage_source 为非空且非 openai 的字符串 → foreign-usage-source；键名净化限长，错误行不带响应体。
-#### 2.8.3 Step 3 用量合理性（P2）⏳ Wave 2
+#### 2.8.3 Step 3 用量合理性（P2）✅ 分支 feat/v26-p2-usage-sanity
+Final test count: 1208/1208 passing (pytest full run on v26-integration after wave 2; collect-only under tests/: 1200)
 增量区间、输出上限、跨模式 usage（复用 P1 请求对）、count_tokens 对账；信息性；与"明确不做"表的精确计数不冲突；阈值需直连基线。
-#### 2.8.4 思维签名回传验签（P3）⏳ Wave 2，可选 flag
+#### 2.8.4 思维签名回传验签（P3）✅ 分支 feat/v26-p3-signature-roundtrip，可选 flag `--verify-signature`
+Final test count: 1208/1208 passing (same run as 2.8.3)
 --verify-signature 默认关；原样回传期望 200、改一位期望 400；同模型回传；Sonnet 5.5 / Haiku 5.5 的 thinking 块绑定账号，号池信号待验证。
 #### 2.8.5 不做
 行为指纹正则版（见 §10、§11a）、知识截止（见"明确不做"表）、PDF 能力（另见 §2.6.2）。
+#### 2.8.6 本波次明确不做（附触发条件）
+- 跨模式 output_tokens 对照：默认温度下 output 含 thinking token、每次都变，Step 10 只对照 input_tokens；触发条件：拿到直连基线证明 output 在同配置下稳定。
+- 用量阈值校准：A 的 40–240、C 的 ±2 都是 provisional；触发条件：一次直连 Anthropic 基线运行。
+- 签名回传带工具调用的强探针：本波次只做非工具调用回传，模型可能在校验前剥离块；触发条件：有真上游录制响应。
+**已知待办（基线既有）**：httpx 流式解码可能丢跨块多字节字符（P3 后会抬高 inconclusive 比例，单文件版不受影响）；Step 8 文本探针单元格与 err_short 的脱敏（P0 二轮 S2）。
 **已知待办**：Step 10 探针 budget_tokens=99 是否低于官方下限，当前文档页未见下限，待直连基线一并核实。
 
 ### 3. MistTrack AML integration (profile=web3|full, optional)
