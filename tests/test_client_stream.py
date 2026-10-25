@@ -783,6 +783,39 @@ class TestStreamCallHttpx:
 
         assert "thinking" not in captured["json"]
 
+    def test_stream_call_default_body_and_headers_unchanged(self):
+        """Default stream_call must send the v2.5.0 body and headers byte for byte."""
+        captured = {}
+
+        def capture_stream(method, url, headers, json):
+            captured.update(method=method, url=url, headers=headers, json=json)
+            return _stream_cm(_make_mock_response(sse_bytes()))
+
+        with patch("httpx.Client") as mock_client_cls:
+            client_instance = MagicMock()
+            mock_client_cls.return_value.__enter__.return_value = client_instance
+            mock_client_cls.return_value.__exit__.return_value = None
+            client_instance.stream.side_effect = capture_stream
+
+            client = APIClient(
+                "https://relay.example.com", "sk-test", "claude-opus-4-6",
+                verbose=False,
+            )
+            client.stream_call([{"role": "user", "content": "hi"}], max_tokens=100)
+
+        assert captured["url"] == "https://relay.example.com/v1/messages"
+        assert json.dumps(captured["json"]) == (
+            '{"model": "claude-opus-4-6", "max_tokens": 100, '
+            '"messages": [{"role": "user", "content": "hi"}], "stream": true, '
+            '"thinking": {"type": "enabled", "budget_tokens": 99}}'
+        )
+        assert list(captured["headers"].items()) == [
+            ("x-api-key", "sk-test"),
+            ("anthropic-version", "2023-06-01"),
+            ("content-type", "application/json"),
+            ("accept", "text/event-stream"),
+        ]
+
 
 class TestStreamCallCurlIntegration:
 

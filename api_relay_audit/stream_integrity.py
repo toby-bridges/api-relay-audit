@@ -36,6 +36,14 @@ text the user sees looks correct:
    Trailing ``ping`` keepalives are allowed. A graceful HTTP close or a
    generic ``[DONE]`` sentinel does not replace this protocol terminator.
 
+Step 10 also records an informational **stream / non-stream parity**
+observation (:func:`compare_stream_nonstream`): the same request is sent
+once more without streaming. The parity verdict uses ``input_tokens`` and
+the streamed ``stop_reason``; ``output_tokens`` and text similarity are
+recorded as notes only. It never changes the Step 10 verdict or the risk
+matrix; its thresholds are provisional until calibrated against
+direct-upstream baselines.
+
 ## Attribution
 
 The threat model and the specific list of observable signals is
@@ -65,6 +73,8 @@ arXiv:2604.08407, section 4.2. SSE whitelist / usage monotonicity
 layer.
 """
 
+import difflib
+import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -154,6 +164,12 @@ class StreamSignals:
         raw_event_count: Total number of events parsed from the
             stream, including unknown types. Zero means no data was
             received at all — another inconclusive signal.
+        text: Concatenation of every ``text_delta`` ``text`` value, in
+            arrival order (capped by the client's
+            ``MAX_STREAM_TEXT_CHARS``). Used by the informational
+            stream / non-stream parity check.
+        stop_reason: The last non-empty ``delta.stop_reason`` seen in a
+            ``message_delta`` event, or ``None``.
     """
 
     # Ordered event type sequence (for whitelist check)
@@ -186,6 +202,10 @@ class StreamSignals:
     transport_error: Optional[str] = None
     total_duration_seconds: Optional[float] = None
     raw_event_count: int = 0
+
+    # Content and terminal signals (stream / non-stream parity)
+    text: str = ""
+    stop_reason: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -440,3 +460,237 @@ def analyze_stream(signals: "StreamSignals") -> dict:
         "stream_model_is_claude": stream_model_is_claude,
         "findings": findings,
     }
+
+
+# ---------------------------------------------------------------------------
+# Stream / non-stream parity (informational, v2.6 P1)
+# ---------------------------------------------------------------------------
+
+# All parity thresholds below are provisional, uncalibrated defaults. They
+# need at least five relay dogfood runs plus one direct-upstream baseline with
+# zero false positives before the parity result may feed any scored dimension.
+#
+# Only two checks decide the parity verdict, because neither depends on
+# sampling: input_tokens across modes and the streamed stop_reason. Text
+# similarity and output_tokens are recorded as notes only: no sampling
+# parameters are sent, so the reply text varies between samples, and with
+# thinking enabled output_tokens include thinking tokens that differ from run
+# to run.
+
+# Verdict: max absolute input_tokens difference between the stream and the
+# non-stream reply to the same request (provisional, uncalibrated).
+PARITY_INPUT_TOKEN_TOLERANCE = 3
+# Verdict: stop_reason values the streamed message_delta may legitimately
+# carry.
+PARITY_VALID_STOP_REASONS = frozenset({
+    "end_turn",
+    "max_tokens",
+    "stop_sequence",
+    "tool_use",
+    "pause_turn",
+    "refusal",
+})
+# Note only: min difflib.SequenceMatcher ratio between the two normalized
+# reply texts (provisional, uncalibrated).
+PARITY_SIMILARITY_MIN = 0.85
+# Note only: output_tokens may differ by at most this fraction of the larger
+# of the two counts, but never less than the floor (provisional,
+# uncalibrated).
+PARITY_OUTPUT_TOKEN_FRAC = 0.5
+PARITY_OUTPUT_TOKEN_FLOOR = 3
+# Only this many leading characters of each normalized text are compared,
+# which bounds the difflib cost on a relay that returns far more text than
+# requested.
+PARITY_MAX_COMPARE_CHARS = 4000
+
+
+def _parity_positive_int(value) -> Optional[int]:
+    """Return ``value`` if it is a positive int, else ``None``.
+
+    The client reports a missing usage block as ``0``, so zero means
+    "not reported" here rather than a real count.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def _parity_last_int(samples) -> Optional[int]:
+    """Return the last sample if it is a positive int, else ``None``."""
+    if not isinstance(samples, list) or not samples:
+        return None
+    return _parity_positive_int(samples[-1])
+
+
+def _parity_normalize_text(text) -> str:
+    """Casefold, drop punctuation and collapse whitespace before comparing.
+
+    Non-string input normalizes to ``""``.
+    """
+    if not isinstance(text, str):
+        return ""
+    kept = "".join(
+        ch for ch in text.casefold()
+        if not unicodedata.category(ch).startswith("P")
+    )
+    return " ".join(kept.split())
+
+
+def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
+    """Compare a Step 10 stream with a non-stream reply to the same request.
+
+    Concept inspired by canarybyte/veridrop integrity.py (AGPL-3.0);
+    reimplemented with stdlib.
+
+    ``signals`` is the populated :class:`StreamSignals`; ``nonstream`` is the
+    dict returned by :meth:`api_relay_audit.client.APIClient.call` (``text``,
+    ``input_tokens``, ``output_tokens``, or ``error`` on failure).
+
+    Returns a dict with these keys:
+
+    - ``verdict``: ``"consistent"`` / ``"divergent"`` / ``"inconclusive"``
+    - ``input_tokens_delta``: stream minus non-stream ``input_tokens``, or
+      ``None`` when either side did not report it
+    - ``output_tokens_delta``: final streamed ``output_tokens`` (read from
+      ``message_delta`` events only) minus non-stream ``output_tokens``, or
+      ``None``
+    - ``output_tokens_tolerance``: the note-only output tolerance for this
+      pair, or ``None``
+    - ``similarity``: ``difflib.SequenceMatcher`` ratio of the two texts after
+      casefolding, dropping punctuation and collapsing whitespace (0.0 to
+      1.0, rounded to 3 places), or ``None`` when either text is missing
+    - ``stop_reason``: the streamed ``stop_reason`` or ``None``
+    - ``stop_reason_valid``: bool, streamed ``stop_reason`` is in
+      :data:`PARITY_VALID_STOP_REASONS`
+    - ``notes``: list of human-readable observations
+
+    Verdict priority (first match wins):
+
+    1. **inconclusive**: the non-stream request failed, the stream had a
+       transport error, or input_tokens is missing on both sides.
+    2. **divergent**: input_tokens differ by more than
+       :data:`PARITY_INPUT_TOKEN_TOLERANCE`, or the streamed ``stop_reason``
+       is missing or not a known value. An input_tokens count missing on
+       only one side skips that check with a note.
+    3. **consistent**: neither of the above.
+
+    Text similarity and output_tokens never decide the verdict; they are
+    returned and, when outside their provisional bounds, noted. An empty
+    reply text on either side only skips the similarity, with a note. Both
+    requests run without sampling parameters, so the text varies between
+    samples, and output_tokens include thinking tokens.
+
+    Informational only: callers must not feed the verdict into Step 10's
+    verdict or the risk matrix. Pure and deterministic, no I/O.
+    """
+    if not isinstance(nonstream, dict):
+        nonstream = {"error": f"unexpected non-stream result type {type(nonstream).__name__}"}
+    failed = "error" in nonstream
+    notes = []
+
+    stream_text = signals.text.strip() if isinstance(signals.text, str) else ""
+    nonstream_text = nonstream.get("text")
+    nonstream_text = nonstream_text.strip() if isinstance(nonstream_text, str) else ""
+
+    # input_tokens (verdict): message_start first, message_delta as fallback.
+    stream_input = _parity_positive_int(signals.input_tokens)
+    if stream_input is None:
+        stream_input = _parity_last_int(signals.message_delta_input_tokens_samples)
+    nonstream_input = _parity_positive_int(nonstream.get("input_tokens"))
+    input_delta = None
+    input_ok = True
+    if stream_input is not None and nonstream_input is not None:
+        input_delta = stream_input - nonstream_input
+        input_ok = abs(input_delta) <= PARITY_INPUT_TOKEN_TOLERANCE
+        if not input_ok:
+            notes.append(
+                f"input_tokens differ across modes: stream {stream_input}, "
+                f"non-stream {nonstream_input} (tolerance "
+                f"{PARITY_INPUT_TOKEN_TOLERANCE})"
+            )
+    elif (stream_input is None) != (nonstream_input is None) and not failed:
+        notes.append("input_tokens missing on one side; check skipped")
+
+    # output_tokens (note only): the final cumulative value, and only when a
+    # message_delta event carried it.
+    stream_output = None
+    if signals.has_message_delta:
+        stream_output = _parity_last_int(signals.output_tokens_samples)
+    nonstream_output = _parity_positive_int(nonstream.get("output_tokens"))
+    output_delta = None
+    output_tolerance = None
+    if stream_output is not None and nonstream_output is not None:
+        output_delta = stream_output - nonstream_output
+        output_tolerance = max(
+            PARITY_OUTPUT_TOKEN_FLOOR,
+            int(PARITY_OUTPUT_TOKEN_FRAC * max(stream_output, nonstream_output)),
+        )
+        if abs(output_delta) > output_tolerance:
+            notes.append(
+                f"output_tokens differ across modes: stream {stream_output}, "
+                f"non-stream {nonstream_output} (note only, tolerance "
+                f"{output_tolerance}; thinking tokens vary between runs)"
+            )
+    elif not failed:
+        notes.append(
+            "output_tokens not reported by both a stream message_delta and "
+            "the non-stream reply; not compared"
+        )
+
+    # Text similarity (note only), on normalized text.
+    similarity = None
+    if stream_text and nonstream_text:
+        a_full = _parity_normalize_text(stream_text)
+        b_full = _parity_normalize_text(nonstream_text)
+        a = a_full[:PARITY_MAX_COMPARE_CHARS]
+        b = b_full[:PARITY_MAX_COMPARE_CHARS]
+        if len(a_full) > len(a) or len(b_full) > len(b):
+            notes.append(
+                f"texts compared on their first {PARITY_MAX_COMPARE_CHARS} "
+                "normalized characters"
+            )
+        # autojunk=False: the default heuristic drops frequent characters
+        # from texts of 200+ characters and can deflate the ratio. For
+        # shorter texts the result is identical to the default.
+        similarity = difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+    stop_reason = signals.stop_reason if isinstance(signals.stop_reason, str) else None
+    stop_reason_valid = stop_reason in PARITY_VALID_STOP_REASONS
+
+    result = {
+        "verdict": "inconclusive",
+        "input_tokens_delta": input_delta,
+        "output_tokens_delta": output_delta,
+        "output_tokens_tolerance": output_tolerance,
+        "similarity": round(similarity, 3) if similarity is not None else None,
+        "stop_reason": stop_reason,
+        "stop_reason_valid": stop_reason_valid,
+        "notes": notes,
+    }
+
+    if failed:
+        notes.insert(0, f"Non-stream request unavailable: {str(nonstream['error'])[:200]}")
+        return result
+    if signals.transport_error:
+        notes.insert(0, f"Stream transport error: {str(signals.transport_error)[:200]}")
+        return result
+    if stream_input is None and nonstream_input is None:
+        notes.insert(0, "input_tokens missing on both sides; parity not decided")
+        return result
+
+    if not stream_text or not nonstream_text:
+        side = "one side" if (stream_text or nonstream_text) else "both sides"
+        notes.append(f"text missing on {side}; similarity not computed")
+    elif similarity < PARITY_SIMILARITY_MIN:
+        notes.append(
+            f"normalized text similarity {similarity:.3f} is below "
+            f"{PARITY_SIMILARITY_MIN} (note only; replies vary between samples)"
+        )
+    if not stop_reason_valid:
+        notes.append(
+            f"streamed stop_reason {stop_reason!r} is not one of "
+            f"{sorted(PARITY_VALID_STOP_REASONS)}"
+        )
+
+    result["verdict"] = "consistent" if (input_ok and stop_reason_valid) else "divergent"
+    return result

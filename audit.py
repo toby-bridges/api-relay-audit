@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 66fe3d44a32ac402488cc1051773bdf8124994e9b8cb329d14e661d0b57f1fd5
-# standalone_body_sha256: adbc5ffcef899ff72f60a65bbc83cd1a0c5d2de27ff50bc6f383383027298a80
+# source_sha256: 46f9b4fbb86d6c0f0f0723e089de57fbd2bf93f9f73c817cf488ec7d60d137ba
+# standalone_body_sha256: f2e49feffb9f5604cbc4c5117a87a1ace731e8dff207723f6264c2c4428ee125
 # END GENERATED STANDALONE HEADER
 
 """
@@ -185,6 +185,14 @@ text the user sees looks correct:
    Trailing ``ping`` keepalives are allowed. A graceful HTTP close or a
    generic ``[DONE]`` sentinel does not replace this protocol terminator.
 
+Step 10 also records an informational **stream / non-stream parity**
+observation (:func:`compare_stream_nonstream`): the same request is sent
+once more without streaming. The parity verdict uses ``input_tokens`` and
+the streamed ``stop_reason``; ``output_tokens`` and text similarity are
+recorded as notes only. It never changes the Step 10 verdict or the risk
+matrix; its thresholds are provisional until calibrated against
+direct-upstream baselines.
+
 ## Attribution
 
 The threat model and the specific list of observable signals is
@@ -214,6 +222,8 @@ arXiv:2604.08407, section 4.2. SSE whitelist / usage monotonicity
 layer.
 """
 
+import difflib
+import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -303,6 +313,12 @@ class StreamSignals:
         raw_event_count: Total number of events parsed from the
             stream, including unknown types. Zero means no data was
             received at all — another inconclusive signal.
+        text: Concatenation of every ``text_delta`` ``text`` value, in
+            arrival order (capped by the client's
+            ``MAX_STREAM_TEXT_CHARS``). Used by the informational
+            stream / non-stream parity check.
+        stop_reason: The last non-empty ``delta.stop_reason`` seen in a
+            ``message_delta`` event, or ``None``.
     """
 
     # Ordered event type sequence (for whitelist check)
@@ -335,6 +351,10 @@ class StreamSignals:
     transport_error: Optional[str] = None
     total_duration_seconds: Optional[float] = None
     raw_event_count: int = 0
+
+    # Content and terminal signals (stream / non-stream parity)
+    text: str = ""
+    stop_reason: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +611,240 @@ def analyze_stream(signals: "StreamSignals") -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Stream / non-stream parity (informational, v2.6 P1)
+# ---------------------------------------------------------------------------
+
+# All parity thresholds below are provisional, uncalibrated defaults. They
+# need at least five relay dogfood runs plus one direct-upstream baseline with
+# zero false positives before the parity result may feed any scored dimension.
+#
+# Only two checks decide the parity verdict, because neither depends on
+# sampling: input_tokens across modes and the streamed stop_reason. Text
+# similarity and output_tokens are recorded as notes only: no sampling
+# parameters are sent, so the reply text varies between samples, and with
+# thinking enabled output_tokens include thinking tokens that differ from run
+# to run.
+
+# Verdict: max absolute input_tokens difference between the stream and the
+# non-stream reply to the same request (provisional, uncalibrated).
+PARITY_INPUT_TOKEN_TOLERANCE = 3
+# Verdict: stop_reason values the streamed message_delta may legitimately
+# carry.
+PARITY_VALID_STOP_REASONS = frozenset({
+    "end_turn",
+    "max_tokens",
+    "stop_sequence",
+    "tool_use",
+    "pause_turn",
+    "refusal",
+})
+# Note only: min difflib.SequenceMatcher ratio between the two normalized
+# reply texts (provisional, uncalibrated).
+PARITY_SIMILARITY_MIN = 0.85
+# Note only: output_tokens may differ by at most this fraction of the larger
+# of the two counts, but never less than the floor (provisional,
+# uncalibrated).
+PARITY_OUTPUT_TOKEN_FRAC = 0.5
+PARITY_OUTPUT_TOKEN_FLOOR = 3
+# Only this many leading characters of each normalized text are compared,
+# which bounds the difflib cost on a relay that returns far more text than
+# requested.
+PARITY_MAX_COMPARE_CHARS = 4000
+
+
+def _parity_positive_int(value) -> Optional[int]:
+    """Return ``value`` if it is a positive int, else ``None``.
+
+    The client reports a missing usage block as ``0``, so zero means
+    "not reported" here rather than a real count.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def _parity_last_int(samples) -> Optional[int]:
+    """Return the last sample if it is a positive int, else ``None``."""
+    if not isinstance(samples, list) or not samples:
+        return None
+    return _parity_positive_int(samples[-1])
+
+
+def _parity_normalize_text(text) -> str:
+    """Casefold, drop punctuation and collapse whitespace before comparing.
+
+    Non-string input normalizes to ``""``.
+    """
+    if not isinstance(text, str):
+        return ""
+    kept = "".join(
+        ch for ch in text.casefold()
+        if not unicodedata.category(ch).startswith("P")
+    )
+    return " ".join(kept.split())
+
+
+def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
+    """Compare a Step 10 stream with a non-stream reply to the same request.
+
+    Concept inspired by canarybyte/veridrop integrity.py (AGPL-3.0);
+    reimplemented with stdlib.
+
+    ``signals`` is the populated :class:`StreamSignals`; ``nonstream`` is the
+    dict returned by :meth:`api_relay_audit.client.APIClient.call` (``text``,
+    ``input_tokens``, ``output_tokens``, or ``error`` on failure).
+
+    Returns a dict with these keys:
+
+    - ``verdict``: ``"consistent"`` / ``"divergent"`` / ``"inconclusive"``
+    - ``input_tokens_delta``: stream minus non-stream ``input_tokens``, or
+      ``None`` when either side did not report it
+    - ``output_tokens_delta``: final streamed ``output_tokens`` (read from
+      ``message_delta`` events only) minus non-stream ``output_tokens``, or
+      ``None``
+    - ``output_tokens_tolerance``: the note-only output tolerance for this
+      pair, or ``None``
+    - ``similarity``: ``difflib.SequenceMatcher`` ratio of the two texts after
+      casefolding, dropping punctuation and collapsing whitespace (0.0 to
+      1.0, rounded to 3 places), or ``None`` when either text is missing
+    - ``stop_reason``: the streamed ``stop_reason`` or ``None``
+    - ``stop_reason_valid``: bool, streamed ``stop_reason`` is in
+      :data:`PARITY_VALID_STOP_REASONS`
+    - ``notes``: list of human-readable observations
+
+    Verdict priority (first match wins):
+
+    1. **inconclusive**: the non-stream request failed, the stream had a
+       transport error, or input_tokens is missing on both sides.
+    2. **divergent**: input_tokens differ by more than
+       :data:`PARITY_INPUT_TOKEN_TOLERANCE`, or the streamed ``stop_reason``
+       is missing or not a known value. An input_tokens count missing on
+       only one side skips that check with a note.
+    3. **consistent**: neither of the above.
+
+    Text similarity and output_tokens never decide the verdict; they are
+    returned and, when outside their provisional bounds, noted. An empty
+    reply text on either side only skips the similarity, with a note. Both
+    requests run without sampling parameters, so the text varies between
+    samples, and output_tokens include thinking tokens.
+
+    Informational only: callers must not feed the verdict into Step 10's
+    verdict or the risk matrix. Pure and deterministic, no I/O.
+    """
+    if not isinstance(nonstream, dict):
+        nonstream = {"error": f"unexpected non-stream result type {type(nonstream).__name__}"}
+    failed = "error" in nonstream
+    notes = []
+
+    stream_text = signals.text.strip() if isinstance(signals.text, str) else ""
+    nonstream_text = nonstream.get("text")
+    nonstream_text = nonstream_text.strip() if isinstance(nonstream_text, str) else ""
+
+    # input_tokens (verdict): message_start first, message_delta as fallback.
+    stream_input = _parity_positive_int(signals.input_tokens)
+    if stream_input is None:
+        stream_input = _parity_last_int(signals.message_delta_input_tokens_samples)
+    nonstream_input = _parity_positive_int(nonstream.get("input_tokens"))
+    input_delta = None
+    input_ok = True
+    if stream_input is not None and nonstream_input is not None:
+        input_delta = stream_input - nonstream_input
+        input_ok = abs(input_delta) <= PARITY_INPUT_TOKEN_TOLERANCE
+        if not input_ok:
+            notes.append(
+                f"input_tokens differ across modes: stream {stream_input}, "
+                f"non-stream {nonstream_input} (tolerance "
+                f"{PARITY_INPUT_TOKEN_TOLERANCE})"
+            )
+    elif (stream_input is None) != (nonstream_input is None) and not failed:
+        notes.append("input_tokens missing on one side; check skipped")
+
+    # output_tokens (note only): the final cumulative value, and only when a
+    # message_delta event carried it.
+    stream_output = None
+    if signals.has_message_delta:
+        stream_output = _parity_last_int(signals.output_tokens_samples)
+    nonstream_output = _parity_positive_int(nonstream.get("output_tokens"))
+    output_delta = None
+    output_tolerance = None
+    if stream_output is not None and nonstream_output is not None:
+        output_delta = stream_output - nonstream_output
+        output_tolerance = max(
+            PARITY_OUTPUT_TOKEN_FLOOR,
+            int(PARITY_OUTPUT_TOKEN_FRAC * max(stream_output, nonstream_output)),
+        )
+        if abs(output_delta) > output_tolerance:
+            notes.append(
+                f"output_tokens differ across modes: stream {stream_output}, "
+                f"non-stream {nonstream_output} (note only, tolerance "
+                f"{output_tolerance}; thinking tokens vary between runs)"
+            )
+    elif not failed:
+        notes.append(
+            "output_tokens not reported by both a stream message_delta and "
+            "the non-stream reply; not compared"
+        )
+
+    # Text similarity (note only), on normalized text.
+    similarity = None
+    if stream_text and nonstream_text:
+        a_full = _parity_normalize_text(stream_text)
+        b_full = _parity_normalize_text(nonstream_text)
+        a = a_full[:PARITY_MAX_COMPARE_CHARS]
+        b = b_full[:PARITY_MAX_COMPARE_CHARS]
+        if len(a_full) > len(a) or len(b_full) > len(b):
+            notes.append(
+                f"texts compared on their first {PARITY_MAX_COMPARE_CHARS} "
+                "normalized characters"
+            )
+        # autojunk=False: the default heuristic drops frequent characters
+        # from texts of 200+ characters and can deflate the ratio. For
+        # shorter texts the result is identical to the default.
+        similarity = difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+    stop_reason = signals.stop_reason if isinstance(signals.stop_reason, str) else None
+    stop_reason_valid = stop_reason in PARITY_VALID_STOP_REASONS
+
+    result = {
+        "verdict": "inconclusive",
+        "input_tokens_delta": input_delta,
+        "output_tokens_delta": output_delta,
+        "output_tokens_tolerance": output_tolerance,
+        "similarity": round(similarity, 3) if similarity is not None else None,
+        "stop_reason": stop_reason,
+        "stop_reason_valid": stop_reason_valid,
+        "notes": notes,
+    }
+
+    if failed:
+        notes.insert(0, f"Non-stream request unavailable: {str(nonstream['error'])[:200]}")
+        return result
+    if signals.transport_error:
+        notes.insert(0, f"Stream transport error: {str(signals.transport_error)[:200]}")
+        return result
+    if stream_input is None and nonstream_input is None:
+        notes.insert(0, "input_tokens missing on both sides; parity not decided")
+        return result
+
+    if not stream_text or not nonstream_text:
+        side = "one side" if (stream_text or nonstream_text) else "both sides"
+        notes.append(f"text missing on {side}; similarity not computed")
+    elif similarity < PARITY_SIMILARITY_MIN:
+        notes.append(
+            f"normalized text similarity {similarity:.3f} is below "
+            f"{PARITY_SIMILARITY_MIN} (note only; replies vary between samples)"
+        )
+    if not stop_reason_valid:
+        notes.append(
+            f"streamed stop_reason {stop_reason!r} is not one of "
+            f"{sorted(PARITY_VALID_STOP_REASONS)}"
+        )
+
+    result["verdict"] = "consistent" if (input_ok and stop_reason_valid) else "divergent"
+    return result
+
+
 # ============================================================
 # Standalone curl transport facade
 # ============================================================
@@ -831,29 +1085,22 @@ def _extract_anthropic_text(content) -> str:
     return "".join(parts)
 
 
-TOOL_PROBE_TEXT_LIMIT = 200
+def _thinking_config(max_tokens: int) -> dict:
+    """Return the ``thinking`` request field shared by :meth:`APIClient.call`
+    and :meth:`APIClient.stream_call`.
 
-
-def _is_token_char(char) -> bool:
-    return (char.isascii() and char.isalnum()) or char in "-_.~+/="
-
-
-def _clip_probe_text(text, limit=TOOL_PROBE_TEXT_LIMIT) -> str:
-    """Bound the text a no-call Tool Call probe returned.
-
-    When the cut lands inside a token, the partial token is dropped so a
-    truncated credential cannot fall below the redaction patterns' minimum
-    length before the report layer redacts the excerpt.
+    ``thinking.budget_tokens`` must be strictly less than ``max_tokens``.
+    Keeping one builder means a stream / non-stream request pair always
+    asks for the same thinking configuration.
     """
-    if not isinstance(text, str):
-        return ""
-    if len(text) <= limit:
-        return text
-    end = limit
-    if _is_token_char(text[limit]):
-        while end and _is_token_char(text[end - 1]):
-            end -= 1
-    return text[:end]
+    return {"type": "enabled", "budget_tokens": max(1, max_tokens - 1)}
+
+
+def _optional_call_kwargs(with_thinking=False) -> dict:
+    """Return ``with_thinking`` as a keyword argument only when set, so a
+    default call keeps its original ``(messages, system, max_tokens)`` shape
+    all the way down to the format-specific helpers."""
+    return {"with_thinking": True} if with_thinking else {}
 
 
 def _parse_curl_i_output(output: str) -> dict:
@@ -963,6 +1210,9 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 
             if delta_type == "text_delta":
                 signals.has_text_delta = True
+                text = delta.get("text")
+                if isinstance(text, str) and len(signals.text) < MAX_STREAM_TEXT_CHARS:
+                    signals.text = (signals.text + text)[:MAX_STREAM_TEXT_CHARS]
             elif delta_type == "thinking_delta":
                 signals.thinking_delta_seen = True
             elif delta_type == "signature_delta":
@@ -972,6 +1222,11 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 
     elif event_type == "message_delta":
         signals.has_message_delta = True
+        message_delta = event.get("delta", {})
+        if isinstance(message_delta, dict):
+            stop_reason = message_delta.get("stop_reason")
+            if isinstance(stop_reason, str) and stop_reason:
+                signals.stop_reason = stop_reason
         usage = event.get("usage", {})
         if isinstance(usage, dict):
             input_tokens = usage.get("input_tokens")
@@ -990,6 +1245,9 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 # grow memory unboundedly. 1 MB is comfortably above any real
 # Anthropic event size (biggest thinking blocks are ~100 KB).
 MAX_STREAM_BUFFER_BYTES = 1024 * 1024
+# Same idea for StreamSignals.text: bound memory and CPU when a relay streams
+# far more text than requested. 64 KiB is far above Step 10's 100-token probe.
+MAX_STREAM_TEXT_CHARS = 64 * 1024
 CURL_STATUS_SENTINEL = "__CODEX_HTTP_STATUS__:"
 
 
@@ -1159,7 +1417,8 @@ class APIClient:
 
     # -- Anthropic native format ----------------------------------------------
 
-    def _call_anthropic(self, messages, system=None, max_tokens=512):
+    def _call_anthropic(self, messages, system=None, max_tokens=512,
+                        with_thinking=False):
         url = self.base_url
         if url.endswith("/v1"):
             url = url[:-3]
@@ -1168,6 +1427,8 @@ class APIClient:
         body = {"model": self.model, "max_tokens": max_tokens, "messages": messages}
         if system:
             body["system"] = system
+        if with_thinking:
+            body["thinking"] = _thinking_config(max_tokens)
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
@@ -1188,7 +1449,11 @@ class APIClient:
 
     # -- OpenAI compatible format ---------------------------------------------
 
-    def _call_openai(self, messages, system=None, max_tokens=512):
+    def _call_openai(self, messages, system=None, max_tokens=512,
+                     with_thinking=False):
+        # ``with_thinking`` is accepted for signature parity with
+        # ``_call_anthropic`` but ignored: Chat Completions has no standard
+        # ``thinking`` field, and strict endpoints reject unknown fields.
         url = self.base_url
         if not url.endswith("/v1"):
             url += "/v1"
@@ -1217,179 +1482,6 @@ class APIClient:
             "raw": data,
         }
 
-    def _prepare_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256):
-        url = self.base_url
-        if url.endswith("/v1"):
-            url = url[:-3]
-        url += "/v1/messages"
-
-        body = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "messages": messages,
-            "tools": [{**tool_spec, "strict": True}],
-            "tool_choice": {
-                "type": "tool",
-                "name": tool_spec["name"],
-                "disable_parallel_tool_use": True,
-            },
-        }
-        headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
-        return url, headers, body
-
-    def _call_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256,
-                                   prepared=None):
-        url, headers, body = prepared or self._prepare_tool_probe_anthropic(
-            messages, tool_spec, max_tokens=max_tokens)
-        data = self._post(url, headers, body)
-        if "_http_error" in data:
-            return self._error_result(data["_http_error"])
-
-        tool_calls = []
-        content = data.get("content", [])
-        if isinstance(content, list):
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                block_type = block.get("type")
-                tool_like = block_type == "tool_use" or any(
-                    key in block for key in ("id", "name", "input")
-                )
-                if not tool_like:
-                    continue
-                arguments = block.get("input")
-                arguments_error = None
-                if not isinstance(arguments, dict):
-                    arguments_error = "Anthropic tool input was not a JSON object"
-                    arguments = None
-                tool_calls.append({
-                    "type": "function" if block_type == "tool_use" else block_type,
-                    "id": block.get("id"),
-                    "name": block.get("name"),
-                    "arguments": arguments,
-                    "arguments_error": arguments_error,
-                })
-
-        usage = data.get("usage", {})
-        result = {
-            "protocol": "anthropic",
-            "tool_calls": tool_calls,
-            "stop_reason": data.get("stop_reason"),
-            "input_tokens": usage.get("input_tokens", 0),
-            "output_tokens": usage.get("output_tokens", 0),
-            "raw": data,
-        }
-        if not tool_calls:
-            result["text"] = _clip_probe_text(_extract_anthropic_text(content))
-        return result
-
-    def _prepare_tool_probe_openai(self, messages, tool_spec, max_tokens=256):
-        url = self.base_url
-        if not url.endswith("/v1"):
-            url += "/v1"
-        url += "/chat/completions"
-
-        body = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "messages": messages,
-            "tools": [{
-                "type": "function",
-                "function": {
-                    "name": tool_spec["name"],
-                    "description": tool_spec["description"],
-                    "parameters": tool_spec["input_schema"],
-                    "strict": True,
-                },
-            }],
-            "tool_choice": {
-                "type": "function",
-                "function": {"name": tool_spec["name"]},
-            },
-            "parallel_tool_calls": False,
-        }
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "content-type": "application/json",
-        }
-        return url, headers, body
-
-    def _call_tool_probe_openai(self, messages, tool_spec, max_tokens=256,
-                                prepared=None):
-        url, headers, body = prepared or self._prepare_tool_probe_openai(
-            messages, tool_spec, max_tokens=max_tokens)
-        data = self._post(url, headers, body)
-        if "_http_error" in data:
-            return self._error_result(data["_http_error"])
-
-        choices = data.get("choices", [])
-        choice = choices[0] if isinstance(choices, list) and choices else {}
-        if not isinstance(choice, dict):
-            choice = {}
-        message = choice.get("message", {})
-        if not isinstance(message, dict):
-            message = {}
-        raw_calls = message.get("tool_calls", [])
-        if not isinstance(raw_calls, list):
-            raw_calls = []
-
-        tool_calls = []
-        for raw_call in raw_calls:
-            if not isinstance(raw_call, dict):
-                continue
-            call_type = raw_call.get("type")
-            if call_type == "function":
-                function = raw_call.get("function", {})
-                if not isinstance(function, dict):
-                    function = {}
-                raw_arguments = function.get("arguments")
-                arguments = None
-                arguments_error = None
-                if not isinstance(raw_arguments, str):
-                    arguments_error = "OpenAI tool arguments were not a JSON string"
-                else:
-                    try:
-                        arguments = json.loads(raw_arguments)
-                    except (TypeError, ValueError):
-                        arguments_error = "invalid JSON arguments"
-                    if arguments_error is None and not isinstance(arguments, dict):
-                        arguments_error = "OpenAI tool arguments were not a JSON object"
-                        arguments = None
-                name = function.get("name")
-            else:
-                custom = raw_call.get("custom", {})
-                if not isinstance(custom, dict):
-                    custom = {}
-                name = custom.get("name")
-                arguments = None
-                arguments_error = "Unexpected non-function Tool Call type"
-            tool_calls.append({
-                "type": call_type,
-                "id": raw_call.get("id"),
-                "name": name,
-                "arguments": arguments,
-                "arguments_error": arguments_error,
-            })
-
-        usage = data.get("usage", {})
-        result = {
-            "protocol": "openai",
-            "tool_calls": tool_calls,
-            "stop_reason": choice.get("finish_reason"),
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
-            "raw": data,
-        }
-        if not tool_calls:
-            content = message.get("content")
-            text = content if isinstance(content, str) else _extract_anthropic_text(content)
-            result["text"] = _clip_probe_text(text)
-        return result
-
     # -- Public API -----------------------------------------------------------
 
     def ensure_format(self):
@@ -1417,7 +1509,7 @@ class APIClient:
         except Exception:
             pass
 
-    def call(self, messages, system=None, max_tokens=512):
+    def call(self, messages, system=None, max_tokens=512, with_thinking=False):
         """Send a chat completion request, auto-detecting format on first call.
 
         The method records wall-clock elapsed time and attaches it as the
@@ -1430,6 +1522,9 @@ class APIClient:
                 ``"system"`` field (Anthropic) or as a system-role message
                 (OpenAI).
             max_tokens: Maximum tokens to generate. Defaults to 512.
+            with_thinking: If True, send the same ``thinking`` block that
+                :meth:`stream_call` sends. Anthropic format only; the
+                OpenAI-compatible body ignores it. Defaults to False.
 
         Returns:
             A dict with the following keys on success:
@@ -1449,10 +1544,15 @@ class APIClient:
             ...     print(result["text"])
         """
         start = time.time()
-        request_body = json.dumps({"model": self.model, "max_tokens": max_tokens,
-                                   "messages": messages, "system": system or ""})
+        logged_request = {"model": self.model, "max_tokens": max_tokens,
+                          "messages": messages, "system": system or ""}
+        if with_thinking:
+            logged_request["thinking"] = _thinking_config(max_tokens)
+        request_body = json.dumps(logged_request)
         try:
-            result = self._call_with_detection(messages, system, max_tokens)
+            result = self._call_with_detection(
+                messages, system, max_tokens,
+                **_optional_call_kwargs(with_thinking))
             result["time"] = time.time() - start
             # v1.7.7 transparent-log
             self._log_transparent(
@@ -1468,54 +1568,6 @@ class APIClient:
                 request_body, None, 0, None, elapsed, str(e))
             return self._error_result(e, time=elapsed)
 
-    def call_tool_probe(self, messages, tool_spec, max_tokens=256):
-        """Request one inert client Tool Call without ever executing it.
-
-        ``tool_spec`` uses the protocol-neutral Anthropic shape (``name``,
-        ``description``, ``input_schema``). The client forces that tool,
-        disables parallel calls, and normalizes Anthropic/OpenAI responses
-        into a shared ``tool_calls`` list. No executor callback exists and no
-        ``tool_result`` follow-up request is sent.
-        """
-        start = time.time()
-        request_url = self._resolve_call_url()
-        request_body = json.dumps({})
-        try:
-            if self._format is None:
-                self.ensure_format()
-            if self._format == "anthropic":
-                prepared = self._prepare_tool_probe_anthropic(
-                    messages, tool_spec, max_tokens=max_tokens)
-                request_url, _, wire_body = prepared
-                request_body = json.dumps(wire_body)
-                result = self._call_tool_probe_anthropic(
-                    messages, tool_spec, max_tokens=max_tokens,
-                    prepared=prepared)
-            elif self._format == "openai":
-                prepared = self._prepare_tool_probe_openai(
-                    messages, tool_spec, max_tokens=max_tokens)
-                request_url, _, wire_body = prepared
-                request_body = json.dumps(wire_body)
-                result = self._call_tool_probe_openai(
-                    messages, tool_spec, max_tokens=max_tokens,
-                    prepared=prepared)
-            else:
-                result = self._error_result(
-                    "Could not detect API format for structured Tool Call probe")
-            result["time"] = time.time() - start
-            self._log_transparent(
-                "tool_call_probe", request_url, "POST",
-                request_body, json.dumps(result.get("raw", {})),
-                200 if "error" not in result else 0,
-                None, result["time"], result.get("error"))
-            return result
-        except Exception as e:
-            elapsed = time.time() - start
-            self._log_transparent(
-                "tool_call_probe", request_url, "POST",
-                request_body, None, 0, None, elapsed, str(e))
-            return self._error_result(e, time=elapsed)
-
     def _resolve_call_url(self) -> str:
         """Reconstruct the URL used by the last ``call()`` based on detected format."""
         base = self.base_url
@@ -1528,17 +1580,19 @@ class APIClient:
             base = base[:-3]
         return base + "/v1/messages"
 
-    def _call_with_detection(self, messages, system, max_tokens):
+    def _call_with_detection(self, messages, system, max_tokens,
+                             with_thinking=False):
+        extra = _optional_call_kwargs(with_thinking)
         # Already detected — use that format
         if self._format == "openai":
-            return self._call_openai(messages, system, max_tokens)
+            return self._call_openai(messages, system, max_tokens, **extra)
         if self._format == "anthropic":
-            return self._call_anthropic(messages, system, max_tokens)
+            return self._call_anthropic(messages, system, max_tokens, **extra)
 
         # Auto-detect: try Anthropic first
         anthropic_result = None
         try:
-            anthropic_result = self._call_anthropic(messages, system, max_tokens)
+            anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
             if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                 self._format = "anthropic"
                 self._log("  [format] -> Anthropic native")
@@ -1547,7 +1601,7 @@ class APIClient:
             if self._handle_ssl_error(e):
                 # Retry Anthropic with curl before falling through to OpenAI
                 try:
-                    anthropic_result = self._call_anthropic(messages, system, max_tokens)
+                    anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
                     if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                         self._format = "anthropic"
                         self._log("  [format] -> Anthropic native (curl)")
@@ -1559,7 +1613,7 @@ class APIClient:
         self._log("  [format] Anthropic failed/empty, trying OpenAI...")
         openai_result = None
         try:
-            openai_result = self._call_openai(messages, system, max_tokens)
+            openai_result = self._call_openai(messages, system, max_tokens, **extra)
             if "error" not in openai_result and openai_result.get("text", "").strip():
                 self._format = "openai"
                 suffix = " (curl)" if self._use_curl else ""
@@ -1567,7 +1621,7 @@ class APIClient:
                 return openai_result
         except Exception as e:
             if self._handle_ssl_error(e):
-                return self._call_with_detection(messages, system, max_tokens)
+                return self._call_with_detection(messages, system, max_tokens, **extra)
 
         # Both failed — return whichever has more info
         if anthropic_result and "error" not in anthropic_result:
@@ -1812,10 +1866,7 @@ class APIClient:
             body["system"] = system
         if with_thinking:
             # thinking.budget_tokens must be strictly less than max_tokens
-            body["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": max(1, max_tokens - 1),
-            }
+            body["thinking"] = _thinking_config(max_tokens)
 
         headers = {
             "x-api-key": self.api_key,
@@ -2566,302 +2617,6 @@ def run_context_scan(client, coarse_steps=None, sleep_between=2):
 
 
 # ============================================================
-# Structured Tool Call integrity detector
-# ============================================================
-
-"""Structured Tool Call integrity analysis for Step 8.
-
-The detector inspects inert client-tool requests only.  It never executes a
-returned tool call and never sends a ``tool_result`` follow-up request.
-"""
-
-import json
-import re
-import unicodedata
-import uuid
-
-
-
-PROBE_PROMPT = (
-    "Call the provided record tool exactly once with the exact arguments "
-    "encoded in its schema. Do not answer in text."
-)
-PROBE_DESCRIPTION = (
-    "Record an inert relay-audit canary. This tool performs no I/O, "
-    "has no side effects, and will not be executed. Call it exactly once."
-)
-TEXT_EXCERPT_LIMIT = 200
-_BACKTICK_STAND_IN = "\u2019"
-_CONTROL_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
-
-
-def _json_deep_equal(left, right):
-    """Compare parsed JSON values without Python's bool/int coercion."""
-    if type(left) is not type(right):
-        return False
-    if isinstance(left, dict):
-        return (
-            left.keys() == right.keys()
-            and all(_json_deep_equal(left[key], right[key]) for key in left)
-        )
-    if isinstance(left, list):
-        return (
-            len(left) == len(right)
-            and all(_json_deep_equal(a, b) for a, b in zip(left, right))
-        )
-    return left == right
-
-
-def _fold_controls(text):
-    """Replace line breaks and other control characters with spaces."""
-    return "".join(
-        " " if unicodedata.category(char) in _CONTROL_CATEGORIES else char
-        for char in text
-    )
-
-
-def _markdown_safe(text, max_chars, api_key=""):
-    """Redact secrets and make text safe inside a Markdown code span.
-
-    A backslash does not escape anything inside a code span, so a relay
-    backtick could close the span and inject links or HTML; backticks become
-    U+2019 instead. Line breaks and other control characters fold to spaces,
-    and pipes stay escaped for GFM table cells.
-    """
-    text = redact_sensitive_text(text, api_key)
-    text = _fold_controls(text)
-    text = text.replace("`", _BACKTICK_STAND_IN).replace("|", "\\|")
-    limit = max(3, int(max_chars))
-    if len(text) > limit:
-        cut = limit - 3
-        if text[cut - 1:cut + 1] == "\\|":
-            cut -= 1
-        return text[:cut] + "..."
-    return text
-
-
-def format_tool_calls_preview(calls, max_chars=240, api_key=""):
-    """Return a redacted, Markdown-safe, bounded preview of arguments only."""
-    arguments = [
-        call.get("arguments") if isinstance(call, dict) else None
-        for call in calls
-    ]
-    text = json.dumps(
-        arguments,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        default=str,
-    )
-    return _markdown_safe(text, max_chars, api_key)
-
-
-def format_text_excerpt(text, max_chars=TEXT_EXCERPT_LIMIT, api_key=""):
-    """Return a redacted, Markdown-safe, single-line excerpt of returned text."""
-    flattened = " ".join(_fold_controls(str(text)).split())
-    return _markdown_safe(flattened, max_chars, api_key)
-
-
-def _id_prefix(value):
-    if not isinstance(value, str) or not value:
-        return "missing"
-    match = re.match(r"[A-Za-z]{1,16}_", value)
-    return match.group(0) if match else "none"
-
-
-def _describe_stop_reason(value):
-    if value is None:
-        return "missing"
-    if isinstance(value, str) and re.fullmatch(r"[A-Za-z][A-Za-z_]{0,31}", value):
-        return f"'{value}'"
-    return "a non-standard value"
-
-
-def analyze_tool_call_integrity(response, expected_name, expected_arguments,
-                                api_key=""):
-    """Compare a normalized Tool Call response with the forced expectation.
-
-    When the client marks ``protocol`` as ``anthropic``, two protocol checks
-    apply. A ``tool_use`` id without the ``toolu_`` prefix is recorded in
-    ``protocol_notes`` only: a non-standard id alone is not rewriting
-    evidence. A returned call whose stop reason is not ``tool_use`` is an
-    anomaly, because agent loops key on that field and may ignore the call.
-    OpenAI-format forced calls may finish with ``stop`` or ``tool_calls``, so
-    neither value is flagged; any other finish reason is recorded in
-    ``protocol_notes`` only. A response without ``protocol`` keeps the
-    protocol-neutral checks only. When no call is returned, a redacted,
-    bounded ``text_excerpt`` records what the relay said instead.
-
-    Concept inspired by canarybyte/veridrop structured_output.py (AGPL-3.0); reimplemented independently.
-    """
-    if not isinstance(response, dict):
-        response = {}
-    if "error" in response:
-        return {
-            "verdict": "inconclusive",
-            "expected_count": 1,
-            "received_count": 0,
-            "name_match": None,
-            "arguments_match": None,
-            "findings": [
-                "Structured Tool Call probe failed; support could not be verified"
-            ],
-            "protocol_notes": [],
-        }
-    calls = response.get("tool_calls", [])
-    if not isinstance(calls, list) or any(not isinstance(call, dict) for call in calls):
-        return {
-            "verdict": "inconclusive",
-            "expected_count": 1,
-            "received_count": 0,
-            "name_match": None,
-            "arguments_match": None,
-            "findings": ["Structured Tool Call response format was invalid"],
-            "protocol_notes": [],
-        }
-    if not calls:
-        stop_reason = response.get("stop_reason")
-        claimed_tool_stop = (
-            isinstance(stop_reason, str)
-            and stop_reason in {"tool_use", "tool_calls"}
-        )
-        result = {
-            "verdict": "anomaly" if claimed_tool_stop else "inconclusive",
-            "expected_count": 1,
-            "received_count": 0,
-            "name_match": None,
-            "arguments_match": None,
-            "findings": ([
-                "Response claimed a Tool Call stop reason but contained zero Tool Calls"
-            ] if claimed_tool_stop else [
-                "Forced tool request returned no structured Tool Call; "
-                "support could not be verified"
-            ]),
-            "protocol_notes": [],
-        }
-        text = response.get("text")
-        if isinstance(text, str) and text.strip():
-            result["text_excerpt"] = format_text_excerpt(text, api_key=api_key)
-        return result
-    call = calls[0]
-    count_match = len(calls) == 1
-    type_match = call.get("type") == "function"
-    name_match = call.get("name") == expected_name
-    arguments_match = (
-        call.get("arguments_error") is None
-        and _json_deep_equal(call.get("arguments"), expected_arguments)
-    )
-    findings = []
-    if not count_match:
-        findings.append(
-            f"Tool call count changed: expected 1, received {len(calls)}"
-        )
-    if not type_match:
-        findings.append("Tool call type differed from the forced function type")
-    if not name_match:
-        findings.append("Tool name differed from the forced canary name")
-    if call.get("arguments_error"):
-        findings.append(
-            f"Tool arguments could not be parsed: {call['arguments_error']}"
-        )
-    elif not arguments_match:
-        findings.append("Tool arguments differed from the forced canary payload")
-    protocol_notes = []
-    stop_reason_match = True
-    if response.get("protocol") == "anthropic":
-        unprefixed = [
-            item.get("id") for item in calls
-            if not (isinstance(item.get("id"), str) and item["id"].startswith("toolu_"))
-        ]
-        if unprefixed:
-            protocol_notes.append(
-                f"{len(unprefixed)} of {len(calls)} Anthropic tool_use id(s) lacked "
-                "the standard toolu_ prefix (first observed prefix: "
-                f"{_id_prefix(unprefixed[0])}); recorded for context, not counted "
-                "as rewriting"
-            )
-        stop_reason = response.get("stop_reason")
-        if stop_reason != "tool_use":
-            stop_reason_match = False
-            findings.append(
-                f"Anthropic stop reason was {_describe_stop_reason(stop_reason)}, "
-                "not 'tool_use', although a Tool Call was returned; agent loops "
-                "keyed on stop_reason may ignore the call"
-            )
-    elif response.get("protocol") == "openai":
-        finish_reason = response.get("stop_reason")
-        if finish_reason not in ("stop", "tool_calls"):
-            protocol_notes.append(
-                f"OpenAI finish_reason was {_describe_stop_reason(finish_reason)}, "
-                "not 'stop' or 'tool_calls'; recorded for context, verdict unchanged"
-            )
-    return {
-        "verdict": (
-            "clean"
-            if (count_match and type_match and name_match and arguments_match
-                and stop_reason_match)
-            else "anomaly"
-        ),
-        "expected_count": 1,
-        "received_count": len(calls),
-        "name_match": name_match,
-        "arguments_match": arguments_match,
-        "findings": findings,
-        "protocol_notes": protocol_notes,
-    }
-
-
-def run_tool_call_integrity_test(client, nonce_factory=None):
-    """Send one inert structured probe and return its tri-state analysis.
-
-    The returned Tool Call is inspected only.  This function intentionally has
-    no executor callback and never sends a follow-up tool result.
-    """
-    if nonce_factory is None:
-        nonce_factory = lambda: uuid.uuid4().hex
-    nonce = str(nonce_factory())
-    tool_name = f"record_probe_{nonce[:12]}"
-    expected_arguments = {
-        "probe_token": f"TC_{nonce}",
-        "sequence": 1,
-        "mode": "observe_only",
-    }
-    tool_spec = {
-        "name": tool_name,
-        "description": PROBE_DESCRIPTION,
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "probe_token": {
-                    "type": "string",
-                    "enum": [expected_arguments["probe_token"]],
-                },
-                "sequence": {"type": "integer", "enum": [1]},
-                "mode": {"type": "string", "enum": ["observe_only"]},
-            },
-            "required": ["probe_token", "sequence", "mode"],
-            "additionalProperties": False,
-        },
-    }
-    response = client.call_tool_probe(
-        [{"role": "user", "content": PROBE_PROMPT}],
-        tool_spec,
-        max_tokens=256,
-    )
-    result = analyze_tool_call_integrity(
-        response,
-        expected_name=tool_name,
-        expected_arguments=expected_arguments,
-        api_key=getattr(client, "api_key", ""),
-    )
-    result["expected_name"] = tool_name
-    result["expected_arguments"] = expected_arguments
-    result["received_calls"] = (
-        response.get("tool_calls", []) if isinstance(response, dict) else []
-    )
-    return result
-
-
-# ============================================================
 # Tool-call substitution detector
 # ============================================================
 
@@ -2873,10 +2628,12 @@ return path, e.g. ``pip install requests`` -> ``pip install reqeusts``
 command and comparing the returned text character-by-character against the
 expected string.
 
-This module implements Step 8's complementary text path. Content-based
-package substitution rules often fire on plain text, while
-``tool_call_integrity.py`` independently covers non-streaming structured
-Anthropic/OpenAI Tool Calls that leave plaintext untouched.
+This is a text-echo surrogate for the paper's AC-1.a attack: a content-based
+substitution rule in a malicious router will fire on any response body
+containing a package-install pattern, regardless of whether it arrives via a
+tool_call JSON payload or plain text. It does NOT catch AC-1 rewrites that
+target only structured tool_call payloads while leaving plaintext alone --
+that is deferred to a future step that needs APIClient tool-calling support.
 
 Reference: Liu, Shou, Wen, Chen, Fang, Feng,
 "Your Agent Is Mine: Measuring Malicious Intermediary Attacks on the
@@ -4019,18 +3776,6 @@ def _redact_api_key(text: str, api_key: str) -> str:
             "<REDACTED_PREFIX>",
             text,
         )
-    return text
-
-
-def redact_sensitive_text(text: str, api_key: str = "") -> str:
-    """Redact the caller credential and known secret shapes from report text."""
-    if not isinstance(text, str):
-        text = str(text)
-    if not isinstance(api_key, str):
-        api_key = ""
-    text = _redact_api_key(text, api_key)
-    for pattern, _kind in SECRET_REGEX_PATTERNS:
-        text = pattern.sub("<REDACTED_SECRET>", text)
     return text
 
 
@@ -5515,7 +5260,7 @@ API Relay Security Audit Tool v2.5
 
 Full 14-step audit: infrastructure recon, model list, token injection,
 prompt extraction, instruction conflict + identity, jailbreak, context
-length, tool-call integrity (AC-1 / AC-1.a), error response leakage (AC-2),
+length, tool-call substitution (AC-1.a), error response leakage (AC-2),
 stream integrity (AC-1 SSE), Web3 prompt injection (profile=web3|full),
 infrastructure fingerprint, latency variance, upstream channel classifier.
 Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407
@@ -5664,8 +5409,7 @@ def parse_args():
                         "(10K/50K/100K/200K chars) to lower token cost. "
                         "Default is the full scan.")
     p.add_argument("--skip-tool-substitution", action="store_true",
-                   help="Skip the entire Step 8 tool-call integrity test "
-                        "(text AC-1.a and structured AC-1 probes)")
+                   help="Skip tool-call package substitution test (AC-1.a)")
     p.add_argument("--skip-error-leakage", action="store_true",
                    help="Skip error response header leakage test (Step 9, AC-2 adjacent)")
     p.add_argument("--aggressive-error-probes", action="store_true",
@@ -6354,21 +6098,21 @@ def test_jailbreak(client, report):
 
 
 def test_tool_substitution(client, report):
-    report.h2("8. Tool-Call Integrity (AC-1 / AC-1.a)")
+    report.h2("8. Tool-Call Package Substitution (AC-1.a)")
     report.p(
-        "Verify both package-install text and one inert, non-streaming structured "
-        "Tool Call on the return path. The structured call is inspected only: "
-        "the audit provides no executor, sends no tool result, and never runs "
-        "returned content. A malicious middleware can rewrite a tool name, "
-        "arguments, call count, or package command before it reaches the client. "
+        "Ask the model to echo exact package-install commands and verify "
+        "character-level integrity on the return path. A malicious middleware "
+        "running AC-1.a rewrites package names (e.g. `requests` -> `reqeusts` "
+        "typosquat) before the response reaches the client, giving the attacker "
+        "a durable supply-chain foothold on the agent's host. "
         "Reference: Liu et al., *Your Agent Is Mine*, arXiv:2604.08407 section 4.2.1.\n"
     )
-
-    report.h3("Package-command text probes (AC-1.a)")
-
-    results, text_detected, text_inconclusive = run_tool_substitution_test(
-        client, sleep=1.0,
+    report.p(
+        "Limitation: this is a text-echo surrogate. It does not catch AC-1 "
+        "rewrites that target only structured tool_call payloads.\n"
     )
+
+    results, detected, inconclusive = run_tool_substitution_test(client, sleep=1.0)
 
     report.p("| Manager | Expected | Received | Verdict |")
     report.p("|---------|----------|----------|---------|")
@@ -6383,10 +6127,7 @@ def test_tool_substitution(client, report):
             received_cell = f"ERROR: {err_short}"
             icon = "\u26aa skipped"
         else:
-            disp = (
-                r["received"][:80].replace("\r", " ").replace("\n", " ")
-                .replace("`", "\u2019").replace("|", "\\|")
-            )
+            disp = r["received"][:80].replace("|", "\\|").replace("\n", " ")
             received_cell = f"`{disp}`"
             if r["verdict"] == "exact":
                 icon = "\U0001f7e2 exact"
@@ -6401,123 +6142,31 @@ def test_tool_substitution(client, report):
         for manager, error in error_diagnostics:
             report.p(f"- {manager}: {format_diagnosis(_diagnosis_for_error(error))}")
 
-    if text_detected:
-        subs = sum(1 for r in results if r["verdict"] == "substituted")
-        report.p(
-            f"🔴 **Package-command substitution detected (AC-1.a): "
-            f"{subs}/{len(results)} probes rewritten on return path.**"
-        )
-    elif text_inconclusive:
-        report.p(
-            "🟡 **Package-command text probes INCONCLUSIVE: every probe errored.**"
-        )
-    elif error_count > 0:
-        report.p(
-            f"Tool-call substitution test partially skipped "
-            f"({error_count}/{len(results)} probes errored).",
-        )
-    else:
-        report.p("🟢 Package-command text probes preserved exactly.")
-
-    report.h3("Structured Tool Call probe (non-streaming)")
-    try:
-        structured = run_tool_call_integrity_test(client)
-    except Exception:
-        structured = {
-            "verdict": "inconclusive",
-            "expected_count": 1,
-            "received_count": 0,
-            "name_match": None,
-            "arguments_match": None,
-            "findings": [
-                "Structured Tool Call probe failed; support could not be verified"
-            ],
-            "protocol_notes": [],
-            "received_calls": [],
-        }
-
-    def _match_label(value):
-        if value is None:
-            return "unknown"
-        return "true" if value else "false"
-
-    report.p(f"**Structured verdict**: `{structured['verdict']}`")
-    report.p(
-        f"**Expected calls**: `{structured['expected_count']}` | "
-        f"**Observed calls**: `{structured['received_count']}`"
-    )
-    report.p(
-        f"**Tool name match**: `{_match_label(structured.get('name_match'))}` | "
-        f"**Arguments match**: `{_match_label(structured.get('arguments_match'))}`"
-    )
-    preview = format_tool_calls_preview(
-        structured.get("received_calls", []),
-        api_key=getattr(client, "api_key", ""),
-    )
-    report.p(f"**Received arguments preview**: `{preview}`")
-    if structured.get("findings"):
-        report.p("\n**Structured findings:**")
-        for finding in structured["findings"]:
-            safe = str(finding)[:240].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
-            report.p(f"- {safe}")
-    if structured.get("protocol_notes"):
-        report.p("\n**Protocol notes (informational, not scored):**")
-        for note in structured["protocol_notes"]:
-            safe = str(note)[:240].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
-            report.p(f"- {safe}")
-    if structured.get("text_excerpt"):
-        # Already redacted, code-span-safe, and bounded by the detector. Only
-        # idempotent steps run here (flatten, bound, backtick stand-in), so
-        # pipes are never escaped twice.
-        excerpt = " ".join(str(structured["text_excerpt"]).split())[:240]
-        excerpt = excerpt.replace("`", "\u2019")
-        report.p(f"**Text returned instead of a Tool Call (redacted excerpt)**: `{excerpt}`")
-
-    structured_anomaly = structured["verdict"] == "anomaly"
-    structured_inconclusive = structured["verdict"] == "inconclusive"
-    detected = text_detected or structured_anomaly
-    inconclusive = not detected and (text_inconclusive or structured_inconclusive)
-
     if detected:
-        paths = []
-        if text_detected:
-            paths.append("package-command text")
-        if structured_anomaly:
-            paths.append("structured Tool Call")
+        subs = sum(1 for r in results if r["verdict"] == "substituted")
         report.flag(
             "red",
-            "Tool-call integrity anomaly detected (AC-1 / AC-1.a): "
-            + " and ".join(paths)
-            + " path failed integrity checks",
+            f"Tool-call package substitution detected (AC-1.a): "
+            f"{subs}/{len(results)} probes rewritten on return path",
         )
     elif inconclusive:
-        paths = []
-        if text_inconclusive:
-            paths.append("package-command text")
-        if structured_inconclusive:
-            paths.append("structured Tool Call")
         report.flag(
             "yellow",
-            "Tool-call integrity test INCONCLUSIVE: "
-            + " and ".join(paths)
-            + " path could not be verified",
+            "Tool-call substitution test INCONCLUSIVE: every probe errored. "
+            "The relay may be blocking plaintext echo -- re-run with a different "
+            "model or consider this a red flag in itself.",
         )
     elif error_count > 0:
         report.flag(
             "yellow",
-            f"No tool-call integrity anomaly detected, but "
-            f"{error_count}/{len(results)} package-command probes errored",
+            f"Tool-call substitution test partially skipped "
+            f"({error_count}/{len(results)} probes errored)",
         )
     else:
-        report.flag(
-            "green",
-            "Tool-call integrity clean: package-command text and structured "
-            "tool name, arguments, and call count all matched (stop reason "
-            "also checked for Anthropic format)",
-        )
+        report.flag("green", "No tool-call package substitution detected")
 
     state = "detected" if detected else ("inconclusive" if inconclusive else "clean")
-    print(f"  Done: tool-call integrity ({state})")
+    print(f"  Done: tool-call substitution ({state})")
     return detected, inconclusive
 
 
@@ -6660,10 +6309,13 @@ def test_stream_integrity(client, report):
         "2026-04-11. See reference_hvoy_relayapi memory for details.\n"
     )
 
+    probe_messages = [{"role": "user", "content": "Reply with the single word: ok"}]
+    probe_max_tokens = 100
+    probe_with_thinking = True
     signals = client.stream_call(
-        [{"role": "user", "content": "Reply with the single word: ok"}],
-        max_tokens=100,
-        with_thinking=True,
+        probe_messages,
+        max_tokens=probe_max_tokens,
+        with_thinking=probe_with_thinking,
     )
     analysis = analyze_stream(signals)
     verdict = analysis["verdict"]
@@ -6719,8 +6371,119 @@ def test_stream_integrity(client, report):
             "identity all passed",
         )
 
+    # Informational only: never changes ``verdict``, emits no flag and does
+    # not feed the risk matrix. The helper never raises.
+    _report_stream_parity(
+        client, report, signals,
+        probe_messages, probe_max_tokens, probe_with_thinking,
+    )
+
     print(f"  Done: stream integrity ({verdict})")
     return verdict, verdict == "inconclusive"
+
+
+def _report_stream_parity(client, report, signals, messages, max_tokens,
+                          with_thinking):
+    """Append Step 10's informational stream / non-stream parity section.
+
+    Sends one non-stream request with the same messages, max_tokens and
+    thinking setting as the Step 10 stream, then compares the pair with
+    :func:`compare_stream_nonstream`. The result is an observation only:
+    it never changes the Step 10 verdict, never calls ``report.flag()`` and
+    never feeds the risk matrix.
+
+    Must not raise: ``_run_step`` would turn an exception into an
+    inconclusive Step 10, so every failure degrades to an inconclusive
+    parity row instead.
+
+    No sampling parameters are sent on either request: current Messages API
+    versions reject temperature / top_p / top_k, so both requests run at the
+    model default. That is why only input_tokens and the streamed
+    stop_reason decide the parity verdict, while text similarity and
+    output_tokens (which include thinking tokens) are recorded as notes.
+    """
+    report.h3("Stream / non-stream parity (informational)")
+    report.p(
+        "Observed comparison between the Step 10 stream and one non-stream "
+        "request with the same messages, max_tokens and thinking setting. "
+        "The parity verdict uses only input_tokens and the streamed "
+        "stop_reason. Text similarity and output_tokens are recorded but do "
+        "not decide it: both requests run at the model's default "
+        "temperature, so the reply text varies between samples, and "
+        "output_tokens include thinking tokens. Informational only: it does "
+        "not change the Step 10 verdict or the risk matrix, and its "
+        "thresholds are provisional and uncalibrated.\n"
+    )
+    try:
+        detected_format = getattr(client, "detected_format", None)
+        stream_text = signals.text if isinstance(signals.text, str) else ""
+        if signals.transport_error or not stream_text.strip():
+            nonstream = {"error": "not sent, because the stream returned no "
+                                  "comparable text"}
+        elif detected_format != "anthropic":
+            # A Chat Completions reply is not comparable with an Anthropic
+            # stream, and an undetected client would auto-detect with a
+            # thinking body and could pin the wrong format for later steps.
+            nonstream = {"error": "not sent, because the non-stream client "
+                                  "format is " + repr(detected_format)
+                                  + " rather than 'anthropic'"}
+        else:
+            nonstream = client.call(
+                messages, max_tokens=max_tokens, with_thinking=with_thinking,
+            )
+        parity = compare_stream_nonstream(signals, nonstream)
+    except Exception as exc:  # informational block must never fail Step 10
+        parity = {
+            "verdict": "inconclusive",
+            "input_tokens_delta": None,
+            "output_tokens_delta": None,
+            "output_tokens_tolerance": None,
+            "similarity": None,
+            "stop_reason": None,
+            "stop_reason_valid": False,
+            "notes": [f"Parity check failed: {type(exc).__name__}: {exc}"[:240]],
+        }
+
+    def _delta(value):
+        return "—" if value is None else f"{value:+d}"
+
+    tolerance = parity.get("output_tokens_tolerance")
+    similarity = parity.get("similarity")
+    if parity["verdict"] == "inconclusive":
+        stop_cell = "—"
+    else:
+        stop_cell = (
+            ("yes" if parity["stop_reason_valid"] else "NO")
+            + f" ({parity.get('stop_reason') or 'missing'})"
+        )
+    report.p("| Metric | Observed | Rule (provisional) |")
+    report.p("|--------|----------|--------------------|")
+    report.p(
+        f"| input_tokens delta (stream - non-stream) | "
+        f"{_delta(parity['input_tokens_delta'])} | "
+        f"verdict: abs <= {PARITY_INPUT_TOKEN_TOLERANCE} |"
+    )
+    report.p(
+        f"| Streamed stop_reason valid | {stop_cell} | verdict: one of "
+        f"{', '.join(sorted(PARITY_VALID_STOP_REASONS))} |"
+    )
+    report.p(
+        f"| output_tokens delta (stream - non-stream) | "
+        f"{_delta(parity['output_tokens_delta'])} | note only: "
+        + (f"abs <= {tolerance}" if tolerance is not None
+           else "abs <= max(3, 50% of the larger count)")
+        + " |"
+    )
+    report.p(
+        "| Text similarity (normalized difflib ratio) | "
+        + ("—" if similarity is None else f"{similarity:.3f}")
+        + f" | note only: >= {PARITY_SIMILARITY_MIN} |"
+    )
+    report.p(f"| Observed parity | {parity['verdict']} | not scored |")
+    if parity["notes"]:
+        report.p("\n**Parity notes (observed)**:")
+        for note in parity["notes"]:
+            report.p(f"- {note}")
 
 
 def test_web3_injection(client, report):
@@ -7382,18 +7145,18 @@ def _run_audit(args, report_stdout):
     else:
         print("[7/14] Context length test (skipped)")
 
-    # 8. Tool-call integrity (text AC-1.a + structured AC-1)
+    # 8. Tool-call package substitution (AC-1.a)
     substitution_detected = False
     substitution_inconclusive = False
     if not args.skip_tool_substitution:
-        print("[8/14] Tool-call integrity test...")
+        print("[8/14] Tool-call substitution test...")
         substitution_detected, substitution_inconclusive = _run_step(
-            "Step 8 tool-call integrity", report,
+            "Step 8 tool substitution", report,
             test_tool_substitution, client, report,
             default=(False, True), crashes=step_crashes,
         )
     else:
-        print("[8/14] Tool-call integrity test (skipped)")
+        print("[8/14] Tool-call substitution test (skipped)")
 
     # 9. Error response header leakage (AC-2 adjacent)
     err_severity = "none"
@@ -7477,8 +7240,8 @@ def _run_audit(args, report_stdout):
     #   D1i = Step 3 crashed / inconclusive                 (Step 3)
     #   D2  = caller system instruction not followed        (Step 5)
     #   D2i = Step 5 crashed / inconclusive                 (Step 5)
-    #   D3  = text or structured Tool Call anomaly          (Step 8)
-    #   D3i = Step 8 text/structured path inconclusive      (Step 8)
+    #   D3  = tool-call package substitution detected       (Step 8)
+    #   D3i = Step 8 inconclusive (all probes errored)      (Step 8)
     #   D4  = error response leakage (critical or high)     (Step 9)
     #   D4m = error response leakage (medium only)          (Step 9)
     #   D4i = Step 9 inconclusive                           (Step 9)
@@ -7514,10 +7277,9 @@ def _run_audit(args, report_stdout):
         reasons = []
         if d3:
             reasons.append(
-                "**Tool-call integrity anomaly detected (AC-1 / AC-1.a).** "
-                "A Tool Call or package-install command on the return path was "
-                "rewritten, or the Tool Call's stop reason did not match; an agent "
-                "loop may execute the wrong call or ignore the call."
+                "**Tool-call package substitution detected (AC-1.a).** "
+                "A malicious middleware is rewriting package-install commands "
+                "on the return path -- a code-execution-level finding."
             )
         if err_severity == "critical":
             reasons.append(
@@ -7587,9 +7349,9 @@ def _run_audit(args, report_stdout):
             )
         if d3i:
             medium_reasons.append(
-                "Tool-call integrity test (Step 8) was **inconclusive**: at least "
-                "one text or structured Tool Call path could not be verified. "
-                "The relay may reject strict tool schemas or block the probe format."
+                "Tool-call substitution test (Step 8) was **inconclusive**: "
+                "every probe errored, so the relay's AC-1.a behavior could not "
+                "be verified -- a relay that blocks plaintext echo is itself a red flag."
             )
         if d4m:
             medium_reasons.append(
