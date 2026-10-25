@@ -221,7 +221,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 | Version | `v2.5.0` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
-| pytest collected tests | 920 |
+| pytest collected tests | 1063 |
 | CLI flags | 23 |
 | Runtime profiles | `general`, `web3`, `full` |
 
@@ -449,7 +449,7 @@ registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 | 版本 | `v2.5.0` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 920 |
+| pytest collected tests | 1063 |
 | CLI flags | 23 |
 | Runtime profiles | `general`, `web3`, `full` |
 
