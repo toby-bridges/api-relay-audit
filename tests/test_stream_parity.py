@@ -174,16 +174,29 @@ class TestCompareStreamNonstream:
         assert result["similarity"] is None
         assert result["notes"][0] == "Non-stream request unavailable: HTTP 500"
 
-    def test_empty_stream_text_is_inconclusive(self):
+    def test_empty_text_with_matching_input_is_consistent(self):
         result = compare_stream_nonstream(_stream(text="  "), _nonstream())
-        assert result["verdict"] == "inconclusive"
+        assert result["verdict"] == "consistent"
         assert result["similarity"] is None
-        assert "No text in the stream reply" in result["notes"][0]
+        assert result["notes"] == ["text missing on one side; similarity not computed"]
 
-    def test_empty_nonstream_text_is_inconclusive(self):
-        result = compare_stream_nonstream(_stream(), _nonstream(text=""))
+    def test_empty_text_with_input_gap_is_divergent(self):
+        result = compare_stream_nonstream(
+            _stream(),
+            _nonstream(text="", input_tokens=20 + PARITY_INPUT_TOKEN_TOLERANCE + 1),
+        )
+        assert result["verdict"] == "divergent"
+        assert result["similarity"] is None
+        assert any("input_tokens differ" in note for note in result["notes"])
+        assert "text missing on one side; similarity not computed" in result["notes"]
+        assert not any("nothing to compare" in note for note in result["notes"])
+
+    def test_input_tokens_missing_on_both_sides_is_inconclusive(self):
+        result = compare_stream_nonstream(
+            _stream(input_tokens=None), _nonstream(input_tokens=0),
+        )
         assert result["verdict"] == "inconclusive"
-        assert "No text in the non-stream reply" in result["notes"][0]
+        assert result["notes"][0].startswith("input_tokens missing on both sides")
 
     def test_stream_transport_error_is_inconclusive(self):
         signals = _stream()
@@ -196,7 +209,7 @@ class TestCompareStreamNonstream:
         result = compare_stream_nonstream(_stream(), _nonstream(input_tokens=0))
         assert result["input_tokens_delta"] is None
         assert result["verdict"] == "consistent"
-        assert any("input_tokens not reported" in note for note in result["notes"])
+        assert "input_tokens missing on one side; check skipped" in result["notes"]
 
     def test_malformed_stream_fields_do_not_raise(self):
         signals = _stream()
@@ -204,7 +217,8 @@ class TestCompareStreamNonstream:
         signals.stop_reason = ["end_turn"]
         signals.output_tokens_samples = "bad"
         result = compare_stream_nonstream(signals, _nonstream())
-        assert result["verdict"] == "inconclusive"
+        assert result["verdict"] == "divergent"
+        assert result["similarity"] is None
         assert result["stop_reason"] is None
         assert result["stop_reason_valid"] is False
         assert result["output_tokens_delta"] is None

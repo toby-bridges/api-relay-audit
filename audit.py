@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 51fed6fa29f228bdef4f9371733b50f11a55e0a87b11aeaa4300c938c5a92a89
-# standalone_body_sha256: 94c0fab2ad9164f705b9d2bb273e9bfdca23e6c3c683ffb059314042089ab2e9
+# source_sha256: 46f9b4fbb86d6c0f0f0723e089de57fbd2bf93f9f73c817cf488ec7d60d137ba
+# standalone_body_sha256: f2e49feffb9f5604cbc4c5117a87a1ace731e8dff207723f6264c2c4428ee125
 # END GENERATED STANDALONE HEADER
 
 """
@@ -707,7 +707,7 @@ def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
       pair, or ``None``
     - ``similarity``: ``difflib.SequenceMatcher`` ratio of the two texts after
       casefolding, dropping punctuation and collapsing whitespace (0.0 to
-      1.0, rounded to 3 places), or ``None``
+      1.0, rounded to 3 places), or ``None`` when either text is missing
     - ``stop_reason``: the streamed ``stop_reason`` or ``None``
     - ``stop_reason_valid``: bool, streamed ``stop_reason`` is in
       :data:`PARITY_VALID_STOP_REASONS`
@@ -716,15 +716,16 @@ def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
     Verdict priority (first match wins):
 
     1. **inconclusive**: the non-stream request failed, the stream had a
-       transport error, or either side returned no text.
+       transport error, or input_tokens is missing on both sides.
     2. **divergent**: input_tokens differ by more than
        :data:`PARITY_INPUT_TOKEN_TOLERANCE`, or the streamed ``stop_reason``
        is missing or not a known value. An input_tokens count missing on
-       either side skips that check with a note.
+       only one side skips that check with a note.
     3. **consistent**: neither of the above.
 
     Text similarity and output_tokens never decide the verdict; they are
-    returned and, when outside their provisional bounds, noted. Both
+    returned and, when outside their provisional bounds, noted. An empty
+    reply text on either side only skips the similarity, with a note. Both
     requests run without sampling parameters, so the text varies between
     samples, and output_tokens include thinking tokens.
 
@@ -756,8 +757,8 @@ def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
                 f"non-stream {nonstream_input} (tolerance "
                 f"{PARITY_INPUT_TOKEN_TOLERANCE})"
             )
-    elif not failed:
-        notes.append("input_tokens not reported on both sides; check skipped")
+    elif (stream_input is None) != (nonstream_input is None) and not failed:
+        notes.append("input_tokens missing on one side; check skipped")
 
     # output_tokens (note only): the final cumulative value, and only when a
     # message_delta event carried it.
@@ -822,14 +823,14 @@ def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
     if signals.transport_error:
         notes.insert(0, f"Stream transport error: {str(signals.transport_error)[:200]}")
         return result
-    if not stream_text or not nonstream_text:
-        missing = "stream" if not stream_text else "non-stream"
-        if not stream_text and not nonstream_text:
-            missing = "stream and non-stream"
-        notes.insert(0, f"No text in the {missing} reply; nothing to compare")
+    if stream_input is None and nonstream_input is None:
+        notes.insert(0, "input_tokens missing on both sides; parity not decided")
         return result
 
-    if similarity < PARITY_SIMILARITY_MIN:
+    if not stream_text or not nonstream_text:
+        side = "one side" if (stream_text or nonstream_text) else "both sides"
+        notes.append(f"text missing on {side}; similarity not computed")
+    elif similarity < PARITY_SIMILARITY_MIN:
         notes.append(
             f"normalized text similarity {similarity:.3f} is below "
             f"{PARITY_SIMILARITY_MIN} (note only; replies vary between samples)"
