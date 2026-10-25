@@ -801,6 +801,25 @@ pass 条件：响应中不出现竞争模型名称 OR 明确重申 Claude 身份
 我们的"Explicitly NOT doing"表里已有此项，理由仍然成立：
 relay 可硬编码"May 2025"在 system prompt 里轻松绕过。**不重新评估。**
 
+### 2.8 veridrop 对照衍生候选 (2026-10-26)
+**来源**：canarybyte/veridrop main@e87ed92 逐检测器对照（会话记录 detector-diff-v1.md、veridrop-adoption-v1.md）。
+**状态**：v2.6 实施中。许可同为 AGPL-3.0，但其实现依赖 async httpx 与 rapidfuzz，只做方法引用、标准库重写，docstring 标明来源。
+**评审**：每条分支两轮独立评审（Opus 5.5，不同上下文），MUST 项修完再合入集成分支；本机无 codex CLI，未走 Codex 轮。
+
+#### 2.8.0 PR #95 补缺（P0）✅ 分支 feat/v26-p0-tool-call-gaps
+归一化响应加 protocol 标记；Anthropic 格式下 tool_use id 非 toolu_ 只记 protocol_notes；调用存在但 stop_reason 不是 tool_use（含缺失）判 anomaly 进 D3；OpenAI 格式 finish_reason 为 stop / tool_calls 正常，其余只记 note；无调用时记录脱敏、限长的 text_excerpt。
+#### 2.8.1 Step 10 跨模式对照（P1）✅ 分支 feat/v26-p1-stream-parity
+同题非流式请求与流对照；divergent 只由 input_tokens 差与流侧 stop_reason 决定，相似度与 output_tokens 只记 note（默认温度下文本会变，output 含 thinking）；信息性，不进 D5；阈值 provisional，待直连基线校准。temperature 参数不提供（官方文档：新 API 版本下带该参数即 400）。
+#### 2.8.2 Step 14 OpenAI 格式 usage 异源字段（P2b）✅ 分支 feat/v26-p2b-openai-usage-source
+Tier 1 信息性规则：claude_cache_creation* 键 → anthropic-translated；input_tokens+output_tokens 成对且无 *_details、且缺 OpenAI 命名或带 Anthropic cache 键 → anthropic-translated；usage_source 为非空且非 openai 的字符串 → foreign-usage-source；键名净化限长，错误行不带响应体。
+#### 2.8.3 Step 3 用量合理性（P2）⏳ Wave 2
+增量区间、输出上限、跨模式 usage（复用 P1 请求对）、count_tokens 对账；信息性；与"明确不做"表的精确计数不冲突；阈值需直连基线。
+#### 2.8.4 思维签名回传验签（P3）⏳ Wave 2，可选 flag
+--verify-signature 默认关；原样回传期望 200、改一位期望 400；同模型回传；Sonnet 5.5 / Haiku 5.5 的 thinking 块绑定账号，号池信号待验证。
+#### 2.8.5 不做
+行为指纹正则版（见 §10、§11a）、知识截止（见"明确不做"表）、PDF 能力（另见 §2.6.2）。
+**已知待办**：Step 10 探针 budget_tokens=99 是否低于官方下限，当前文档页未见下限，待直连基线一并核实。
+
 ### 3. MistTrack AML integration (profile=web3|full, optional)
 **Status**: sketched in SlowMist OpenClaw Practice Guide, not started
 **Scope**: ~100 LOC adapter + external API dependency

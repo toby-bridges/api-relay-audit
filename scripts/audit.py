@@ -2274,8 +2274,8 @@ def _run_audit(args, report_stdout):
         if d3:
             reasons.append(
                 "**Tool-call integrity anomaly detected (AC-1 / AC-1.a).** "
-                "A Tool Call or package-install command on the return path was "
-                "rewritten, or the Tool Call's stop reason did not match; an agent "
+                "A Tool Call or package-install command on the return path appears to "
+                "have been rewritten, or the Tool Call's stop reason did not match; an agent "
                 "loop may execute the wrong call or ignore the call."
             )
         if err_severity == "critical":

@@ -16,24 +16,24 @@
 | 单文件版版本 | `v2.5` | `audit.py` docstring |
 | 步骤数 (Step N) | **14** | grep `Step N` in `scripts/audit.py` |
 | 步骤数 (单文件版) | 14 | grep `Step N` in `audit.py` |
-| 测试数 (pytest) | **956** | `pytest --collect-only` |
-| 测试数 (static) | 832 | grep `def test_*` in tests/ |
+| 测试数 (pytest) | **1063** | `pytest --collect-only` |
+| 测试数 (static) | 926 | grep `def test_*` in tests/ |
 | CLI flag 数 | 23 | grep `add_argument("--*")` |
 | profile 选项 | general, web3, full | argparse choices |
 | ROADMAP 上次更新 | 2026-10-09 | `ROADMAP.md` 头部 |
 | Codex review 提及次数 | 4 | grep `Codex review (cycle\|round)` 在 Shipped 节 |
 | Codex review 已编号轮次（最大） | 6 | grep `Nth Codex review round` |
 | Codex bug 累计（最新声称） | 18 | grep `cumulative N real bug` |
-| 测试数演进 (ROADMAP) | [546, 560, 562, 586, 642, 700, 808, 885] | grep `Final test count: N/N passing` |
-| Recorded commit SHA | `b825fb5` | recent reachable commit; `--check` allows follow-up metrics commits |
+| 测试数演进 (ROADMAP) | [546, 560, 562, 586, 642, 700, 808, 843, 885] | grep `Final test count: N/N passing` |
+| Recorded commit SHA | `e1b2d67` | recent reachable commit; `--check` allows follow-up metrics commits |
 | Recorded commit date | 2026-10-26 | recent reachable commit; `--check` allows follow-up metrics commits |
 
 ## 一致性自检
 
 - ✅ 版本一致：两份都是 `v2.5`。
 - ✅ 步骤数一致：14。
-- ℹ️ pytest (956) vs 静态 (832) 差距 >20，多出来的来自 parametrize/fixture——以 pytest 为准。
-- ⚠️ ROADMAP 最新记录 885 个测试，但当前 pytest 是 956。要么 ROADMAP 漏更新，要么有未记录的新测试。
+- ℹ️ pytest (1063) vs 静态 (926) 差距 >20，多出来的来自 parametrize/fixture——以 pytest 为准。
+- ⚠️ ROADMAP 最新记录 885 个测试，但当前 pytest 是 1063。要么 ROADMAP 漏更新，要么有未记录的新测试。
 
 ## 人工 review 边界（脚本抓不到，每次发布要人工核对）
 
