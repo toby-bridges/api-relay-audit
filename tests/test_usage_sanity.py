@@ -34,8 +34,11 @@ def _ok(input_tokens, output_tokens, fmt="anthropic"):
         usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
     else:
         usage = {"prompt_tokens": input_tokens, "completion_tokens": output_tokens}
+    stop = ({"stop_reason": "end_turn"} if fmt == "anthropic"
+            else {"choices": [{"finish_reason": "stop"}]})
     return {"text": "hi", "input_tokens": input_tokens,
-            "output_tokens": output_tokens, "raw": {"usage": usage}, "time": 0.01}
+            "output_tokens": output_tokens, "raw": {"usage": usage, **stop},
+            "time": 0.01}
 
 
 def _count(status, body, error=None):
@@ -98,14 +101,14 @@ def test_input_delta_implausible_outside_range(long_input):
 
 @pytest.mark.parametrize("output_tokens", [3, 16, 20])
 def test_output_cap_plausible_at_or_below_limit(output_tokens):
-    check = us.check_usage_output_cap(output_tokens)
+    check = us.check_usage_output_cap(output_tokens, stop_reason="max_tokens")
     assert check["verdict"] == "plausible"
     assert check["limit"] == 20
 
 
 @pytest.mark.parametrize("output_tokens", [21, 64])
 def test_output_cap_implausible_above_limit(output_tokens):
-    check = us.check_usage_output_cap(output_tokens)
+    check = us.check_usage_output_cap(output_tokens, stop_reason="max_tokens")
     assert check["verdict"] == "implausible"
     assert "above 20" in check["note"]
 
@@ -324,8 +327,11 @@ FAKE_SECRET = "sk-ant-api03-" + "Z" * 32
 
 
 def _raw(usage, **raw_extra):
+    raw = {"usage": usage, **raw_extra}
+    if "stop_reason" not in raw and "choices" not in raw:
+        raw["stop_reason"] = "end_turn"
     return {"text": "hi", "input_tokens": 0, "output_tokens": 0,
-            "raw": {"usage": usage, **raw_extra}, "time": 0.01}
+            "raw": raw, "time": 0.01}
 
 
 @pytest.mark.parametrize("error_text", [
@@ -572,3 +578,34 @@ def test_step3_call_site_guard_contains_render_crash(audit_module, monkeypatch):
 
     assert result == 0
     assert reporter.summary == [("green", "No token injection detected")]
+
+
+# -- Round 2: missing stop reason, relay key names ---------------------------
+
+@pytest.mark.parametrize("raw_extra", [{"stop_reason": None}, {"choices": [{}]}],
+                         ids=["anthropic", "openai"])
+def test_output_cap_inconclusive_when_stop_reason_missing(raw_extra):
+    long_result = _raw({"input_tokens": 89, "output_tokens": 16}, **raw_extra)
+    client = FakeClient(long_result, _count(200, '{"input_tokens": 9}'))
+    cap = _run(client, _ok(9, 5))["checks"][1]
+    assert cap["verdict"] == "inconclusive"
+    assert cap["note"] == "stop reason missing"
+
+
+def test_relay_usage_key_names_cannot_inject_markdown(audit_module, monkeypatch):
+    monkeypatch.setattr(audit_module, "time", MagicMock())
+    evil = "reasoning_tokens\n# FAKE HEADING\n| x | y |"
+    long_result = _raw({"input_tokens": 89, "output_tokens": 16, evil: 3,
+                        "completion_tokens_details": {evil: 12}})
+    client = FakeClient(long_result, _count(200, '{"input_tokens": 9}'),
+                        step3_results=[_ok(9, 5), _ok(15, 5), _ok(11, 5)])
+    reporter = audit_module.Reporter()
+
+    assert audit_module.test_token_injection(client, reporter) == 0
+
+    lines = "".join(reporter.sections).splitlines()
+    assert not any(line.startswith("# FAKE HEADING") for line in lines)
+    assert not any(line.startswith("| x |") for line in lines)
+    (note_line,) = [line for line in lines if line.startswith("- B: ")]
+    assert "FAKE HEADING" in note_line
+    assert "|" not in note_line and "\n" not in note_line

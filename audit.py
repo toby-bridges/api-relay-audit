@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: d95e94fda648f69c77abd45448e37ddb99d4715b8000281e3945e05bbea2e2df
-# standalone_body_sha256: 05920577bca018c9103c10d4463e72b431bdd6e6b3d69a986ffec014bd444302
+# source_sha256: c77185e54abaa2fe86fc33fa42bbbcc8d4c87fe02715cedfe2cea1a6722c527c
+# standalone_body_sha256: 10f3de75dafe7544f5efaed536c11bb2920239f09ee988cfad4e020b4b07fd3f
 # END GENERATED STANDALONE HEADER
 
 """
@@ -6039,7 +6039,8 @@ inconclusive instead of reporting the same cause twice.
 Readings that cannot be compared make a check inconclusive: a missing or
 non-integer count, prompt caching (``cache_read_input_tokens`` /
 ``cache_creation_input_tokens``, which input_tokens excludes) for A and C,
-and reported thinking tokens or an unexpected stop / finish reason for B.
+and reported thinking tokens or a missing or unexpected stop / finish
+reason for B.
 A negative count is impossible and makes the check implausible. Relay error
 text never reaches a note verbatim: HTTP errors keep only the status code
 and anything else is redacted, then clipped.
@@ -6072,8 +6073,8 @@ USAGE_COUNT_TOKENS_PATH = "/v1/messages/count_tokens"
 # Step 3 reports injection above this many tokens (its yellow threshold).
 USAGE_STEP3_INJECTION_THRESHOLD = 20
 # Stop / finish reasons of a plain text reply that ended on its own or at
-# max_tokens (Anthropic, then OpenAI-compatible). Anything else leaves B
-# inconclusive.
+# max_tokens (Anthropic, then OpenAI-compatible). A missing reason, or any
+# other value, leaves B inconclusive.
 USAGE_EXPECTED_STOP_REASONS = frozenset(
     {"end_turn", "max_tokens", "stop_sequence", "stop", "length"})
 USAGE_CACHE_FIELDS = ("cache_read_input_tokens", "cache_creation_input_tokens")
@@ -6195,13 +6196,16 @@ def usage_thinking_note(result, label):
             for sub_key, sub_value in value.items():
                 if (_USAGE_THINKING_KEY.search(str(sub_key))
                         and _usage_is_int(sub_value) and sub_value > 0):
-                    hits.append(f"{key}.{sub_key}={sub_value}")
+                    hits.append(f"{_usage_clip(key, 40)}."
+                                f"{_usage_clip(sub_key, 40)}={sub_value}")
         elif (_USAGE_THINKING_KEY.search(str(key))
                 and _usage_is_int(value) and value > 0):
-            hits.append(f"{key}={value}")
+            hits.append(f"{_usage_clip(key, 40)}={value}")
     if not hits:
         return None
-    return (f"the {label} reports thinking tokens ({', '.join(hits)}), which "
+    # Key names come from the relay: clip them so they cannot add Markdown lines.
+    return (f"the {label} reports thinking tokens "
+            f"({_usage_clip(', '.join(hits), 120)}), which "
             "some upstreams do not cap with max_tokens")
 
 
@@ -6259,7 +6263,11 @@ def check_usage_input_delta(baseline_input, long_input, reason=None,
 
 def check_usage_output_cap(output_tokens, reason=None, stop_reason=None,
                            thinking_note=None):
-    """Check B: output_tokens of a max_tokens-capped reply stay under the cap."""
+    """Check B: output_tokens of a max_tokens-capped reply stay under the cap.
+
+    Reported thinking tokens, or a stop reason that is missing or outside
+    ``USAGE_EXPECTED_STOP_REASONS``, leave the check inconclusive.
+    """
     limit = USAGE_OUTPUT_MAX_TOKENS + USAGE_OUTPUT_TOLERANCE
     check = {
         "check": "output_cap",
@@ -6281,7 +6289,10 @@ def check_usage_output_cap(output_tokens, reason=None, stop_reason=None,
     if thinking_note:
         check["note"] = thinking_note
         return check
-    if stop_reason is not None and stop_reason not in USAGE_EXPECTED_STOP_REASONS:
+    if stop_reason is None:
+        check["note"] = "stop reason missing"
+        return check
+    if stop_reason not in USAGE_EXPECTED_STOP_REASONS:
         check["note"] = (f"stop reason {_usage_clip(stop_reason, 40)!r} is "
                          "neither a natural stop nor the max_tokens cut")
         return check
