@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 631df33ef6728d6a04dd1291aa0170592eb92aa7e00cbee2d6a88bab2dd0d28e
-# standalone_body_sha256: 2f70aa179711c13a441431f3ee78dd0614263eeb10458c4eb220c7184ee4a144
+# source_sha256: 4ccf1681b15bb36033f74c92756298c8fab2aff43c389260e312168b671cc79a
+# standalone_body_sha256: 0f2618498f02ac51eeed56130bc55c01cefd3c7f11feda1ace5082fd1febb3cd
 # END GENERATED STANDALONE HEADER
 
 """
@@ -223,6 +223,7 @@ layer.
 """
 
 import difflib
+import re
 import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -705,6 +706,25 @@ def _parity_normalize_text(text) -> str:
     return " ".join(kept.split())
 
 
+_PARITY_HTTP_STATUS = re.compile(r"^\s*HTTP\s+(\d{3})")
+
+
+def _parity_error_summary(text) -> str:
+    """Reduce a relay-controlled error string to a status-only summary.
+
+    The transport layer keeps the response body in its error string, and a
+    relay can echo credentials there. Parity notes therefore keep only the
+    HTTP status code, or the words ``transport error``; the body never
+    reaches the report.
+    """
+    text = str(text or "")
+    if text.startswith("not sent"):
+        # Produced by the audit itself, never by the relay: keep the reason.
+        return " ".join(text.split())[:200]
+    match = _PARITY_HTTP_STATUS.match(text)
+    return f"HTTP {match.group(1)}" if match else "transport error"
+
+
 def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
     """Compare a Step 10 stream with a non-stream reply to the same request.
 
@@ -838,10 +858,10 @@ def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
     }
 
     if failed:
-        notes.insert(0, f"Non-stream request unavailable: {str(nonstream['error'])[:200]}")
+        notes.insert(0, f"Non-stream request unavailable: {_parity_error_summary(nonstream['error'])}")
         return result
     if signals.transport_error:
-        notes.insert(0, f"Stream transport error: {str(signals.transport_error)[:200]}")
+        notes.insert(0, f"Stream transport error: {_parity_error_summary(signals.transport_error)}")
         return result
     if stream_input is None and nonstream_input is None:
         notes.insert(0, "input_tokens missing on both sides; parity not decided")
@@ -1932,6 +1952,9 @@ class APIClient:
         if isinstance(content, list):
             for block in content:
                 if not isinstance(block, dict):
+                    # Keep malformed entries so the integrity analysis can
+                    # report the response shape as invalid instead of clean.
+                    tool_calls.append(block)
                     continue
                 block_type = block.get("type")
                 tool_like = block_type == "tool_use" or any(
@@ -2018,6 +2041,9 @@ class APIClient:
         tool_calls = []
         for raw_call in raw_calls:
             if not isinstance(raw_call, dict):
+                # Keep malformed entries so the integrity analysis can
+                # report the response shape as invalid instead of clean.
+                tool_calls.append(raw_call)
                 continue
             call_type = raw_call.get("type")
             if call_type == "function":
@@ -8442,7 +8468,14 @@ def _report_stream_parity(client, report, signals, messages, max_tokens,
     if parity["notes"]:
         report.p("\n**Parity notes (observed)**:")
         for note in parity["notes"]:
-            report.p(f"- {note}")
+            report.p(f"- {_parity_note_for_report(note, client)}")
+
+
+def _parity_note_for_report(note, client):
+    """Redact, flatten and bound a parity note before it reaches the report."""
+    text = " ".join(str(note).split())
+    text = redact_sensitive_text(text, getattr(client, "api_key", "") or "")
+    return text.replace("|", "\\|")[:240]
 
 
 SIGNATURE_REPLAY_FOLLOW_UP = "Reply with the single word: done"

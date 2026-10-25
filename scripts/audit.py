@@ -1531,7 +1531,14 @@ def _report_stream_parity(client, report, signals, messages, max_tokens,
     if parity["notes"]:
         report.p("\n**Parity notes (observed)**:")
         for note in parity["notes"]:
-            report.p(f"- {note}")
+            report.p(f"- {_parity_note_for_report(note, client)}")
+
+
+def _parity_note_for_report(note, client):
+    """Redact, flatten and bound a parity note before it reaches the report."""
+    text = " ".join(str(note).split())
+    text = redact_sensitive_text(text, getattr(client, "api_key", "") or "")
+    return text.replace("|", "\\|")[:240]
 
 
 SIGNATURE_REPLAY_FOLLOW_UP = "Reply with the single word: done"

@@ -617,6 +617,9 @@ class APIClient:
         if isinstance(content, list):
             for block in content:
                 if not isinstance(block, dict):
+                    # Keep malformed entries so the integrity analysis can
+                    # report the response shape as invalid instead of clean.
+                    tool_calls.append(block)
                     continue
                 block_type = block.get("type")
                 tool_like = block_type == "tool_use" or any(
@@ -703,6 +706,9 @@ class APIClient:
         tool_calls = []
         for raw_call in raw_calls:
             if not isinstance(raw_call, dict):
+                # Keep malformed entries so the integrity analysis can
+                # report the response shape as invalid instead of clean.
+                tool_calls.append(raw_call)
                 continue
             call_type = raw_call.get("type")
             if call_type == "function":

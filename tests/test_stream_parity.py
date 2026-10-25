@@ -423,3 +423,23 @@ class TestStep10ParityWiring:
         assert result == ("clean", False)
         assert client.calls == []
         assert "format is None rather than 'anthropic'" in body
+
+
+def test_nonstream_error_note_keeps_only_the_http_status():
+    from api_relay_audit.stream_integrity import compare_stream_nonstream
+    result = compare_stream_nonstream(
+        _stream(), {"error": "HTTP 401: rejected credential sk-ant-api03-SECRETVALUE", "time": 0.1}
+    )
+    assert result["verdict"] == "inconclusive"
+    assert result["notes"][0] == "Non-stream request unavailable: HTTP 401"
+    assert "SECRETVALUE" not in " ".join(result["notes"])
+
+
+def test_stream_transport_error_note_has_no_body():
+    from api_relay_audit.stream_integrity import compare_stream_nonstream
+    signals = _stream()
+    signals.transport_error = "Connection reset while sending sk-ant-api03-SECRETVALUE"
+    result = compare_stream_nonstream(signals, _nonstream())
+    assert result["verdict"] == "inconclusive"
+    assert result["notes"][0] == "Stream transport error: transport error"
+    assert "SECRETVALUE" not in " ".join(result["notes"])

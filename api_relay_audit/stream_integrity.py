@@ -74,6 +74,7 @@ layer.
 """
 
 import difflib
+import re
 import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -556,6 +557,25 @@ def _parity_normalize_text(text) -> str:
     return " ".join(kept.split())
 
 
+_PARITY_HTTP_STATUS = re.compile(r"^\s*HTTP\s+(\d{3})")
+
+
+def _parity_error_summary(text) -> str:
+    """Reduce a relay-controlled error string to a status-only summary.
+
+    The transport layer keeps the response body in its error string, and a
+    relay can echo credentials there. Parity notes therefore keep only the
+    HTTP status code, or the words ``transport error``; the body never
+    reaches the report.
+    """
+    text = str(text or "")
+    if text.startswith("not sent"):
+        # Produced by the audit itself, never by the relay: keep the reason.
+        return " ".join(text.split())[:200]
+    match = _PARITY_HTTP_STATUS.match(text)
+    return f"HTTP {match.group(1)}" if match else "transport error"
+
+
 def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
     """Compare a Step 10 stream with a non-stream reply to the same request.
 
@@ -689,10 +709,10 @@ def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
     }
 
     if failed:
-        notes.insert(0, f"Non-stream request unavailable: {str(nonstream['error'])[:200]}")
+        notes.insert(0, f"Non-stream request unavailable: {_parity_error_summary(nonstream['error'])}")
         return result
     if signals.transport_error:
-        notes.insert(0, f"Stream transport error: {str(signals.transport_error)[:200]}")
+        notes.insert(0, f"Stream transport error: {_parity_error_summary(signals.transport_error)}")
         return result
     if stream_input is None and nonstream_input is None:
         notes.insert(0, "input_tokens missing on both sides; parity not decided")

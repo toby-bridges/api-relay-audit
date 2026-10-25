@@ -275,3 +275,41 @@ def test_anthropic_tool_probe_preserves_tool_like_block_type_mutation(mock_post)
 
     assert result["tool_calls"][0]["type"] == "custom_tool"
     assert result["tool_calls"][0]["arguments"] == {"probe_token": "TC_fixed"}
+
+
+@patch("api_relay_audit.client.httpx.post")
+def test_openai_tool_probe_keeps_non_object_tool_call_entries(mock_post):
+    from api_relay_audit.tool_call_integrity import analyze_tool_call_integrity
+
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "choices": [{
+            "message": {"tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "record_probe_fixed",
+                        "arguments": "{\"probe_token\": \"TC_fixed\", \"sequence\": 1, \"mode\": \"observe_only\"}",
+                    },
+                },
+                None,
+            ]},
+            "finish_reason": "tool_calls",
+        }],
+        "usage": {},
+    }
+    mock_post.return_value = response
+    client = make_client("openai")
+
+    result = client.call_tool_probe([], TOOL_SPEC)
+
+    assert len(result["tool_calls"]) == 2
+    assert result["tool_calls"][1] is None
+    analysis = analyze_tool_call_integrity(
+        result,
+        expected_name="record_probe_fixed",
+        expected_arguments={"probe_token": "TC_fixed", "sequence": 1, "mode": "observe_only"},
+    )
+    assert analysis["verdict"] == "inconclusive"
+    assert analysis["findings"] == ["Structured Tool Call response format was invalid"]
