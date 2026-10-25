@@ -55,16 +55,11 @@ def _thinking_config(max_tokens: int) -> dict:
     return {"type": "enabled", "budget_tokens": max(1, max_tokens - 1)}
 
 
-def _optional_call_kwargs(with_thinking=False, temperature=None) -> dict:
-    """Return the optional ``call()`` fields as keyword arguments, only when
-    set, so a default call keeps its original ``(messages, system,
-    max_tokens)`` shape all the way down to the format-specific helpers."""
-    kwargs = {}
-    if with_thinking:
-        kwargs["with_thinking"] = True
-    if temperature is not None:
-        kwargs["temperature"] = temperature
-    return kwargs
+def _optional_call_kwargs(with_thinking=False) -> dict:
+    """Return ``with_thinking`` as a keyword argument only when set, so a
+    default call keeps its original ``(messages, system, max_tokens)`` shape
+    all the way down to the format-specific helpers."""
+    return {"with_thinking": True} if with_thinking else {}
 
 
 def _parse_curl_i_output(output: str) -> dict:
@@ -382,7 +377,7 @@ class APIClient:
     # -- Anthropic native format ----------------------------------------------
 
     def _call_anthropic(self, messages, system=None, max_tokens=512,
-                        with_thinking=False, temperature=None):
+                        with_thinking=False):
         url = self.base_url
         if url.endswith("/v1"):
             url = url[:-3]
@@ -393,8 +388,6 @@ class APIClient:
             body["system"] = system
         if with_thinking:
             body["thinking"] = _thinking_config(max_tokens)
-        if temperature is not None:
-            body["temperature"] = temperature
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
@@ -416,7 +409,7 @@ class APIClient:
     # -- OpenAI compatible format ---------------------------------------------
 
     def _call_openai(self, messages, system=None, max_tokens=512,
-                     with_thinking=False, temperature=None):
+                     with_thinking=False):
         # ``with_thinking`` is accepted for signature parity with
         # ``_call_anthropic`` but ignored: Chat Completions has no standard
         # ``thinking`` field, and strict endpoints reject unknown fields.
@@ -430,8 +423,6 @@ class APIClient:
             msgs.append({"role": "system", "content": system})
         msgs.extend(messages)
         body = {"model": self.model, "max_tokens": max_tokens, "messages": msgs}
-        if temperature is not None:
-            body["temperature"] = temperature
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "content-type": "application/json",
@@ -477,8 +468,7 @@ class APIClient:
         except Exception:
             pass
 
-    def call(self, messages, system=None, max_tokens=512,
-             with_thinking=False, temperature=None):
+    def call(self, messages, system=None, max_tokens=512, with_thinking=False):
         """Send a chat completion request, auto-detecting format on first call.
 
         The method records wall-clock elapsed time and attaches it as the
@@ -494,11 +484,6 @@ class APIClient:
             with_thinking: If True, send the same ``thinking`` block that
                 :meth:`stream_call` sends. Anthropic format only; the
                 OpenAI-compatible body ignores it. Defaults to False.
-            temperature: Optional sampling temperature. When not ``None``
-                it is sent as ``temperature`` in both formats. Defaults to
-                ``None`` (the relay's default). The Anthropic API accepts
-                only its default temperature while thinking is enabled, so
-                do not combine a non-default value with ``with_thinking``.
 
         Returns:
             A dict with the following keys on success:
@@ -522,13 +507,11 @@ class APIClient:
                           "messages": messages, "system": system or ""}
         if with_thinking:
             logged_request["thinking"] = _thinking_config(max_tokens)
-        if temperature is not None:
-            logged_request["temperature"] = temperature
         request_body = json.dumps(logged_request)
         try:
             result = self._call_with_detection(
                 messages, system, max_tokens,
-                **_optional_call_kwargs(with_thinking, temperature))
+                **_optional_call_kwargs(with_thinking))
             result["time"] = time.time() - start
             # v1.7.7 transparent-log
             self._log_transparent(
@@ -557,8 +540,8 @@ class APIClient:
         return base + "/v1/messages"
 
     def _call_with_detection(self, messages, system, max_tokens,
-                             with_thinking=False, temperature=None):
-        extra = _optional_call_kwargs(with_thinking, temperature)
+                             with_thinking=False):
+        extra = _optional_call_kwargs(with_thinking)
         # Already detected — use that format
         if self._format == "openai":
             return self._call_openai(messages, system, max_tokens, **extra)
@@ -800,8 +783,7 @@ class APIClient:
     # -- Streaming (Step 10 stream integrity) --------------------------------
 
     def stream_call(self, messages, system=None, max_tokens=512,
-                    with_thinking: bool = True, timeout: int = 120,
-                    temperature=None) -> StreamSignals:
+                    with_thinking: bool = True, timeout: int = 120) -> StreamSignals:
         """Open an Anthropic-format streaming request and capture SSE signals.
 
         Unlike :meth:`call`, this method is **Anthropic-only**. The SSE event
@@ -826,8 +808,6 @@ class APIClient:
                 Defaults to True because Step 10's whole point is to
                 watch for thinking signature anomalies.
             timeout: Per-stream timeout in seconds. Defaults to 120.
-            temperature: Optional sampling temperature, sent as
-                ``temperature`` when not ``None``. Defaults to ``None``.
 
         Returns:
             A fully populated :class:`StreamSignals` dataclass.
@@ -848,8 +828,6 @@ class APIClient:
         if with_thinking:
             # thinking.budget_tokens must be strictly less than max_tokens
             body["thinking"] = _thinking_config(max_tokens)
-        if temperature is not None:
-            body["temperature"] = temperature
 
         headers = {
             "x-api-key": self.api_key,

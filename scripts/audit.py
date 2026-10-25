@@ -1183,22 +1183,28 @@ def _report_stream_parity(client, report, signals, messages, max_tokens,
     inconclusive Step 10, so every failure degrades to an inconclusive
     parity row instead.
 
-    No ``temperature`` is sent on either request. The Step 10 probe enables
-    thinking, and the Anthropic API accepts only its default temperature
-    with thinking enabled; adding ``temperature=0`` to the stream would
-    change the Step 10 request itself.
+    No sampling parameters are sent on either request: current Messages API
+    versions reject temperature / top_p / top_k, so both requests run at the
+    model default. That is why only input_tokens and the streamed
+    stop_reason decide the parity verdict, while text similarity and
+    output_tokens (which include thinking tokens) are recorded as notes.
     """
     report.h3("Stream / non-stream parity (informational)")
     report.p(
         "Observed comparison between the Step 10 stream and one non-stream "
-        "request with the same messages, max_tokens and thinking setting "
-        "(both at the API default temperature). Informational only: it does "
+        "request with the same messages, max_tokens and thinking setting. "
+        "The parity verdict uses only input_tokens and the streamed "
+        "stop_reason. Text similarity and output_tokens are recorded but do "
+        "not decide it: both requests run at the model's default "
+        "temperature, so the reply text varies between samples, and "
+        "output_tokens include thinking tokens. Informational only: it does "
         "not change the Step 10 verdict or the risk matrix, and its "
         "thresholds are provisional and uncalibrated.\n"
     )
     try:
         detected_format = getattr(client, "detected_format", None)
-        if signals.transport_error or not (signals.text or "").strip():
+        stream_text = signals.text if isinstance(signals.text, str) else ""
+        if signals.transport_error or not stream_text.strip():
             nonstream = {"error": "not sent, because the stream returned no "
                                   "comparable text"}
         elif detected_format != "anthropic":
@@ -1228,38 +1234,37 @@ def _report_stream_parity(client, report, signals, messages, max_tokens,
     def _delta(value):
         return "—" if value is None else f"{value:+d}"
 
-    inconclusive = parity["verdict"] == "inconclusive"
     tolerance = parity.get("output_tokens_tolerance")
     similarity = parity.get("similarity")
-    if inconclusive:
+    if parity["verdict"] == "inconclusive":
         stop_cell = "—"
     else:
         stop_cell = (
             ("yes" if parity["stop_reason_valid"] else "NO")
             + f" ({parity.get('stop_reason') or 'missing'})"
         )
-    report.p("| Metric | Observed | Provisional threshold |")
-    report.p("|--------|----------|-----------------------|")
+    report.p("| Metric | Observed | Rule (provisional) |")
+    report.p("|--------|----------|--------------------|")
     report.p(
         f"| input_tokens delta (stream - non-stream) | "
         f"{_delta(parity['input_tokens_delta'])} | "
-        f"abs <= {PARITY_INPUT_TOKEN_TOLERANCE} |"
+        f"verdict: abs <= {PARITY_INPUT_TOKEN_TOLERANCE} |"
+    )
+    report.p(
+        f"| Streamed stop_reason valid | {stop_cell} | verdict: one of "
+        f"{', '.join(sorted(PARITY_VALID_STOP_REASONS))} |"
     )
     report.p(
         f"| output_tokens delta (stream - non-stream) | "
-        f"{_delta(parity['output_tokens_delta'])} | "
+        f"{_delta(parity['output_tokens_delta'])} | note only: "
         + (f"abs <= {tolerance}" if tolerance is not None
            else "abs <= max(3, 50% of the larger count)")
         + " |"
     )
     report.p(
-        "| Text similarity (difflib ratio) | "
+        "| Text similarity (normalized difflib ratio) | "
         + ("—" if similarity is None else f"{similarity:.3f}")
-        + f" | >= {PARITY_SIMILARITY_MIN} |"
-    )
-    report.p(
-        f"| Streamed stop_reason valid | {stop_cell} | "
-        f"{', '.join(sorted(PARITY_VALID_STOP_REASONS))} |"
+        + f" | note only: >= {PARITY_SIMILARITY_MIN} |"
     )
     report.p(f"| Observed parity | {parity['verdict']} | not scored |")
     if parity["notes"]:

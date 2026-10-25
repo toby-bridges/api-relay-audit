@@ -618,83 +618,95 @@ class TestLog:
         assert capsys.readouterr().out == ""
 
 
+
 # ---------------------------------------------------------------------------
-# call(): with_thinking / temperature (v2.6 stream parity)
+# call(): with_thinking (v2.6 stream parity)
 # ---------------------------------------------------------------------------
 
-class TestCallThinkingAndTemperature:
-    def _anthropic_resp(self):
-        resp = MagicMock(status_code=200)
-        resp.json.return_value = {
-            "content": [{"type": "text", "text": "ok"}],
-            "usage": {"input_tokens": 12, "output_tokens": 2},
-        }
-        return resp
+def _anthropic_ok():
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {
+        "content": [{"type": "text", "text": "ok"}],
+        "usage": {"input_tokens": 12, "output_tokens": 2},
+    }
+    return resp
 
-    def _openai_resp(self):
-        resp = MagicMock(status_code=200)
-        resp.json.return_value = {
-            "choices": [{"message": {"content": "ok"}}],
-            "usage": {"prompt_tokens": 12, "completion_tokens": 2},
-        }
-        return resp
 
+def _openai_ok():
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 12, "completion_tokens": 2},
+    }
+    return resp
+
+
+ANTHROPIC_OK_JSON = {
+    "content": [{"type": "text", "text": "ok"}],
+    "usage": {"input_tokens": 12, "output_tokens": 2},
+}
+ANTHROPIC_HEADERS = [
+    ("x-api-key", "sk-test-key"),
+    ("anthropic-version", "2023-06-01"),
+    ("content-type", "application/json"),
+]
+OPENAI_HEADERS = [
+    ("Authorization", "Bearer sk-test-key"),
+    ("content-type", "application/json"),
+]
+DEFAULT_BODY = (
+    '{"model": "claude-3-haiku", "max_tokens": 512, '
+    '"messages": [{"role": "user", "content": "hi"}]}'
+)
+HI = [{"role": "user", "content": "hi"}]
+
+
+class TestCallWithThinking:
     @patch("api_relay_audit.client.httpx.post")
-    def test_anthropic_body_carries_thinking_and_temperature(self, mock_post, client):
-        mock_post.return_value = self._anthropic_resp()
+    def test_anthropic_body_carries_thinking(self, mock_post, client):
+        mock_post.return_value = _anthropic_ok()
         client._format = "anthropic"
-        result = client.call([{"role": "user", "content": "x"}], max_tokens=100,
-                             with_thinking=True, temperature=0)
+        result = client.call(HI, max_tokens=100, with_thinking=True)
         body = mock_post.call_args[1]["json"]
         assert body["thinking"] == {"type": "enabled", "budget_tokens": 99}
-        assert body["temperature"] == 0
         assert result["text"] == "ok"
 
     @patch("api_relay_audit.client.httpx.post")
-    def test_openai_body_carries_temperature_but_not_thinking(self, mock_post, client):
-        mock_post.return_value = self._openai_resp()
+    def test_openai_body_ignores_thinking(self, mock_post, client):
+        mock_post.return_value = _openai_ok()
         client._format = "openai"
-        client.call([{"role": "user", "content": "x"}], max_tokens=100,
-                    with_thinking=True, temperature=0)
+        client.call(HI, max_tokens=100, with_thinking=True)
         body = mock_post.call_args[1]["json"]
-        assert body["temperature"] == 0
         assert "thinking" not in body
 
     @patch("api_relay_audit.client.httpx.post")
-    def test_anthropic_defaults_add_neither_field(self, mock_post, client):
-        mock_post.return_value = self._anthropic_resp()
-        client._format = "anthropic"
-        client.call([{"role": "user", "content": "x"}])
-        body = mock_post.call_args[1]["json"]
-        assert "thinking" not in body
-        assert "temperature" not in body
-
-    @patch("api_relay_audit.client.httpx.post")
-    def test_openai_defaults_add_neither_field(self, mock_post, client):
-        mock_post.return_value = self._openai_resp()
-        client._format = "openai"
-        client.call([{"role": "user", "content": "x"}])
-        body = mock_post.call_args[1]["json"]
-        assert "thinking" not in body
-        assert "temperature" not in body
-
-    @patch("api_relay_audit.client.httpx.post")
-    def test_anthropic_temperature_without_thinking(self, mock_post, client):
-        mock_post.return_value = self._anthropic_resp()
-        client._call_anthropic([{"role": "user", "content": "x"}], temperature=0.7)
-        body = mock_post.call_args[1]["json"]
-        assert body["temperature"] == 0.7
-        assert "thinking" not in body
-
-    @patch("api_relay_audit.client.httpx.post")
-    def test_auto_detection_threads_thinking_and_temperature(self, mock_post, client):
-        mock_post.return_value = self._anthropic_resp()
-        client.call([{"role": "user", "content": "x"}], max_tokens=50,
-                    with_thinking=True, temperature=0)
+    def test_auto_detection_threads_thinking(self, mock_post, client):
+        mock_post.return_value = _anthropic_ok()
+        client.call(HI, max_tokens=50, with_thinking=True)
         assert client.detected_format == "anthropic"
         body = mock_post.call_args[1]["json"]
         assert body["thinking"] == {"type": "enabled", "budget_tokens": 49}
-        assert body["temperature"] == 0
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_auto_detect_fallback_to_openai_drops_thinking(self, mock_post, client):
+        empty = MagicMock(status_code=200)
+        empty.json.return_value = {"content": [{"type": "text", "text": ""}], "usage": {}}
+        mock_post.side_effect = [empty, _openai_ok()]
+        result = client.call(HI, max_tokens=100, with_thinking=True)
+        assert result["text"] == "ok"
+        assert client.detected_format == "openai"
+        first, second = (c[1]["json"] for c in mock_post.call_args_list)
+        assert first["thinking"] == {"type": "enabled", "budget_tokens": 99}
+        assert "thinking" not in second
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_ssl_retry_keeps_thinking_on_curl(self, mock_post, client):
+        mock_post.side_effect = Exception("SSL: CERTIFICATE_VERIFY_FAILED")
+        with patch.object(client, "_curl_post", return_value=ANTHROPIC_OK_JSON) as curl:
+            result = client.call(HI, max_tokens=100, with_thinking=True)
+        assert result["text"] == "ok"
+        assert client._use_curl is True
+        assert curl.call_args[0][2]["thinking"] == {"type": "enabled", "budget_tokens": 99}
 
     def test_thinking_config_shared_with_stream_call(self):
         from api_relay_audit.client import _thinking_config
@@ -703,12 +715,76 @@ class TestCallThinkingAndTemperature:
         assert _thinking_config(1) == {"type": "enabled", "budget_tokens": 1}
 
     @patch("api_relay_audit.client.httpx.post")
-    def test_transparent_log_records_thinking_and_temperature(self, mock_post, client):
-        mock_post.return_value = self._anthropic_resp()
+    def test_transparent_log_records_thinking(self, mock_post, client):
+        mock_post.return_value = _anthropic_ok()
         client._format = "anthropic"
         with patch.object(client, "_log_transparent") as log:
-            client.call([{"role": "user", "content": "x"}], max_tokens=100,
-                        with_thinking=True, temperature=0)
+            client.call(HI, max_tokens=100, with_thinking=True)
         logged = json.loads(log.call_args[0][3])
-        assert logged["temperature"] == 0
         assert logged["thinking"] == {"type": "enabled", "budget_tokens": 99}
+
+
+class TestDefaultRequestBytesUnchanged:
+    """Default calls must send byte-identical bodies and headers to v2.5.0."""
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_anthropic_locked(self, mock_post, client):
+        mock_post.return_value = _anthropic_ok()
+        client._format = "anthropic"
+        client.call(HI, system="Be brief")
+        args, kwargs = mock_post.call_args
+        assert args[0] == "https://relay.example.com/v1/messages"
+        assert json.dumps(kwargs["json"]) == (
+            '{"model": "claude-3-haiku", "max_tokens": 512, '
+            '"messages": [{"role": "user", "content": "hi"}], "system": "Be brief"}'
+        )
+        assert list(kwargs["headers"].items()) == ANTHROPIC_HEADERS
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_openai_locked(self, mock_post, client):
+        mock_post.return_value = _openai_ok()
+        client._format = "openai"
+        client.call(HI, system="Be brief")
+        args, kwargs = mock_post.call_args
+        assert args[0] == "https://relay.example.com/v1/chat/completions"
+        assert json.dumps(kwargs["json"]) == (
+            '{"model": "claude-3-haiku", "max_tokens": 512, '
+            '"messages": [{"role": "system", "content": "Be brief"}, '
+            '{"role": "user", "content": "hi"}]}'
+        )
+        assert list(kwargs["headers"].items()) == OPENAI_HEADERS
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_auto_detect_fallback_to_openai(self, mock_post, client):
+        empty = MagicMock(status_code=200)
+        empty.json.return_value = {"content": [{"type": "text", "text": ""}], "usage": {}}
+        mock_post.side_effect = [empty, _openai_ok()]
+        client.call(HI)
+        (a_args, a_kwargs), (o_args, o_kwargs) = mock_post.call_args_list
+        assert a_args[0] == "https://relay.example.com/v1/messages"
+        assert json.dumps(a_kwargs["json"]) == DEFAULT_BODY
+        assert list(a_kwargs["headers"].items()) == ANTHROPIC_HEADERS
+        assert o_args[0] == "https://relay.example.com/v1/chat/completions"
+        assert json.dumps(o_kwargs["json"]) == DEFAULT_BODY
+        assert list(o_kwargs["headers"].items()) == OPENAI_HEADERS
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_ssl_retry_via_curl(self, mock_post, client):
+        mock_post.side_effect = Exception("SSL: CERTIFICATE_VERIFY_FAILED")
+        with patch.object(client, "_curl_post", return_value=ANTHROPIC_OK_JSON) as curl:
+            client.call(HI)
+        url, headers, body = curl.call_args[0]
+        assert url == "https://relay.example.com/v1/messages"
+        assert json.dumps(body) == DEFAULT_BODY
+        assert list(headers.items()) == ANTHROPIC_HEADERS
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_transparent_log_request_body(self, mock_post, client):
+        mock_post.return_value = _anthropic_ok()
+        client._format = "anthropic"
+        with patch.object(client, "_log_transparent") as log:
+            client.call(HI)
+        assert log.call_args[0][3] == (
+            '{"model": "claude-3-haiku", "max_tokens": 512, '
+            '"messages": [{"role": "user", "content": "hi"}], "system": ""}'
+        )

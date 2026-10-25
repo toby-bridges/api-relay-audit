@@ -2,9 +2,11 @@
 
 Three layers:
 
-1. ``compare_stream_nonstream()`` - the pure comparison (no I/O).
-2. ``_populate_stream_signals()`` - the new ``text`` / ``stop_reason``
-   capture on ``StreamSignals``.
+1. ``compare_stream_nonstream()`` - the pure comparison (no I/O). Only
+   input_tokens and the streamed stop_reason decide the verdict; text
+   similarity and output_tokens are notes.
+2. ``_populate_stream_signals()`` - the ``text`` / ``stop_reason`` capture on
+   ``StreamSignals``.
 3. ``test_stream_integrity()`` in both distributions - the parity section
    must never change Step 10's return value or summary flags.
 """
@@ -52,7 +54,7 @@ def _stream(text="ok", input_tokens=20, output_tokens=5, stop_reason="end_turn")
     s.delta_types = ["text_delta"]
     s.message_start_model = "claude-opus-4-6"
     s.input_tokens = input_tokens
-    s.output_tokens_samples = [1, output_tokens] if output_tokens else []
+    s.output_tokens_samples = [output_tokens] if output_tokens else []
     s.raw_event_count = 6
     s.text = text
     s.stop_reason = stop_reason
@@ -85,7 +87,12 @@ class TestCompareStreamNonstream:
         assert result["stop_reason_valid"] is True
         assert result["notes"] == []
 
-    def test_similar_text_above_threshold_is_consistent(self):
+    def test_case_and_punctuation_are_normalized(self):
+        result = compare_stream_nonstream(_stream(text="ok"), _nonstream(text=" OK. "))
+        assert result["similarity"] == 1.0
+        assert result["verdict"] == "consistent"
+
+    def test_similar_text_is_consistent(self):
         result = compare_stream_nonstream(
             _stream(text="The quick brown fox jumps over the lazy dog."),
             _nonstream(text="The quick brown fox jumped over the lazy dog."),
@@ -93,13 +100,13 @@ class TestCompareStreamNonstream:
         assert PARITY_SIMILARITY_MIN <= result["similarity"] < 1.0
         assert result["verdict"] == "consistent"
 
-    def test_clearly_different_text_is_divergent(self):
+    def test_text_difference_is_noted_not_scored(self):
         result = compare_stream_nonstream(
             _stream(text="ok"),
             _nonstream(text="I am a large language model trained by another lab."),
         )
         assert result["similarity"] < PARITY_SIMILARITY_MIN
-        assert result["verdict"] == "divergent"
+        assert result["verdict"] == "consistent"
         assert any("similarity" in note for note in result["notes"])
 
     def test_input_token_gap_beyond_tolerance_is_divergent(self):
@@ -129,20 +136,35 @@ class TestCompareStreamNonstream:
         assert result["stop_reason_valid"] is False
         assert result["verdict"] == "divergent"
 
-    def test_output_token_gap_beyond_tolerance_is_divergent(self):
+    @pytest.mark.parametrize("stop_reason", ["refusal", "pause_turn"])
+    def test_refusal_and_pause_turn_are_valid(self, stop_reason):
+        result = compare_stream_nonstream(_stream(stop_reason=stop_reason), _nonstream())
+        assert result["stop_reason_valid"] is True
+        assert result["verdict"] == "consistent"
+
+    def test_output_token_gap_is_noted_not_scored(self):
         result = compare_stream_nonstream(
             _stream(output_tokens=5), _nonstream(output_tokens=40),
         )
         assert result["output_tokens_delta"] == -35
         assert result["output_tokens_tolerance"] == int(PARITY_OUTPUT_TOKEN_FRAC * 40)
-        assert result["verdict"] == "divergent"
+        assert result["verdict"] == "consistent"
+        assert any("output_tokens differ" in note for note in result["notes"])
 
-    def test_small_output_gap_within_floor_is_consistent(self):
+    def test_small_output_gap_uses_floor(self):
         result = compare_stream_nonstream(
             _stream(output_tokens=2), _nonstream(output_tokens=5),
         )
         assert result["output_tokens_tolerance"] == PARITY_OUTPUT_TOKEN_FLOOR
+        assert result["notes"] == []
+
+    def test_output_skipped_without_message_delta(self):
+        signals = _stream(output_tokens=1)
+        signals.has_message_delta = False
+        result = compare_stream_nonstream(signals, _nonstream(output_tokens=40))
+        assert result["output_tokens_delta"] is None
         assert result["verdict"] == "consistent"
+        assert any("output_tokens not reported" in note for note in result["notes"])
 
     def test_nonstream_failure_is_inconclusive(self):
         result = compare_stream_nonstream(_stream(), {"error": "HTTP 500", "time": 0.2})
@@ -176,6 +198,17 @@ class TestCompareStreamNonstream:
         assert result["verdict"] == "consistent"
         assert any("input_tokens not reported" in note for note in result["notes"])
 
+    def test_malformed_stream_fields_do_not_raise(self):
+        signals = _stream()
+        signals.text = 123
+        signals.stop_reason = ["end_turn"]
+        signals.output_tokens_samples = "bad"
+        result = compare_stream_nonstream(signals, _nonstream())
+        assert result["verdict"] == "inconclusive"
+        assert result["stop_reason"] is None
+        assert result["stop_reason_valid"] is False
+        assert result["output_tokens_delta"] is None
+
     def test_result_keys(self):
         result = compare_stream_nonstream(_stream(), _nonstream())
         assert {
@@ -190,6 +223,7 @@ class TestCompareStreamNonstream:
         assert PARITY_OUTPUT_TOKEN_FLOOR == 3
         assert PARITY_VALID_STOP_REASONS == {
             "end_turn", "max_tokens", "stop_sequence", "tool_use",
+            "pause_turn", "refusal",
         }
 
 
@@ -225,6 +259,17 @@ class TestPopulateParitySignals:
         )
         assert signals.stop_reason == "end_turn"
         assert signals.output_tokens_samples == [4]
+
+    def test_message_start_usage_is_not_an_output_sample(self):
+        signals = StreamSignals()
+        _populate_stream_signals(
+            {"type": "message_start",
+             "message": {"model": "claude-opus-4-6",
+                         "usage": {"input_tokens": 20, "output_tokens": 1}}},
+            signals,
+        )
+        assert signals.input_tokens == 20
+        assert signals.output_tokens_samples == []
 
     def test_malformed_parity_fields_are_ignored(self):
         signals = StreamSignals()
@@ -304,7 +349,7 @@ class TestStep10ParityWiring:
         assert client.calls == expected
 
     def test_consistent_parity_is_reported(self, audit_module):
-        client = _FakeClient(_stream(), nonstream=_nonstream())
+        client = _FakeClient(_stream(), nonstream=_nonstream(text="OK."))
         result, report, body = _run(audit_module, client)
         assert result == ("clean", False)
         assert "### Stream / non-stream parity (informational)" in body
@@ -344,9 +389,23 @@ class TestStep10ParityWiring:
         assert client.calls == []
         assert "| Observed parity | inconclusive | not scored |" in body
 
+    def test_stream_events_without_text_send_no_request(self, audit_module):
+        client = _FakeClient(_stream(text=""), nonstream=_nonstream())
+        result, report, body = _run(audit_module, client)
+        assert result == ("clean", False)
+        assert client.calls == []
+        assert "| Observed parity | inconclusive | not scored |" in body
+
     def test_non_anthropic_client_sends_no_nonstream_request(self, audit_module):
         client = _FakeClient(_stream(), nonstream=_nonstream(), detected_format="openai")
         result, report, body = _run(audit_module, client)
         assert result == ("clean", False)
         assert client.calls == []
         assert "rather than 'anthropic'" in body
+
+    def test_undetected_format_sends_no_request(self, audit_module):
+        client = _FakeClient(_stream(), nonstream=_nonstream(), detected_format=None)
+        result, report, body = _run(audit_module, client)
+        assert result == ("clean", False)
+        assert client.calls == []
+        assert "format is None rather than 'anthropic'" in body
