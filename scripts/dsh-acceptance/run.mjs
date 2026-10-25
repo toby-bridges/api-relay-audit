@@ -100,10 +100,15 @@ try {
   await stage('bootstrap-pnpm', process.execPath, [npmCli, 'install', '--prefix', tooling, '--save-exact', `pnpm@${PNPM_VERSION}`, '--no-audit', '--no-fund', `--registry=${REGISTRY}`], { timeoutMs: 180_000 })
   const pnpmCli = join(tooling, 'node_modules', 'pnpm', 'bin', 'pnpm.mjs')
   const hooks = {
-    // dsh-win32-process pins 3.1.1; subprocess-local also resolves 3.3.3.
-    // Both execute the reviewed cnoke local-prebuild loader (no downloader).
+    // dsh-win32-process pins 3.1.1; subprocess-local and the other
+    // 0.1.7-rc.2 services resolve 3.3.3 or, since 2026-10-25, 3.3.4.
+    // All three execute the same reviewed cnoke local-prebuild loader
+    // (`node ./cnoke.cjs -P . -D src/koffi --prebuild --release`, no
+    // downloader); pnpm fails the install when a resolved version is not
+    // listed here, so each new koffi patch has to be added explicitly.
     'koffi@3.1.1': true,
     'koffi@3.3.3': true,
+    'koffi@3.3.4': true,
     'node-pty@1.2.0-beta.15': true,
     'protobufjs@7.6.6': true,
     '@google/genai@1.52.0': true,
