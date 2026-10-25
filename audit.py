@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 46f9b4fbb86d6c0f0f0723e089de57fbd2bf93f9f73c817cf488ec7d60d137ba
-# standalone_body_sha256: f2e49feffb9f5604cbc4c5117a87a1ace731e8dff207723f6264c2c4428ee125
+# source_sha256: af1ed8824204130123c059edc2b8a1bd8d28078addf2039014c55a8c4fd73c8d
+# standalone_body_sha256: 4789da6903cefecac52b178b9b87bc042551354eb1011600ab87f714f2e1f11f
 # END GENERATED STANDALONE HEADER
 
 """
@@ -185,14 +185,6 @@ text the user sees looks correct:
    Trailing ``ping`` keepalives are allowed. A graceful HTTP close or a
    generic ``[DONE]`` sentinel does not replace this protocol terminator.
 
-Step 10 also records an informational **stream / non-stream parity**
-observation (:func:`compare_stream_nonstream`): the same request is sent
-once more without streaming. The parity verdict uses ``input_tokens`` and
-the streamed ``stop_reason``; ``output_tokens`` and text similarity are
-recorded as notes only. It never changes the Step 10 verdict or the risk
-matrix; its thresholds are provisional until calibrated against
-direct-upstream baselines.
-
 ## Attribution
 
 The threat model and the specific list of observable signals is
@@ -222,8 +214,6 @@ arXiv:2604.08407, section 4.2. SSE whitelist / usage monotonicity
 layer.
 """
 
-import difflib
-import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -313,12 +303,6 @@ class StreamSignals:
         raw_event_count: Total number of events parsed from the
             stream, including unknown types. Zero means no data was
             received at all — another inconclusive signal.
-        text: Concatenation of every ``text_delta`` ``text`` value, in
-            arrival order (capped by the client's
-            ``MAX_STREAM_TEXT_CHARS``). Used by the informational
-            stream / non-stream parity check.
-        stop_reason: The last non-empty ``delta.stop_reason`` seen in a
-            ``message_delta`` event, or ``None``.
     """
 
     # Ordered event type sequence (for whitelist check)
@@ -351,10 +335,6 @@ class StreamSignals:
     transport_error: Optional[str] = None
     total_duration_seconds: Optional[float] = None
     raw_event_count: int = 0
-
-    # Content and terminal signals (stream / non-stream parity)
-    text: str = ""
-    stop_reason: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -611,240 +591,6 @@ def analyze_stream(signals: "StreamSignals") -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Stream / non-stream parity (informational, v2.6 P1)
-# ---------------------------------------------------------------------------
-
-# All parity thresholds below are provisional, uncalibrated defaults. They
-# need at least five relay dogfood runs plus one direct-upstream baseline with
-# zero false positives before the parity result may feed any scored dimension.
-#
-# Only two checks decide the parity verdict, because neither depends on
-# sampling: input_tokens across modes and the streamed stop_reason. Text
-# similarity and output_tokens are recorded as notes only: no sampling
-# parameters are sent, so the reply text varies between samples, and with
-# thinking enabled output_tokens include thinking tokens that differ from run
-# to run.
-
-# Verdict: max absolute input_tokens difference between the stream and the
-# non-stream reply to the same request (provisional, uncalibrated).
-PARITY_INPUT_TOKEN_TOLERANCE = 3
-# Verdict: stop_reason values the streamed message_delta may legitimately
-# carry.
-PARITY_VALID_STOP_REASONS = frozenset({
-    "end_turn",
-    "max_tokens",
-    "stop_sequence",
-    "tool_use",
-    "pause_turn",
-    "refusal",
-})
-# Note only: min difflib.SequenceMatcher ratio between the two normalized
-# reply texts (provisional, uncalibrated).
-PARITY_SIMILARITY_MIN = 0.85
-# Note only: output_tokens may differ by at most this fraction of the larger
-# of the two counts, but never less than the floor (provisional,
-# uncalibrated).
-PARITY_OUTPUT_TOKEN_FRAC = 0.5
-PARITY_OUTPUT_TOKEN_FLOOR = 3
-# Only this many leading characters of each normalized text are compared,
-# which bounds the difflib cost on a relay that returns far more text than
-# requested.
-PARITY_MAX_COMPARE_CHARS = 4000
-
-
-def _parity_positive_int(value) -> Optional[int]:
-    """Return ``value`` if it is a positive int, else ``None``.
-
-    The client reports a missing usage block as ``0``, so zero means
-    "not reported" here rather than a real count.
-    """
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        return None
-    return value
-
-
-def _parity_last_int(samples) -> Optional[int]:
-    """Return the last sample if it is a positive int, else ``None``."""
-    if not isinstance(samples, list) or not samples:
-        return None
-    return _parity_positive_int(samples[-1])
-
-
-def _parity_normalize_text(text) -> str:
-    """Casefold, drop punctuation and collapse whitespace before comparing.
-
-    Non-string input normalizes to ``""``.
-    """
-    if not isinstance(text, str):
-        return ""
-    kept = "".join(
-        ch for ch in text.casefold()
-        if not unicodedata.category(ch).startswith("P")
-    )
-    return " ".join(kept.split())
-
-
-def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
-    """Compare a Step 10 stream with a non-stream reply to the same request.
-
-    Concept inspired by canarybyte/veridrop integrity.py (AGPL-3.0);
-    reimplemented with stdlib.
-
-    ``signals`` is the populated :class:`StreamSignals`; ``nonstream`` is the
-    dict returned by :meth:`api_relay_audit.client.APIClient.call` (``text``,
-    ``input_tokens``, ``output_tokens``, or ``error`` on failure).
-
-    Returns a dict with these keys:
-
-    - ``verdict``: ``"consistent"`` / ``"divergent"`` / ``"inconclusive"``
-    - ``input_tokens_delta``: stream minus non-stream ``input_tokens``, or
-      ``None`` when either side did not report it
-    - ``output_tokens_delta``: final streamed ``output_tokens`` (read from
-      ``message_delta`` events only) minus non-stream ``output_tokens``, or
-      ``None``
-    - ``output_tokens_tolerance``: the note-only output tolerance for this
-      pair, or ``None``
-    - ``similarity``: ``difflib.SequenceMatcher`` ratio of the two texts after
-      casefolding, dropping punctuation and collapsing whitespace (0.0 to
-      1.0, rounded to 3 places), or ``None`` when either text is missing
-    - ``stop_reason``: the streamed ``stop_reason`` or ``None``
-    - ``stop_reason_valid``: bool, streamed ``stop_reason`` is in
-      :data:`PARITY_VALID_STOP_REASONS`
-    - ``notes``: list of human-readable observations
-
-    Verdict priority (first match wins):
-
-    1. **inconclusive**: the non-stream request failed, the stream had a
-       transport error, or input_tokens is missing on both sides.
-    2. **divergent**: input_tokens differ by more than
-       :data:`PARITY_INPUT_TOKEN_TOLERANCE`, or the streamed ``stop_reason``
-       is missing or not a known value. An input_tokens count missing on
-       only one side skips that check with a note.
-    3. **consistent**: neither of the above.
-
-    Text similarity and output_tokens never decide the verdict; they are
-    returned and, when outside their provisional bounds, noted. An empty
-    reply text on either side only skips the similarity, with a note. Both
-    requests run without sampling parameters, so the text varies between
-    samples, and output_tokens include thinking tokens.
-
-    Informational only: callers must not feed the verdict into Step 10's
-    verdict or the risk matrix. Pure and deterministic, no I/O.
-    """
-    if not isinstance(nonstream, dict):
-        nonstream = {"error": f"unexpected non-stream result type {type(nonstream).__name__}"}
-    failed = "error" in nonstream
-    notes = []
-
-    stream_text = signals.text.strip() if isinstance(signals.text, str) else ""
-    nonstream_text = nonstream.get("text")
-    nonstream_text = nonstream_text.strip() if isinstance(nonstream_text, str) else ""
-
-    # input_tokens (verdict): message_start first, message_delta as fallback.
-    stream_input = _parity_positive_int(signals.input_tokens)
-    if stream_input is None:
-        stream_input = _parity_last_int(signals.message_delta_input_tokens_samples)
-    nonstream_input = _parity_positive_int(nonstream.get("input_tokens"))
-    input_delta = None
-    input_ok = True
-    if stream_input is not None and nonstream_input is not None:
-        input_delta = stream_input - nonstream_input
-        input_ok = abs(input_delta) <= PARITY_INPUT_TOKEN_TOLERANCE
-        if not input_ok:
-            notes.append(
-                f"input_tokens differ across modes: stream {stream_input}, "
-                f"non-stream {nonstream_input} (tolerance "
-                f"{PARITY_INPUT_TOKEN_TOLERANCE})"
-            )
-    elif (stream_input is None) != (nonstream_input is None) and not failed:
-        notes.append("input_tokens missing on one side; check skipped")
-
-    # output_tokens (note only): the final cumulative value, and only when a
-    # message_delta event carried it.
-    stream_output = None
-    if signals.has_message_delta:
-        stream_output = _parity_last_int(signals.output_tokens_samples)
-    nonstream_output = _parity_positive_int(nonstream.get("output_tokens"))
-    output_delta = None
-    output_tolerance = None
-    if stream_output is not None and nonstream_output is not None:
-        output_delta = stream_output - nonstream_output
-        output_tolerance = max(
-            PARITY_OUTPUT_TOKEN_FLOOR,
-            int(PARITY_OUTPUT_TOKEN_FRAC * max(stream_output, nonstream_output)),
-        )
-        if abs(output_delta) > output_tolerance:
-            notes.append(
-                f"output_tokens differ across modes: stream {stream_output}, "
-                f"non-stream {nonstream_output} (note only, tolerance "
-                f"{output_tolerance}; thinking tokens vary between runs)"
-            )
-    elif not failed:
-        notes.append(
-            "output_tokens not reported by both a stream message_delta and "
-            "the non-stream reply; not compared"
-        )
-
-    # Text similarity (note only), on normalized text.
-    similarity = None
-    if stream_text and nonstream_text:
-        a_full = _parity_normalize_text(stream_text)
-        b_full = _parity_normalize_text(nonstream_text)
-        a = a_full[:PARITY_MAX_COMPARE_CHARS]
-        b = b_full[:PARITY_MAX_COMPARE_CHARS]
-        if len(a_full) > len(a) or len(b_full) > len(b):
-            notes.append(
-                f"texts compared on their first {PARITY_MAX_COMPARE_CHARS} "
-                "normalized characters"
-            )
-        # autojunk=False: the default heuristic drops frequent characters
-        # from texts of 200+ characters and can deflate the ratio. For
-        # shorter texts the result is identical to the default.
-        similarity = difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
-
-    stop_reason = signals.stop_reason if isinstance(signals.stop_reason, str) else None
-    stop_reason_valid = stop_reason in PARITY_VALID_STOP_REASONS
-
-    result = {
-        "verdict": "inconclusive",
-        "input_tokens_delta": input_delta,
-        "output_tokens_delta": output_delta,
-        "output_tokens_tolerance": output_tolerance,
-        "similarity": round(similarity, 3) if similarity is not None else None,
-        "stop_reason": stop_reason,
-        "stop_reason_valid": stop_reason_valid,
-        "notes": notes,
-    }
-
-    if failed:
-        notes.insert(0, f"Non-stream request unavailable: {str(nonstream['error'])[:200]}")
-        return result
-    if signals.transport_error:
-        notes.insert(0, f"Stream transport error: {str(signals.transport_error)[:200]}")
-        return result
-    if stream_input is None and nonstream_input is None:
-        notes.insert(0, "input_tokens missing on both sides; parity not decided")
-        return result
-
-    if not stream_text or not nonstream_text:
-        side = "one side" if (stream_text or nonstream_text) else "both sides"
-        notes.append(f"text missing on {side}; similarity not computed")
-    elif similarity < PARITY_SIMILARITY_MIN:
-        notes.append(
-            f"normalized text similarity {similarity:.3f} is below "
-            f"{PARITY_SIMILARITY_MIN} (note only; replies vary between samples)"
-        )
-    if not stop_reason_valid:
-        notes.append(
-            f"streamed stop_reason {stop_reason!r} is not one of "
-            f"{sorted(PARITY_VALID_STOP_REASONS)}"
-        )
-
-    result["verdict"] = "consistent" if (input_ok and stop_reason_valid) else "divergent"
-    return result
-
-
 # ============================================================
 # Standalone curl transport facade
 # ============================================================
@@ -1085,24 +831,6 @@ def _extract_anthropic_text(content) -> str:
     return "".join(parts)
 
 
-def _thinking_config(max_tokens: int) -> dict:
-    """Return the ``thinking`` request field shared by :meth:`APIClient.call`
-    and :meth:`APIClient.stream_call`.
-
-    ``thinking.budget_tokens`` must be strictly less than ``max_tokens``.
-    Keeping one builder means a stream / non-stream request pair always
-    asks for the same thinking configuration.
-    """
-    return {"type": "enabled", "budget_tokens": max(1, max_tokens - 1)}
-
-
-def _optional_call_kwargs(with_thinking=False) -> dict:
-    """Return ``with_thinking`` as a keyword argument only when set, so a
-    default call keeps its original ``(messages, system, max_tokens)`` shape
-    all the way down to the format-specific helpers."""
-    return {"with_thinking": True} if with_thinking else {}
-
-
 def _parse_curl_i_output(output: str) -> dict:
     """Parse ``curl -i`` (or ``curl -sk -i``) stdout into a response dict.
 
@@ -1210,9 +938,6 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 
             if delta_type == "text_delta":
                 signals.has_text_delta = True
-                text = delta.get("text")
-                if isinstance(text, str) and len(signals.text) < MAX_STREAM_TEXT_CHARS:
-                    signals.text = (signals.text + text)[:MAX_STREAM_TEXT_CHARS]
             elif delta_type == "thinking_delta":
                 signals.thinking_delta_seen = True
             elif delta_type == "signature_delta":
@@ -1222,11 +947,6 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 
     elif event_type == "message_delta":
         signals.has_message_delta = True
-        message_delta = event.get("delta", {})
-        if isinstance(message_delta, dict):
-            stop_reason = message_delta.get("stop_reason")
-            if isinstance(stop_reason, str) and stop_reason:
-                signals.stop_reason = stop_reason
         usage = event.get("usage", {})
         if isinstance(usage, dict):
             input_tokens = usage.get("input_tokens")
@@ -1245,9 +965,6 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 # grow memory unboundedly. 1 MB is comfortably above any real
 # Anthropic event size (biggest thinking blocks are ~100 KB).
 MAX_STREAM_BUFFER_BYTES = 1024 * 1024
-# Same idea for StreamSignals.text: bound memory and CPU when a relay streams
-# far more text than requested. 64 KiB is far above Step 10's 100-token probe.
-MAX_STREAM_TEXT_CHARS = 64 * 1024
 CURL_STATUS_SENTINEL = "__CODEX_HTTP_STATUS__:"
 
 
@@ -1417,8 +1134,7 @@ class APIClient:
 
     # -- Anthropic native format ----------------------------------------------
 
-    def _call_anthropic(self, messages, system=None, max_tokens=512,
-                        with_thinking=False):
+    def _call_anthropic(self, messages, system=None, max_tokens=512):
         url = self.base_url
         if url.endswith("/v1"):
             url = url[:-3]
@@ -1427,8 +1143,6 @@ class APIClient:
         body = {"model": self.model, "max_tokens": max_tokens, "messages": messages}
         if system:
             body["system"] = system
-        if with_thinking:
-            body["thinking"] = _thinking_config(max_tokens)
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
@@ -1449,11 +1163,7 @@ class APIClient:
 
     # -- OpenAI compatible format ---------------------------------------------
 
-    def _call_openai(self, messages, system=None, max_tokens=512,
-                     with_thinking=False):
-        # ``with_thinking`` is accepted for signature parity with
-        # ``_call_anthropic`` but ignored: Chat Completions has no standard
-        # ``thinking`` field, and strict endpoints reject unknown fields.
+    def _call_openai(self, messages, system=None, max_tokens=512):
         url = self.base_url
         if not url.endswith("/v1"):
             url += "/v1"
@@ -1509,7 +1219,7 @@ class APIClient:
         except Exception:
             pass
 
-    def call(self, messages, system=None, max_tokens=512, with_thinking=False):
+    def call(self, messages, system=None, max_tokens=512):
         """Send a chat completion request, auto-detecting format on first call.
 
         The method records wall-clock elapsed time and attaches it as the
@@ -1522,9 +1232,6 @@ class APIClient:
                 ``"system"`` field (Anthropic) or as a system-role message
                 (OpenAI).
             max_tokens: Maximum tokens to generate. Defaults to 512.
-            with_thinking: If True, send the same ``thinking`` block that
-                :meth:`stream_call` sends. Anthropic format only; the
-                OpenAI-compatible body ignores it. Defaults to False.
 
         Returns:
             A dict with the following keys on success:
@@ -1544,15 +1251,10 @@ class APIClient:
             ...     print(result["text"])
         """
         start = time.time()
-        logged_request = {"model": self.model, "max_tokens": max_tokens,
-                          "messages": messages, "system": system or ""}
-        if with_thinking:
-            logged_request["thinking"] = _thinking_config(max_tokens)
-        request_body = json.dumps(logged_request)
+        request_body = json.dumps({"model": self.model, "max_tokens": max_tokens,
+                                   "messages": messages, "system": system or ""})
         try:
-            result = self._call_with_detection(
-                messages, system, max_tokens,
-                **_optional_call_kwargs(with_thinking))
+            result = self._call_with_detection(messages, system, max_tokens)
             result["time"] = time.time() - start
             # v1.7.7 transparent-log
             self._log_transparent(
@@ -1580,19 +1282,17 @@ class APIClient:
             base = base[:-3]
         return base + "/v1/messages"
 
-    def _call_with_detection(self, messages, system, max_tokens,
-                             with_thinking=False):
-        extra = _optional_call_kwargs(with_thinking)
+    def _call_with_detection(self, messages, system, max_tokens):
         # Already detected — use that format
         if self._format == "openai":
-            return self._call_openai(messages, system, max_tokens, **extra)
+            return self._call_openai(messages, system, max_tokens)
         if self._format == "anthropic":
-            return self._call_anthropic(messages, system, max_tokens, **extra)
+            return self._call_anthropic(messages, system, max_tokens)
 
         # Auto-detect: try Anthropic first
         anthropic_result = None
         try:
-            anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
+            anthropic_result = self._call_anthropic(messages, system, max_tokens)
             if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                 self._format = "anthropic"
                 self._log("  [format] -> Anthropic native")
@@ -1601,7 +1301,7 @@ class APIClient:
             if self._handle_ssl_error(e):
                 # Retry Anthropic with curl before falling through to OpenAI
                 try:
-                    anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
+                    anthropic_result = self._call_anthropic(messages, system, max_tokens)
                     if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                         self._format = "anthropic"
                         self._log("  [format] -> Anthropic native (curl)")
@@ -1613,7 +1313,7 @@ class APIClient:
         self._log("  [format] Anthropic failed/empty, trying OpenAI...")
         openai_result = None
         try:
-            openai_result = self._call_openai(messages, system, max_tokens, **extra)
+            openai_result = self._call_openai(messages, system, max_tokens)
             if "error" not in openai_result and openai_result.get("text", "").strip():
                 self._format = "openai"
                 suffix = " (curl)" if self._use_curl else ""
@@ -1621,7 +1321,7 @@ class APIClient:
                 return openai_result
         except Exception as e:
             if self._handle_ssl_error(e):
-                return self._call_with_detection(messages, system, max_tokens, **extra)
+                return self._call_with_detection(messages, system, max_tokens)
 
         # Both failed — return whichever has more info
         if anthropic_result and "error" not in anthropic_result:
@@ -1866,7 +1566,10 @@ class APIClient:
             body["system"] = system
         if with_thinking:
             # thinking.budget_tokens must be strictly less than max_tokens
-            body["thinking"] = _thinking_config(max_tokens)
+            body["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": max(1, max_tokens - 1),
+            }
 
         headers = {
             "x-api-key": self.api_key,
@@ -4928,6 +4631,12 @@ AGPL-3.0; algorithm reproduced from observed behavior, not source code):
              a native Anthropic message id with no other signal implies a
              transparent relay (returns 0.5 confidence)
 
+OpenAI-format usage fingerprint (v2.6): when the client already detected
+OpenAI-compatible format, Step 14 also sends one minimal chat-completions
+call and checks the key names of its `usage` object for foreign-upstream
+residue (``classify_openai_usage``, Tier 1, labels ``anthropic-translated``
+and ``foreign-usage-source``).
+
 Informational only: result does NOT feed the 6D risk matrix. Channel labels
 like aws-bedrock or anthropic-official are legitimate serving paths; they
 become a fraud signal only when combined with Step 5 identity substitution
@@ -5137,6 +4846,145 @@ def classify_channel(headers, message_id, raw_body):
 
 
 # ----------------------------------------------------------------------
+# OpenAI-format usage fingerprint (Tier 1, informational, v2.6)
+# ----------------------------------------------------------------------
+#
+# Official Chat Completions usage is {prompt_tokens, completion_tokens,
+# total_tokens} plus optional *_details objects. Anthropic-shaped keys in
+# that object are residue left by a relay that translates an Anthropic
+# upstream response into OpenAI format. A declared non-openai
+# ``usage_source`` is a self-reported marker, surfaced only sanitized.
+OPENAI_USAGE_TRANSLATED_LABEL = "anthropic-translated"
+OPENAI_USAGE_FOREIGN_SOURCE_LABEL = "foreign-usage-source"
+OPENAI_USAGE_CLAUDE_CACHE_PREFIX = "claude_cache_creation"
+OPENAI_USAGE_ANTHROPIC_PAIR = ("input_tokens", "output_tokens")
+OPENAI_USAGE_OPENAI_PAIR = ("prompt_tokens", "completion_tokens")
+OPENAI_USAGE_ANTHROPIC_ONLY_KEYS = (
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "cache_creation",
+)
+OPENAI_USAGE_WEAK_PAIR_EVIDENCE = "usage_keys:input_output_pair"
+# usage_source is the only usage value ever surfaced. It and every key name
+# shown in a report are reduced to this character set and length first.
+OPENAI_USAGE_SOURCE_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
+OPENAI_USAGE_SOURCE_MAX_LEN = 32
+OPENAI_USAGE_REPORT_KEY_LIMIT = 8
+
+
+def _sanitize_usage_text(value):
+    """Reduce a usage key name or ``usage_source`` value to a safe token."""
+    return OPENAI_USAGE_SOURCE_UNSAFE.sub("", str(value))[:OPENAI_USAGE_SOURCE_MAX_LEN]
+
+
+def format_usage_key_list(keys):
+    """Render usage key names for a report cell or flag message.
+
+    Each name is reduced to ``[A-Za-z0-9_.-]`` and cut to 32 characters
+    (``?`` if nothing is left); at most 8 names are listed and the rest
+    are summarized as ``+N more``.
+    """
+    names = [_sanitize_usage_text(k) or "?" for k in keys]
+    text = ", ".join(f"`{k}`" for k in names[:OPENAI_USAGE_REPORT_KEY_LIMIT])
+    if len(names) > OPENAI_USAGE_REPORT_KEY_LIMIT:
+        text += f" +{len(names) - OPENAI_USAGE_REPORT_KEY_LIMIT} more"
+    return text
+
+
+def classify_openai_usage(usage):
+    """Flag foreign-upstream residue in an OpenAI-format ``usage`` object.
+
+    Concept inspired by canarybyte/veridrop protocol_templates.py (AGPL-3.0); reimplemented independently.
+
+    Tier 1, deterministic, confidence 1.0 when any rule fires:
+
+      1. Any key starts with ``claude_cache_creation``
+         -> ``anthropic-translated``.
+      2. ``input_tokens`` and ``output_tokens`` are both present, no
+         ``*_details`` key is present, and either ``prompt_tokens`` /
+         ``completion_tokens`` are absent or an Anthropic-only cache key
+         (``cache_creation_input_tokens``, ``cache_read_input_tokens``,
+         ``cache_creation``) is present -> ``anthropic-translated``.
+         A pair that misses these conditions (zero-padded next to the
+         OpenAI names, or the Responses shape with ``*_details``) only adds
+         the weak evidence ``usage_keys:input_output_pair`` and leaves
+         the channel ``unknown``.
+      3. ``usage_source`` is a string whose sanitized form is not empty and,
+         after strip + lowercase, is not ``openai`` (so ``open ai`` and
+         `` OpenAI `` do not fire) -> ``foreign-usage-source``. The value
+         compared is the value displayed. Non-string values never fire.
+
+    When rule 3 fires together with rule 1 or 2, ``anthropic-translated``
+    is the channel and rule 3 stays in ``evidence``.
+
+    No usage value is returned except ``usage_source_value``: the declared
+    ``usage_source`` reduced to ``[A-Za-z0-9_.-]`` and cut to 32 characters
+    (``None`` when rule 3 did not fire). Key names are returned raw; report
+    code renders them through ``format_usage_key_list``. Non-dict input
+    returns the no-match result instead of raising.
+
+    Returns:
+        dict with keys ``channel`` (``anthropic-translated``,
+        ``foreign-usage-source`` or ``unknown``), ``confidence`` (1.0 or
+        0.0), ``tier`` (1 or None), ``matched_keys`` (key names of fired
+        Tier 1 rules, rule order), ``evidence`` (fixed strings, one per
+        fired rule or weak hint, never values) and ``usage_source_value``.
+    """
+    matched_keys = []
+    evidence = []
+    source_value = None
+    translated = False
+    if isinstance(usage, dict):
+        cache_keys = sorted(
+            k for k in usage
+            if isinstance(k, str) and k.startswith(OPENAI_USAGE_CLAUDE_CACHE_PREFIX)
+        )
+        if cache_keys:
+            translated = True
+            matched_keys.extend(cache_keys)
+            evidence.append(f"usage_key_prefix:{OPENAI_USAGE_CLAUDE_CACHE_PREFIX}")
+        if all(k in usage for k in OPENAI_USAGE_ANTHROPIC_PAIR):
+            has_details = any(
+                isinstance(k, str) and k.endswith("_details") for k in usage
+            )
+            openai_named = any(k in usage for k in OPENAI_USAGE_OPENAI_PAIR)
+            anthropic_only = any(k in usage for k in OPENAI_USAGE_ANTHROPIC_ONLY_KEYS)
+            if not has_details and (not openai_named or anthropic_only):
+                translated = True
+                matched_keys.extend(OPENAI_USAGE_ANTHROPIC_PAIR)
+                evidence.append("usage_keys:input_tokens+output_tokens")
+            else:
+                evidence.append(OPENAI_USAGE_WEAK_PAIR_EVIDENCE)
+        source = usage.get("usage_source")
+        if isinstance(source, str):
+            sanitized = _sanitize_usage_text(source)
+            if sanitized and sanitized.strip().lower() != "openai":
+                matched_keys.append("usage_source")
+                evidence.append("usage_source:non-openai")
+                source_value = sanitized
+    if translated:
+        channel = OPENAI_USAGE_TRANSLATED_LABEL
+    elif source_value is not None:
+        channel = OPENAI_USAGE_FOREIGN_SOURCE_LABEL
+    else:
+        return {
+            "channel": "unknown",
+            "confidence": 0.0,
+            "tier": None,
+            "matched_keys": [],
+            "evidence": evidence,
+            "usage_source_value": None,
+        }
+    return {
+        "channel": channel,
+        "confidence": 1.0,
+        "tier": 1,
+        "matched_keys": matched_keys,
+        "evidence": evidence,
+        "usage_source_value": source_value,
+    }
+
+# ----------------------------------------------------------------------
 # Probe runner
 # ----------------------------------------------------------------------
 #
@@ -5249,6 +5097,55 @@ def run_channel_classifier(client):
         "no-signal" if classification["channel"] == "unknown" else "classified"
     )
     return classification
+
+
+def _coarse_probe_error(error):
+    """Reduce a ``call()`` error to ``HTTP <status>`` or ``transport error``.
+
+    ``call()`` errors embed up to 200 characters of the response body
+    (``HTTP 401: {...}``); nothing of the body may reach the report.
+    """
+    match = re.match(r"\s*HTTP\s+(\d{3})\b", str(error))
+    if match:
+        return f"HTTP {match.group(1)}"
+    return "transport error"
+
+
+def run_openai_usage_probe(client):
+    """Fingerprint the ``usage`` object of one minimal OpenAI-format call.
+
+    Uses the client's normal ``call()`` path with ``max_tokens=4``; Step 14
+    only invokes this when the client already detected OpenAI format, so the
+    request goes to ``/v1/chat/completions``. Never raises.
+
+    Returns the ``classify_openai_usage`` dict plus:
+        usage_keys -- sorted top-level key names of ``usage`` (raw, no values;
+                      render through ``format_usage_key_list``)
+        error      -- ``HTTP <status>`` / ``transport error`` (response body
+                      dropped), or None
+        verdict    -- "classified" (a Tier 1 rule fired), "no-signal" (usage
+                      present, no Tier 1 rule fired) or "inconclusive" (call
+                      failed or the response had no usage object)
+    """
+    try:
+        res = client.call([{"role": "user", "content": "ping"}], max_tokens=4)
+    except Exception:  # call() catches internally; stay defensive
+        res = {"error": "probe-exception"}
+    if not isinstance(res, dict):
+        res = {"error": "probe returned no result"}
+    error = res.get("error")
+    raw = res.get("raw")
+    usage = raw.get("usage") if isinstance(raw, dict) and not error else None
+    result = classify_openai_usage(usage)
+    result["usage_keys"] = sorted(str(k) for k in usage) if isinstance(usage, dict) else []
+    result["error"] = _coarse_probe_error(error) if error else None
+    if error or not isinstance(usage, dict):
+        result["verdict"] = "inconclusive"
+    elif result["matched_keys"]:
+        result["verdict"] = "classified"
+    else:
+        result["verdict"] = "no-signal"
+    return result
 
 
 # ============================================================
@@ -6309,13 +6206,10 @@ def test_stream_integrity(client, report):
         "2026-04-11. See reference_hvoy_relayapi memory for details.\n"
     )
 
-    probe_messages = [{"role": "user", "content": "Reply with the single word: ok"}]
-    probe_max_tokens = 100
-    probe_with_thinking = True
     signals = client.stream_call(
-        probe_messages,
-        max_tokens=probe_max_tokens,
-        with_thinking=probe_with_thinking,
+        [{"role": "user", "content": "Reply with the single word: ok"}],
+        max_tokens=100,
+        with_thinking=True,
     )
     analysis = analyze_stream(signals)
     verdict = analysis["verdict"]
@@ -6371,119 +6265,8 @@ def test_stream_integrity(client, report):
             "identity all passed",
         )
 
-    # Informational only: never changes ``verdict``, emits no flag and does
-    # not feed the risk matrix. The helper never raises.
-    _report_stream_parity(
-        client, report, signals,
-        probe_messages, probe_max_tokens, probe_with_thinking,
-    )
-
     print(f"  Done: stream integrity ({verdict})")
     return verdict, verdict == "inconclusive"
-
-
-def _report_stream_parity(client, report, signals, messages, max_tokens,
-                          with_thinking):
-    """Append Step 10's informational stream / non-stream parity section.
-
-    Sends one non-stream request with the same messages, max_tokens and
-    thinking setting as the Step 10 stream, then compares the pair with
-    :func:`compare_stream_nonstream`. The result is an observation only:
-    it never changes the Step 10 verdict, never calls ``report.flag()`` and
-    never feeds the risk matrix.
-
-    Must not raise: ``_run_step`` would turn an exception into an
-    inconclusive Step 10, so every failure degrades to an inconclusive
-    parity row instead.
-
-    No sampling parameters are sent on either request: current Messages API
-    versions reject temperature / top_p / top_k, so both requests run at the
-    model default. That is why only input_tokens and the streamed
-    stop_reason decide the parity verdict, while text similarity and
-    output_tokens (which include thinking tokens) are recorded as notes.
-    """
-    report.h3("Stream / non-stream parity (informational)")
-    report.p(
-        "Observed comparison between the Step 10 stream and one non-stream "
-        "request with the same messages, max_tokens and thinking setting. "
-        "The parity verdict uses only input_tokens and the streamed "
-        "stop_reason. Text similarity and output_tokens are recorded but do "
-        "not decide it: both requests run at the model's default "
-        "temperature, so the reply text varies between samples, and "
-        "output_tokens include thinking tokens. Informational only: it does "
-        "not change the Step 10 verdict or the risk matrix, and its "
-        "thresholds are provisional and uncalibrated.\n"
-    )
-    try:
-        detected_format = getattr(client, "detected_format", None)
-        stream_text = signals.text if isinstance(signals.text, str) else ""
-        if signals.transport_error or not stream_text.strip():
-            nonstream = {"error": "not sent, because the stream returned no "
-                                  "comparable text"}
-        elif detected_format != "anthropic":
-            # A Chat Completions reply is not comparable with an Anthropic
-            # stream, and an undetected client would auto-detect with a
-            # thinking body and could pin the wrong format for later steps.
-            nonstream = {"error": "not sent, because the non-stream client "
-                                  "format is " + repr(detected_format)
-                                  + " rather than 'anthropic'"}
-        else:
-            nonstream = client.call(
-                messages, max_tokens=max_tokens, with_thinking=with_thinking,
-            )
-        parity = compare_stream_nonstream(signals, nonstream)
-    except Exception as exc:  # informational block must never fail Step 10
-        parity = {
-            "verdict": "inconclusive",
-            "input_tokens_delta": None,
-            "output_tokens_delta": None,
-            "output_tokens_tolerance": None,
-            "similarity": None,
-            "stop_reason": None,
-            "stop_reason_valid": False,
-            "notes": [f"Parity check failed: {type(exc).__name__}: {exc}"[:240]],
-        }
-
-    def _delta(value):
-        return "—" if value is None else f"{value:+d}"
-
-    tolerance = parity.get("output_tokens_tolerance")
-    similarity = parity.get("similarity")
-    if parity["verdict"] == "inconclusive":
-        stop_cell = "—"
-    else:
-        stop_cell = (
-            ("yes" if parity["stop_reason_valid"] else "NO")
-            + f" ({parity.get('stop_reason') or 'missing'})"
-        )
-    report.p("| Metric | Observed | Rule (provisional) |")
-    report.p("|--------|----------|--------------------|")
-    report.p(
-        f"| input_tokens delta (stream - non-stream) | "
-        f"{_delta(parity['input_tokens_delta'])} | "
-        f"verdict: abs <= {PARITY_INPUT_TOKEN_TOLERANCE} |"
-    )
-    report.p(
-        f"| Streamed stop_reason valid | {stop_cell} | verdict: one of "
-        f"{', '.join(sorted(PARITY_VALID_STOP_REASONS))} |"
-    )
-    report.p(
-        f"| output_tokens delta (stream - non-stream) | "
-        f"{_delta(parity['output_tokens_delta'])} | note only: "
-        + (f"abs <= {tolerance}" if tolerance is not None
-           else "abs <= max(3, 50% of the larger count)")
-        + " |"
-    )
-    report.p(
-        "| Text similarity (normalized difflib ratio) | "
-        + ("—" if similarity is None else f"{similarity:.3f}")
-        + f" | note only: >= {PARITY_SIMILARITY_MIN} |"
-    )
-    report.p(f"| Observed parity | {parity['verdict']} | not scored |")
-    if parity["notes"]:
-        report.p("\n**Parity notes (observed)**:")
-        for note in parity["notes"]:
-            report.p(f"- {note}")
 
 
 def test_web3_injection(client, report):
@@ -6943,8 +6726,111 @@ def test_channel_classifier(client, report):
 
     print(f"  Done: channel classifier ({channel}, conf={confidence:.2f}, "
           f"verdict={verdict})")
+    if getattr(client, "detected_format", None) == "openai":
+        try:
+            result["openai_usage"] = _report_openai_usage_fingerprint(client, report)
+        except Exception as exc:  # the add-on must never become a Step 14 crash
+            print(f"step14 usage fingerprint: {type(exc).__name__}",
+                  file=sys.stderr)
+            report.p(
+                "\nUsage fingerprint **inconclusive**: internal error "
+                f"({type(exc).__name__}). Informational only; the audit "
+                "continues."
+            )
+            result["openai_usage"] = {"verdict": "inconclusive",
+                                      "error": type(exc).__name__}
     return result
 
+
+def _report_openai_usage_fingerprint(client, report):
+    """Step 14 add-on for OpenAI-format relays (v2.6, informational).
+
+    Runs only when the client already detected OpenAI-compatible format;
+    the Anthropic path and an undetected format keep the original Step 14
+    behavior (no extra request). One minimal ``client.call()`` with
+    ``max_tokens=4``; its ``usage`` key names are checked by
+    ``classify_openai_usage``. Key names are rendered sanitized and capped
+    by ``format_usage_key_list``; a probe error shows only ``HTTP <status>``
+    or ``transport error``. Not fed into the risk matrix.
+    """
+    report.h3("OpenAI-format usage fingerprint (informational)")
+    report.p(
+        "The client talks to this relay in OpenAI-compatible format, so "
+        "Step 14 also sends one minimal `/v1/chat/completions` call "
+        "(`max_tokens=4`) and checks the key names of its `usage` object. "
+        "Any `claude_cache_creation*` key, or an `input_tokens` + "
+        "`output_tokens` pair that replaces the OpenAI names (or comes with "
+        "Anthropic-only cache keys) and has no `*_details` objects, means "
+        "the relay translates an Anthropic-shaped upstream response (Tier 1, "
+        "`anthropic-translated`). A declared `usage_source` other than "
+        "`openai` is labeled `foreign-usage-source` (Tier 1). Key names are "
+        "sanitized and capped; the only value shown is a sanitized "
+        "`usage_source`. "
+        "**Informational only** -- not fed into the overall risk rating.\n"
+    )
+
+    usage = run_openai_usage_probe(client)
+    verdict = usage["verdict"]
+    keys = format_usage_key_list(usage["usage_keys"])
+    matched = format_usage_key_list(usage["matched_keys"])
+    source = usage.get("usage_source_value")
+    confidence = f"{usage['confidence']:.2f}"
+    if usage["tier"]:
+        confidence += f" (Tier {usage['tier']})"
+
+    report.p("| Field | Value |")
+    report.p("|-------|-------|")
+    if usage["error"]:
+        report.p(f"| probe | ERR: {usage['error']} |")
+    report.p(f"| usage keys | {keys or '—'} |")
+    report.p(f"| matched keys | {matched or '—'} |")
+    if source is not None:
+        report.p(f"| usage_source | `usage_source={source}` |")
+    report.p(f"| evidence | {', '.join(usage['evidence']) or '—'} |")
+    report.p(f"| classified | `{usage['channel']}` |")
+    report.p(f"| confidence | {confidence} |")
+    report.p(f"| verdict | `{verdict}` |")
+
+    if verdict == "classified" and usage["channel"] == "anthropic-translated":
+        report.flag(
+            "green",
+            f"OpenAI-format usage carries Anthropic-translated fields "
+            f"({matched}): the relay converts an Anthropic-shaped upstream "
+            "response into OpenAI format. Expected when the audited model is "
+            "Claude; not by itself fraud -- it matters only if the claimed "
+            "model is not Claude or Steps 5/13 also flag. Informational only, "
+            "not in the risk matrix.",
+        )
+    elif verdict == "classified":
+        report.flag(
+            "green",
+            f"OpenAI-format usage declares a non-openai `usage_source` "
+            f"(`usage_source={source}`). This is a self-reported marker; it "
+            "may name another provider or relay-side token accounting. "
+            "Informational only, not in the risk matrix.",
+        )
+    elif verdict == "no-signal" and OPENAI_USAGE_WEAK_PAIR_EVIDENCE in usage["evidence"]:
+        report.p(
+            "\nWeak naming hint only: `input_tokens` + `output_tokens` appear "
+            "next to OpenAI names or `*_details` objects. Some "
+            "OpenAI-compatible stacks emit this shape, so it is not "
+            "attributed to any upstream. Informational only."
+        )
+    elif verdict == "no-signal":
+        report.p(
+            "\nNo Anthropic-translated or foreign-source usage fields: the "
+            "`usage` object uses standard OpenAI names (or the relay scrubs "
+            "them). Informational only."
+        )
+    else:
+        report.p(
+            "\nUsage fingerprint **inconclusive**: the probe failed or the "
+            "response had no `usage` object. Informational only; the audit "
+            "continues."
+        )
+
+    print(f"  Done: OpenAI usage fingerprint ({verdict})")
+    return usage
 
 # ============================================================
 # Fail-open step wrapper
