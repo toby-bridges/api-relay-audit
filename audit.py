@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: c60862f67f280160be8ed100899c96a22b3995941750243dbcc4f7f69b8c9840
-# standalone_body_sha256: 2cad3032a34c59d6ae9f967a28cf8394eb81902847d846b93b4b7689ff88e331
+# source_sha256: 961363c0ae235839da3ff6e6547a021021f71fc0a31b9314b5b8c71271df03da
+# standalone_body_sha256: 0ccfc0d3c13747216b090eb4832244f41de03b773e64761ed51e7f5db7ace6ad
 # END GENERATED STANDALONE HEADER
 
 """
@@ -4852,16 +4852,43 @@ def classify_channel(headers, message_id, raw_body):
 # Official Chat Completions usage is {prompt_tokens, completion_tokens,
 # total_tokens} plus optional *_details objects. Anthropic-shaped keys in
 # that object are residue left by a relay that translates an Anthropic
-# upstream response into OpenAI format; a non-OpenAI ``usage_source``
-# names another upstream outright.
+# upstream response into OpenAI format. A declared non-openai
+# ``usage_source`` is a self-reported marker, surfaced only sanitized.
 OPENAI_USAGE_TRANSLATED_LABEL = "anthropic-translated"
 OPENAI_USAGE_FOREIGN_SOURCE_LABEL = "foreign-usage-source"
 OPENAI_USAGE_CLAUDE_CACHE_PREFIX = "claude_cache_creation"
 OPENAI_USAGE_ANTHROPIC_PAIR = ("input_tokens", "output_tokens")
-# usage_source is the only usage value ever surfaced; it is reduced to this
-# character set and length before it can reach a report.
+OPENAI_USAGE_OPENAI_PAIR = ("prompt_tokens", "completion_tokens")
+OPENAI_USAGE_ANTHROPIC_ONLY_KEYS = (
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "cache_creation",
+)
+OPENAI_USAGE_WEAK_PAIR_EVIDENCE = "usage_keys:anthropic-style-names"
+# usage_source is the only usage value ever surfaced. It and every key name
+# shown in a report are reduced to this character set and length first.
 OPENAI_USAGE_SOURCE_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
 OPENAI_USAGE_SOURCE_MAX_LEN = 32
+OPENAI_USAGE_REPORT_KEY_LIMIT = 8
+
+
+def _sanitize_usage_text(value):
+    """Reduce a usage key name or ``usage_source`` value to a safe token."""
+    return OPENAI_USAGE_SOURCE_UNSAFE.sub("", str(value))[:OPENAI_USAGE_SOURCE_MAX_LEN]
+
+
+def format_usage_key_list(keys):
+    """Render usage key names for a report cell or flag message.
+
+    Each name is reduced to ``[A-Za-z0-9_.-]`` and cut to 32 characters
+    (``?`` if nothing is left); at most 8 names are listed and the rest
+    are summarized as ``+N more``.
+    """
+    names = [_sanitize_usage_text(k) or "?" for k in keys]
+    text = ", ".join(f"`{k}`" for k in names[:OPENAI_USAGE_REPORT_KEY_LIMIT])
+    if len(names) > OPENAI_USAGE_REPORT_KEY_LIMIT:
+        text += f" +{len(names) - OPENAI_USAGE_REPORT_KEY_LIMIT} more"
+    return text
 
 
 def classify_openai_usage(usage):
@@ -4873,27 +4900,34 @@ def classify_openai_usage(usage):
 
       1. Any key starts with ``claude_cache_creation``
          -> ``anthropic-translated``.
-      2. Both ``input_tokens`` and ``output_tokens`` are present (Anthropic
-         naming instead of ``prompt_tokens`` / ``completion_tokens``)
-         -> ``anthropic-translated``.
-      3. ``usage_source`` is present and its value is not ``openai``
-         (compared after strip + lowercase; ``None`` and the empty string
-         do not fire) -> ``foreign-usage-source``.
+      2. ``input_tokens`` and ``output_tokens`` are both present, no
+         ``*_details`` key is present, and either ``prompt_tokens`` /
+         ``completion_tokens`` are absent or an Anthropic-only cache key
+         (``cache_creation_input_tokens``, ``cache_read_input_tokens``,
+         ``cache_creation``) is present -> ``anthropic-translated``.
+         A pair that misses these conditions (zero-padded next to the
+         OpenAI names, or the Responses shape with ``*_details``) only adds
+         the weak evidence ``usage_keys:anthropic-style-names`` and leaves
+         the channel ``unknown``.
+      3. ``usage_source`` is a string other than ``openai`` (compared after
+         strip + lowercase) whose sanitized form is not empty
+         -> ``foreign-usage-source``. Non-string values never fire.
 
     When rule 3 fires together with rule 1 or 2, ``anthropic-translated``
     is the channel and rule 3 stays in ``evidence``.
 
     No usage value is returned except ``usage_source_value``: the declared
     ``usage_source`` reduced to ``[A-Za-z0-9_.-]`` and cut to 32 characters
-    (``None`` when rule 3 did not fire). Non-dict input returns the
-    no-match result instead of raising.
+    (``None`` when rule 3 did not fire). Key names are returned raw; report
+    code renders them through ``format_usage_key_list``. Non-dict input
+    returns the no-match result instead of raising.
 
     Returns:
         dict with keys ``channel`` (``anthropic-translated``,
         ``foreign-usage-source`` or ``unknown``), ``confidence`` (1.0 or
-        0.0), ``tier`` (1 or None), ``matched_keys`` (key names, rule
-        order), ``evidence`` (one string per fired rule, no values) and
-        ``usage_source_value``.
+        0.0), ``tier`` (1 or None), ``matched_keys`` (key names of fired
+        Tier 1 rules, rule order), ``evidence`` (fixed strings, one per
+        fired rule or weak hint, never values) and ``usage_source_value``.
     """
     matched_keys = []
     evidence = []
@@ -4909,17 +4943,24 @@ def classify_openai_usage(usage):
             matched_keys.extend(cache_keys)
             evidence.append(f"usage_key_prefix:{OPENAI_USAGE_CLAUDE_CACHE_PREFIX}")
         if all(k in usage for k in OPENAI_USAGE_ANTHROPIC_PAIR):
-            translated = True
-            matched_keys.extend(OPENAI_USAGE_ANTHROPIC_PAIR)
-            evidence.append("usage_keys:input_tokens+output_tokens")
-        if "usage_source" in usage:
-            source = usage.get("usage_source")
-            normalized = source.strip().lower() if isinstance(source, str) else source
-            if normalized not in (None, "", "openai"):
+            has_details = any(
+                isinstance(k, str) and k.endswith("_details") for k in usage
+            )
+            openai_named = any(k in usage for k in OPENAI_USAGE_OPENAI_PAIR)
+            anthropic_only = any(k in usage for k in OPENAI_USAGE_ANTHROPIC_ONLY_KEYS)
+            if not has_details and (not openai_named or anthropic_only):
+                translated = True
+                matched_keys.extend(OPENAI_USAGE_ANTHROPIC_PAIR)
+                evidence.append("usage_keys:input_tokens+output_tokens")
+            else:
+                evidence.append(OPENAI_USAGE_WEAK_PAIR_EVIDENCE)
+        source = usage.get("usage_source")
+        if isinstance(source, str) and source.strip().lower() not in ("", "openai"):
+            sanitized = _sanitize_usage_text(source)
+            if sanitized:
                 matched_keys.append("usage_source")
                 evidence.append("usage_source:non-openai")
-                source_value = OPENAI_USAGE_SOURCE_UNSAFE.sub("", str(source))
-                source_value = source_value[:OPENAI_USAGE_SOURCE_MAX_LEN]
+                source_value = sanitized
     if translated:
         channel = OPENAI_USAGE_TRANSLATED_LABEL
     elif source_value is not None:
@@ -4930,7 +4971,7 @@ def classify_openai_usage(usage):
             "confidence": 0.0,
             "tier": None,
             "matched_keys": [],
-            "evidence": [],
+            "evidence": evidence,
             "usage_source_value": None,
         }
     return {
@@ -5057,6 +5098,18 @@ def run_channel_classifier(client):
     return classification
 
 
+def _coarse_probe_error(error):
+    """Reduce a ``call()`` error to ``HTTP <status>`` or ``transport error``.
+
+    ``call()`` errors embed up to 200 characters of the response body
+    (``HTTP 401: {...}``); nothing of the body may reach the report.
+    """
+    match = re.match(r"\s*HTTP\s+(\d{3})\b", str(error))
+    if match:
+        return f"HTTP {match.group(1)}"
+    return "transport error"
+
+
 def run_openai_usage_probe(client):
     """Fingerprint the ``usage`` object of one minimal OpenAI-format call.
 
@@ -5065,16 +5118,18 @@ def run_openai_usage_probe(client):
     request goes to ``/v1/chat/completions``. Never raises.
 
     Returns the ``classify_openai_usage`` dict plus:
-        usage_keys -- sorted top-level key names of ``usage`` (no values)
-        error      -- error string from the call, or None
-        verdict    -- "classified" (a rule fired), "no-signal" (usage present,
-                      no rule fired) or "inconclusive" (call failed or the
-                      response had no usage object)
+        usage_keys -- sorted top-level key names of ``usage`` (raw, no values;
+                      render through ``format_usage_key_list``)
+        error      -- ``HTTP <status>`` / ``transport error`` (response body
+                      dropped), or None
+        verdict    -- "classified" (a Tier 1 rule fired), "no-signal" (usage
+                      present, no Tier 1 rule fired) or "inconclusive" (call
+                      failed or the response had no usage object)
     """
     try:
         res = client.call([{"role": "user", "content": "ping"}], max_tokens=4)
-    except Exception as exc:  # call() catches internally; stay defensive
-        res = {"error": f"probe-exception: {exc}"}
+    except Exception:  # call() catches internally; stay defensive
+        res = {"error": "probe-exception"}
     if not isinstance(res, dict):
         res = {"error": "probe returned no result"}
     error = res.get("error")
@@ -5082,7 +5137,7 @@ def run_openai_usage_probe(client):
     usage = raw.get("usage") if isinstance(raw, dict) and not error else None
     result = classify_openai_usage(usage)
     result["usage_keys"] = sorted(str(k) for k in usage) if isinstance(usage, dict) else []
-    result["error"] = error
+    result["error"] = _coarse_probe_error(error) if error else None
     if error or not isinstance(usage, dict):
         result["verdict"] = "inconclusive"
     elif result["matched_keys"]:
@@ -6671,7 +6726,16 @@ def test_channel_classifier(client, report):
     print(f"  Done: channel classifier ({channel}, conf={confidence:.2f}, "
           f"verdict={verdict})")
     if getattr(client, "detected_format", None) == "openai":
-        result["openai_usage"] = _report_openai_usage_fingerprint(client, report)
+        try:
+            result["openai_usage"] = _report_openai_usage_fingerprint(client, report)
+        except Exception as exc:  # the add-on must never become a Step 14 crash
+            report.p(
+                "\nUsage fingerprint **inconclusive**: internal error "
+                f"({type(exc).__name__}). Informational only; the audit "
+                "continues."
+            )
+            result["openai_usage"] = {"verdict": "inconclusive",
+                                      "error": type(exc).__name__}
     return result
 
 
@@ -6682,27 +6746,31 @@ def _report_openai_usage_fingerprint(client, report):
     the Anthropic path and an undetected format keep the original Step 14
     behavior (no extra request). One minimal ``client.call()`` with
     ``max_tokens=4``; its ``usage`` key names are checked by
-    ``classify_openai_usage``. Not fed into the risk matrix. A failed probe
-    is recorded as inconclusive and the audit continues.
+    ``classify_openai_usage``. Key names are rendered sanitized and capped
+    by ``format_usage_key_list``; a probe error shows only ``HTTP <status>``
+    or ``transport error``. Not fed into the risk matrix.
     """
     report.h3("OpenAI-format usage fingerprint (informational)")
     report.p(
         "The client talks to this relay in OpenAI-compatible format, so "
         "Step 14 also sends one minimal `/v1/chat/completions` call "
         "(`max_tokens=4`) and checks the key names of its `usage` object. "
-        "Any `claude_cache_creation*` key or the Anthropic `input_tokens` + "
-        "`output_tokens` pair means the relay translates an Anthropic-shaped "
-        "upstream response (Tier 1, `anthropic-translated`); a `usage_source` "
-        "other than `openai` names another upstream (Tier 1, "
-        "`foreign-usage-source`). Only key names are shown, plus a sanitized "
-        "`usage_source` value. "
+        "Any `claude_cache_creation*` key, or an `input_tokens` + "
+        "`output_tokens` pair that replaces the OpenAI names (or comes with "
+        "Anthropic-only cache keys) and has no `*_details` objects, means "
+        "the relay translates an Anthropic-shaped upstream response (Tier 1, "
+        "`anthropic-translated`). A declared `usage_source` other than "
+        "`openai` is labeled `foreign-usage-source` (Tier 1). Key names are "
+        "sanitized and capped; the only value shown is a sanitized "
+        "`usage_source`. "
         "**Informational only** -- not fed into the overall risk rating.\n"
     )
 
     usage = run_openai_usage_probe(client)
     verdict = usage["verdict"]
-    keys = ", ".join(f"`{k}`" for k in usage["usage_keys"])[:200]
-    matched = ", ".join(f"`{k}`" for k in usage["matched_keys"])
+    keys = format_usage_key_list(usage["usage_keys"])
+    matched = format_usage_key_list(usage["matched_keys"])
+    source = usage.get("usage_source_value")
     confidence = f"{usage['confidence']:.2f}"
     if usage["tier"]:
         confidence += f" (Tier {usage['tier']})"
@@ -6710,12 +6778,12 @@ def _report_openai_usage_fingerprint(client, report):
     report.p("| Field | Value |")
     report.p("|-------|-------|")
     if usage["error"]:
-        report.p(f"| probe | ERR: {str(usage['error'])[:80]} |")
+        report.p(f"| probe | ERR: {usage['error']} |")
     report.p(f"| usage keys | {keys or '—'} |")
     report.p(f"| matched keys | {matched or '—'} |")
-    source = usage.get("usage_source_value")
     if source is not None:
         report.p(f"| usage_source | `usage_source={source}` |")
+    report.p(f"| evidence | {', '.join(usage['evidence']) or '—'} |")
     report.p(f"| classified | `{usage['channel']}` |")
     report.p(f"| confidence | {confidence} |")
     report.p(f"| verdict | `{verdict}` |")
@@ -6733,11 +6801,17 @@ def _report_openai_usage_fingerprint(client, report):
     elif verdict == "classified":
         report.flag(
             "green",
-            f"OpenAI-format usage declares a non-OpenAI upstream "
-            f"(`usage_source={source}`): the relay passes through another "
-            "provider's usage accounting. Worth a look only if that provider "
-            "does not match the claimed model. Informational only, not in the "
-            "risk matrix.",
+            f"OpenAI-format usage declares a non-openai `usage_source` "
+            f"(`usage_source={source}`). This is a self-reported marker; it "
+            "may name another provider or relay-side token accounting. "
+            "Informational only, not in the risk matrix.",
+        )
+    elif verdict == "no-signal" and OPENAI_USAGE_WEAK_PAIR_EVIDENCE in usage["evidence"]:
+        report.p(
+            "\nWeak naming hint only: `input_tokens` + `output_tokens` appear "
+            "next to OpenAI names or `*_details` objects. Some "
+            "OpenAI-compatible stacks emit this shape, so it is not "
+            "attributed to any upstream. Informational only."
         )
     elif verdict == "no-signal":
         report.p(
@@ -6754,7 +6828,6 @@ def _report_openai_usage_fingerprint(client, report):
 
     print(f"  Done: OpenAI usage fingerprint ({verdict})")
     return usage
-
 
 # ============================================================
 # Fail-open step wrapper
