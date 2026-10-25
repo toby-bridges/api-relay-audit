@@ -783,6 +783,52 @@ class TestStreamCallHttpx:
 
         assert "thinking" not in captured["json"]
 
+    def test_stream_call_sends_temperature_when_set(self):
+        captured = {}
+
+        def capture_stream(method, url, headers, json):
+            captured["json"] = json
+            return _stream_cm(_make_mock_response(sse_bytes()))
+
+        with patch("httpx.Client") as mock_client_cls:
+            client_instance = MagicMock()
+            mock_client_cls.return_value.__enter__.return_value = client_instance
+            mock_client_cls.return_value.__exit__.return_value = None
+            client_instance.stream.side_effect = capture_stream
+
+            client = APIClient(
+                "https://relay.example.com", "sk-test", "claude-opus-4-6",
+                verbose=False,
+            )
+            client.stream_call(
+                [{"role": "user", "content": "hi"}], max_tokens=100,
+                with_thinking=False, temperature=0,
+            )
+
+        assert captured["json"]["temperature"] == 0
+        assert "thinking" not in captured["json"]
+
+    def test_stream_call_omits_temperature_by_default(self):
+        captured = {}
+
+        def capture_stream(method, url, headers, json):
+            captured["json"] = json
+            return _stream_cm(_make_mock_response(sse_bytes()))
+
+        with patch("httpx.Client") as mock_client_cls:
+            client_instance = MagicMock()
+            mock_client_cls.return_value.__enter__.return_value = client_instance
+            mock_client_cls.return_value.__exit__.return_value = None
+            client_instance.stream.side_effect = capture_stream
+
+            client = APIClient(
+                "https://relay.example.com", "sk-test", "claude-opus-4-6",
+                verbose=False,
+            )
+            client.stream_call([{"role": "user", "content": "hi"}], max_tokens=100)
+
+        assert "temperature" not in captured["json"]
+
 
 class TestStreamCallCurlIntegration:
 

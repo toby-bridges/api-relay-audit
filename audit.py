@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 8011cb00a19f633718a179655d9b1f8ba2d7b19b900c12b7e1e77572c87108e6
-# standalone_body_sha256: 25ca81a111261f35589993d3a48e560dcbd76adf459f9c0ba49cc81d9c50eef1
+# source_sha256: 0d619cefa7e55fc27868d8299d79359626d18f7209ba7a1cf0774cd1bcdee442
+# standalone_body_sha256: 532f1de330b0a4ae672e6142d7da8b4996913549ac977b133daecc9459573ad9
 # END GENERATED STANDALONE HEADER
 
 """
@@ -185,6 +185,13 @@ text the user sees looks correct:
    Trailing ``ping`` keepalives are allowed. A graceful HTTP close or a
    generic ``[DONE]`` sentinel does not replace this protocol terminator.
 
+Step 10 also records an informational **stream / non-stream parity**
+observation (:func:`compare_stream_nonstream`): the same request is sent
+once more without streaming and the pair is compared on ``input_tokens``,
+``output_tokens``, text similarity and the streamed ``stop_reason``. It never
+changes the Step 10 verdict or the risk matrix; its thresholds are
+provisional until calibrated against direct-upstream baselines.
+
 ## Attribution
 
 The threat model and the specific list of observable signals is
@@ -214,6 +221,7 @@ arXiv:2604.08407, section 4.2. SSE whitelist / usage monotonicity
 layer.
 """
 
+import difflib
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -303,6 +311,12 @@ class StreamSignals:
         raw_event_count: Total number of events parsed from the
             stream, including unknown types. Zero means no data was
             received at all — another inconclusive signal.
+        text: Concatenation of every ``text_delta`` ``text`` value, in
+            arrival order (capped by the client's
+            ``MAX_STREAM_TEXT_CHARS``). Used by the informational
+            stream / non-stream parity check.
+        stop_reason: The last non-empty ``delta.stop_reason`` seen in a
+            ``message_delta`` event, or ``None``.
     """
 
     # Ordered event type sequence (for whitelist check)
@@ -335,6 +349,10 @@ class StreamSignals:
     transport_error: Optional[str] = None
     total_duration_seconds: Optional[float] = None
     raw_event_count: int = 0
+
+    # Content and terminal signals (stream / non-stream parity)
+    text: str = ""
+    stop_reason: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +609,195 @@ def analyze_stream(signals: "StreamSignals") -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Stream / non-stream parity (informational, v2.6 P1)
+# ---------------------------------------------------------------------------
+
+# All parity thresholds below are provisional, uncalibrated defaults. They
+# need at least five relay dogfood runs plus one direct-upstream baseline with
+# zero false positives before the parity result may feed any scored dimension.
+
+# Max absolute input_tokens difference between the stream and the non-stream
+# reply to the same request (provisional, uncalibrated).
+PARITY_INPUT_TOKEN_TOLERANCE = 3
+# Min difflib.SequenceMatcher ratio between the two reply texts
+# (provisional, uncalibrated).
+PARITY_SIMILARITY_MIN = 0.85
+# output_tokens may differ by at most this fraction of the larger of the two
+# counts, but never less than the floor (provisional, uncalibrated).
+PARITY_OUTPUT_TOKEN_FRAC = 0.5
+PARITY_OUTPUT_TOKEN_FLOOR = 3
+# stop_reason values the streamed message_delta may legitimately carry.
+PARITY_VALID_STOP_REASONS = frozenset({
+    "end_turn",
+    "max_tokens",
+    "stop_sequence",
+    "tool_use",
+})
+# Only this many leading characters of each text are compared, which bounds
+# the difflib cost on a relay that returns far more text than requested.
+PARITY_MAX_COMPARE_CHARS = 4000
+
+
+def _parity_positive_int(value) -> Optional[int]:
+    """Return ``value`` if it is a positive int, else ``None``.
+
+    The client reports a missing usage block as ``0``, so zero means
+    "not reported" here rather than a real count.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
+    """Compare a Step 10 stream with a non-stream reply to the same request.
+
+    Concept inspired by canarybyte/veridrop integrity.py (AGPL-3.0);
+    reimplemented with stdlib.
+
+    ``signals`` is the populated :class:`StreamSignals`; ``nonstream`` is the
+    dict returned by :meth:`api_relay_audit.client.APIClient.call` (``text``,
+    ``input_tokens``, ``output_tokens``, or ``error`` on failure).
+
+    Returns a dict with these keys:
+
+    - ``verdict``: ``"consistent"`` / ``"divergent"`` / ``"inconclusive"``
+    - ``input_tokens_delta``: stream minus non-stream ``input_tokens``, or
+      ``None`` when either side did not report it
+    - ``output_tokens_delta``: final streamed ``output_tokens`` minus
+      non-stream ``output_tokens``, or ``None``
+    - ``output_tokens_tolerance``: the allowed absolute output difference
+      for this pair, or ``None``
+    - ``similarity``: ``difflib.SequenceMatcher`` ratio of the two stripped
+      texts (0.0 to 1.0, rounded to 3 places), or ``None``
+    - ``stop_reason``: the streamed ``stop_reason`` or ``None``
+    - ``stop_reason_valid``: bool, streamed ``stop_reason`` is in
+      :data:`PARITY_VALID_STOP_REASONS`
+    - ``notes``: list of human-readable observations
+
+    Verdict priority (first match wins):
+
+    1. **inconclusive**: the non-stream request failed, the stream had a
+       transport error, or either side returned no text.
+    2. **divergent**: input_tokens differ by more than
+       :data:`PARITY_INPUT_TOKEN_TOLERANCE`, output_tokens differ by more
+       than ``max(PARITY_OUTPUT_TOKEN_FLOOR, PARITY_OUTPUT_TOKEN_FRAC *
+       larger count)``, similarity is below :data:`PARITY_SIMILARITY_MIN`,
+       or the streamed ``stop_reason`` is missing or not a known value.
+       A token check whose count is missing on either side is skipped with
+       a note instead of counting as divergent.
+    3. **consistent**: none of the above.
+
+    Informational only: callers must not feed the verdict into Step 10's
+    verdict or the risk matrix. Pure and deterministic, no I/O.
+    """
+    if not isinstance(nonstream, dict):
+        nonstream = {"error": f"unexpected non-stream result type {type(nonstream).__name__}"}
+    notes = []
+
+    stream_text = (signals.text or "").strip()
+    nonstream_text = nonstream.get("text")
+    nonstream_text = nonstream_text.strip() if isinstance(nonstream_text, str) else ""
+
+    # input_tokens: message_start first, message_delta samples as fallback.
+    stream_input = _parity_positive_int(signals.input_tokens)
+    if stream_input is None and signals.message_delta_input_tokens_samples:
+        stream_input = _parity_positive_int(signals.message_delta_input_tokens_samples[-1])
+    nonstream_input = _parity_positive_int(nonstream.get("input_tokens"))
+    input_delta = None
+    input_ok = True
+    if stream_input is not None and nonstream_input is not None:
+        input_delta = stream_input - nonstream_input
+        input_ok = abs(input_delta) <= PARITY_INPUT_TOKEN_TOLERANCE
+        if not input_ok:
+            notes.append(
+                f"input_tokens differ across modes: stream {stream_input}, "
+                f"non-stream {nonstream_input} (tolerance "
+                f"{PARITY_INPUT_TOKEN_TOLERANCE})"
+            )
+    elif "error" not in nonstream:
+        notes.append("input_tokens not reported on both sides; check skipped")
+
+    # output_tokens: the final (cumulative) streamed value.
+    stream_output = None
+    if signals.output_tokens_samples:
+        stream_output = _parity_positive_int(signals.output_tokens_samples[-1])
+    nonstream_output = _parity_positive_int(nonstream.get("output_tokens"))
+    output_delta = None
+    output_tolerance = None
+    output_ok = True
+    if stream_output is not None and nonstream_output is not None:
+        output_delta = stream_output - nonstream_output
+        output_tolerance = max(
+            PARITY_OUTPUT_TOKEN_FLOOR,
+            int(PARITY_OUTPUT_TOKEN_FRAC * max(stream_output, nonstream_output)),
+        )
+        output_ok = abs(output_delta) <= output_tolerance
+        if not output_ok:
+            notes.append(
+                f"output_tokens differ across modes: stream {stream_output}, "
+                f"non-stream {nonstream_output} (tolerance {output_tolerance})"
+            )
+    elif "error" not in nonstream:
+        notes.append("output_tokens not reported on both sides; check skipped")
+
+    similarity = None
+    if stream_text and nonstream_text:
+        a = stream_text[:PARITY_MAX_COMPARE_CHARS]
+        b = nonstream_text[:PARITY_MAX_COMPARE_CHARS]
+        if len(stream_text) > len(a) or len(nonstream_text) > len(b):
+            notes.append(
+                f"texts compared on their first {PARITY_MAX_COMPARE_CHARS} characters"
+            )
+        # autojunk=False: the default heuristic drops frequent characters
+        # from texts of 200+ characters and can deflate the ratio. For
+        # shorter texts the result is identical to the default.
+        similarity = difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+    stop_reason = signals.stop_reason
+    stop_reason_valid = stop_reason in PARITY_VALID_STOP_REASONS
+
+    result = {
+        "verdict": "inconclusive",
+        "input_tokens_delta": input_delta,
+        "output_tokens_delta": output_delta,
+        "output_tokens_tolerance": output_tolerance,
+        "similarity": round(similarity, 3) if similarity is not None else None,
+        "stop_reason": stop_reason,
+        "stop_reason_valid": stop_reason_valid,
+        "notes": notes,
+    }
+
+    if "error" in nonstream:
+        notes.insert(0, f"Non-stream request unavailable: {str(nonstream['error'])[:200]}")
+        return result
+    if signals.transport_error:
+        notes.insert(0, f"Stream transport error: {str(signals.transport_error)[:200]}")
+        return result
+    if not stream_text or not nonstream_text:
+        missing = "stream" if not stream_text else "non-stream"
+        if not stream_text and not nonstream_text:
+            missing = "stream and non-stream"
+        notes.insert(0, f"No text in the {missing} reply; nothing to compare")
+        return result
+
+    similarity_ok = similarity >= PARITY_SIMILARITY_MIN
+    if not similarity_ok:
+        notes.append(
+            f"text similarity {similarity:.3f} is below {PARITY_SIMILARITY_MIN}"
+        )
+    if not stop_reason_valid:
+        notes.append(
+            f"streamed stop_reason {stop_reason!r} is not one of "
+            f"{sorted(PARITY_VALID_STOP_REASONS)}"
+        )
+
+    divergent = not (input_ok and output_ok and similarity_ok and stop_reason_valid)
+    result["verdict"] = "divergent" if divergent else "consistent"
+    return result
+
+
 # ============================================================
 # Standalone curl transport facade
 # ============================================================
@@ -831,6 +1038,29 @@ def _extract_anthropic_text(content) -> str:
     return "".join(parts)
 
 
+def _thinking_config(max_tokens: int) -> dict:
+    """Return the ``thinking`` request field shared by :meth:`APIClient.call`
+    and :meth:`APIClient.stream_call`.
+
+    ``thinking.budget_tokens`` must be strictly less than ``max_tokens``.
+    Keeping one builder means a stream / non-stream request pair always
+    asks for the same thinking configuration.
+    """
+    return {"type": "enabled", "budget_tokens": max(1, max_tokens - 1)}
+
+
+def _optional_call_kwargs(with_thinking=False, temperature=None) -> dict:
+    """Return the optional ``call()`` fields as keyword arguments, only when
+    set, so a default call keeps its original ``(messages, system,
+    max_tokens)`` shape all the way down to the format-specific helpers."""
+    kwargs = {}
+    if with_thinking:
+        kwargs["with_thinking"] = True
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    return kwargs
+
+
 def _parse_curl_i_output(output: str) -> dict:
     """Parse ``curl -i`` (or ``curl -sk -i``) stdout into a response dict.
 
@@ -938,6 +1168,9 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 
             if delta_type == "text_delta":
                 signals.has_text_delta = True
+                text = delta.get("text")
+                if isinstance(text, str) and len(signals.text) < MAX_STREAM_TEXT_CHARS:
+                    signals.text = (signals.text + text)[:MAX_STREAM_TEXT_CHARS]
             elif delta_type == "thinking_delta":
                 signals.thinking_delta_seen = True
             elif delta_type == "signature_delta":
@@ -947,6 +1180,11 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 
     elif event_type == "message_delta":
         signals.has_message_delta = True
+        message_delta = event.get("delta", {})
+        if isinstance(message_delta, dict):
+            stop_reason = message_delta.get("stop_reason")
+            if isinstance(stop_reason, str) and stop_reason:
+                signals.stop_reason = stop_reason
         usage = event.get("usage", {})
         if isinstance(usage, dict):
             input_tokens = usage.get("input_tokens")
@@ -965,6 +1203,9 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 # grow memory unboundedly. 1 MB is comfortably above any real
 # Anthropic event size (biggest thinking blocks are ~100 KB).
 MAX_STREAM_BUFFER_BYTES = 1024 * 1024
+# Same idea for StreamSignals.text: bound memory and CPU when a relay streams
+# far more text than requested. 64 KiB is far above Step 10's 100-token probe.
+MAX_STREAM_TEXT_CHARS = 64 * 1024
 CURL_STATUS_SENTINEL = "__CODEX_HTTP_STATUS__:"
 
 
@@ -1134,7 +1375,8 @@ class APIClient:
 
     # -- Anthropic native format ----------------------------------------------
 
-    def _call_anthropic(self, messages, system=None, max_tokens=512):
+    def _call_anthropic(self, messages, system=None, max_tokens=512,
+                        with_thinking=False, temperature=None):
         url = self.base_url
         if url.endswith("/v1"):
             url = url[:-3]
@@ -1143,6 +1385,10 @@ class APIClient:
         body = {"model": self.model, "max_tokens": max_tokens, "messages": messages}
         if system:
             body["system"] = system
+        if with_thinking:
+            body["thinking"] = _thinking_config(max_tokens)
+        if temperature is not None:
+            body["temperature"] = temperature
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
@@ -1163,7 +1409,11 @@ class APIClient:
 
     # -- OpenAI compatible format ---------------------------------------------
 
-    def _call_openai(self, messages, system=None, max_tokens=512):
+    def _call_openai(self, messages, system=None, max_tokens=512,
+                     with_thinking=False, temperature=None):
+        # ``with_thinking`` is accepted for signature parity with
+        # ``_call_anthropic`` but ignored: Chat Completions has no standard
+        # ``thinking`` field, and strict endpoints reject unknown fields.
         url = self.base_url
         if not url.endswith("/v1"):
             url += "/v1"
@@ -1174,6 +1424,8 @@ class APIClient:
             msgs.append({"role": "system", "content": system})
         msgs.extend(messages)
         body = {"model": self.model, "max_tokens": max_tokens, "messages": msgs}
+        if temperature is not None:
+            body["temperature"] = temperature
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "content-type": "application/json",
@@ -1219,7 +1471,8 @@ class APIClient:
         except Exception:
             pass
 
-    def call(self, messages, system=None, max_tokens=512):
+    def call(self, messages, system=None, max_tokens=512,
+             with_thinking=False, temperature=None):
         """Send a chat completion request, auto-detecting format on first call.
 
         The method records wall-clock elapsed time and attaches it as the
@@ -1232,6 +1485,14 @@ class APIClient:
                 ``"system"`` field (Anthropic) or as a system-role message
                 (OpenAI).
             max_tokens: Maximum tokens to generate. Defaults to 512.
+            with_thinking: If True, send the same ``thinking`` block that
+                :meth:`stream_call` sends. Anthropic format only; the
+                OpenAI-compatible body ignores it. Defaults to False.
+            temperature: Optional sampling temperature. When not ``None``
+                it is sent as ``temperature`` in both formats. Defaults to
+                ``None`` (the relay's default). The Anthropic API accepts
+                only its default temperature while thinking is enabled, so
+                do not combine a non-default value with ``with_thinking``.
 
         Returns:
             A dict with the following keys on success:
@@ -1251,10 +1512,17 @@ class APIClient:
             ...     print(result["text"])
         """
         start = time.time()
-        request_body = json.dumps({"model": self.model, "max_tokens": max_tokens,
-                                   "messages": messages, "system": system or ""})
+        logged_request = {"model": self.model, "max_tokens": max_tokens,
+                          "messages": messages, "system": system or ""}
+        if with_thinking:
+            logged_request["thinking"] = _thinking_config(max_tokens)
+        if temperature is not None:
+            logged_request["temperature"] = temperature
+        request_body = json.dumps(logged_request)
         try:
-            result = self._call_with_detection(messages, system, max_tokens)
+            result = self._call_with_detection(
+                messages, system, max_tokens,
+                **_optional_call_kwargs(with_thinking, temperature))
             result["time"] = time.time() - start
             # v1.7.7 transparent-log
             self._log_transparent(
@@ -1282,17 +1550,19 @@ class APIClient:
             base = base[:-3]
         return base + "/v1/messages"
 
-    def _call_with_detection(self, messages, system, max_tokens):
+    def _call_with_detection(self, messages, system, max_tokens,
+                             with_thinking=False, temperature=None):
+        extra = _optional_call_kwargs(with_thinking, temperature)
         # Already detected — use that format
         if self._format == "openai":
-            return self._call_openai(messages, system, max_tokens)
+            return self._call_openai(messages, system, max_tokens, **extra)
         if self._format == "anthropic":
-            return self._call_anthropic(messages, system, max_tokens)
+            return self._call_anthropic(messages, system, max_tokens, **extra)
 
         # Auto-detect: try Anthropic first
         anthropic_result = None
         try:
-            anthropic_result = self._call_anthropic(messages, system, max_tokens)
+            anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
             if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                 self._format = "anthropic"
                 self._log("  [format] -> Anthropic native")
@@ -1301,7 +1571,7 @@ class APIClient:
             if self._handle_ssl_error(e):
                 # Retry Anthropic with curl before falling through to OpenAI
                 try:
-                    anthropic_result = self._call_anthropic(messages, system, max_tokens)
+                    anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
                     if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                         self._format = "anthropic"
                         self._log("  [format] -> Anthropic native (curl)")
@@ -1313,7 +1583,7 @@ class APIClient:
         self._log("  [format] Anthropic failed/empty, trying OpenAI...")
         openai_result = None
         try:
-            openai_result = self._call_openai(messages, system, max_tokens)
+            openai_result = self._call_openai(messages, system, max_tokens, **extra)
             if "error" not in openai_result and openai_result.get("text", "").strip():
                 self._format = "openai"
                 suffix = " (curl)" if self._use_curl else ""
@@ -1321,7 +1591,7 @@ class APIClient:
                 return openai_result
         except Exception as e:
             if self._handle_ssl_error(e):
-                return self._call_with_detection(messages, system, max_tokens)
+                return self._call_with_detection(messages, system, max_tokens, **extra)
 
         # Both failed — return whichever has more info
         if anthropic_result and "error" not in anthropic_result:
@@ -1522,7 +1792,8 @@ class APIClient:
     # -- Streaming (Step 10 stream integrity) --------------------------------
 
     def stream_call(self, messages, system=None, max_tokens=512,
-                    with_thinking: bool = True, timeout: int = 120) -> StreamSignals:
+                    with_thinking: bool = True, timeout: int = 120,
+                    temperature=None) -> StreamSignals:
         """Open an Anthropic-format streaming request and capture SSE signals.
 
         Unlike :meth:`call`, this method is **Anthropic-only**. The SSE event
@@ -1547,6 +1818,8 @@ class APIClient:
                 Defaults to True because Step 10's whole point is to
                 watch for thinking signature anomalies.
             timeout: Per-stream timeout in seconds. Defaults to 120.
+            temperature: Optional sampling temperature, sent as
+                ``temperature`` when not ``None``. Defaults to ``None``.
 
         Returns:
             A fully populated :class:`StreamSignals` dataclass.
@@ -1566,10 +1839,9 @@ class APIClient:
             body["system"] = system
         if with_thinking:
             # thinking.budget_tokens must be strictly less than max_tokens
-            body["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": max(1, max_tokens - 1),
-            }
+            body["thinking"] = _thinking_config(max_tokens)
+        if temperature is not None:
+            body["temperature"] = temperature
 
         headers = {
             "x-api-key": self.api_key,
@@ -6012,10 +6284,13 @@ def test_stream_integrity(client, report):
         "2026-04-11. See reference_hvoy_relayapi memory for details.\n"
     )
 
+    probe_messages = [{"role": "user", "content": "Reply with the single word: ok"}]
+    probe_max_tokens = 100
+    probe_with_thinking = True
     signals = client.stream_call(
-        [{"role": "user", "content": "Reply with the single word: ok"}],
-        max_tokens=100,
-        with_thinking=True,
+        probe_messages,
+        max_tokens=probe_max_tokens,
+        with_thinking=probe_with_thinking,
     )
     analysis = analyze_stream(signals)
     verdict = analysis["verdict"]
@@ -6071,8 +6346,114 @@ def test_stream_integrity(client, report):
             "identity all passed",
         )
 
+    # Informational only: never changes ``verdict``, emits no flag and does
+    # not feed the risk matrix. The helper never raises.
+    _report_stream_parity(
+        client, report, signals,
+        probe_messages, probe_max_tokens, probe_with_thinking,
+    )
+
     print(f"  Done: stream integrity ({verdict})")
     return verdict, verdict == "inconclusive"
+
+
+def _report_stream_parity(client, report, signals, messages, max_tokens,
+                          with_thinking):
+    """Append Step 10's informational stream / non-stream parity section.
+
+    Sends one non-stream request with the same messages, max_tokens and
+    thinking setting as the Step 10 stream, then compares the pair with
+    :func:`compare_stream_nonstream`. The result is an observation only:
+    it never changes the Step 10 verdict, never calls ``report.flag()`` and
+    never feeds the risk matrix.
+
+    Must not raise: ``_run_step`` would turn an exception into an
+    inconclusive Step 10, so every failure degrades to an inconclusive
+    parity row instead.
+
+    No ``temperature`` is sent on either request. The Step 10 probe enables
+    thinking, and the Anthropic API accepts only its default temperature
+    with thinking enabled; adding ``temperature=0`` to the stream would
+    change the Step 10 request itself.
+    """
+    report.h3("Stream / non-stream parity (informational)")
+    report.p(
+        "Observed comparison between the Step 10 stream and one non-stream "
+        "request with the same messages, max_tokens and thinking setting "
+        "(both at the API default temperature). Informational only: it does "
+        "not change the Step 10 verdict or the risk matrix, and its "
+        "thresholds are provisional and uncalibrated.\n"
+    )
+    try:
+        detected_format = getattr(client, "detected_format", None)
+        if signals.transport_error or not (signals.text or "").strip():
+            nonstream = {"error": "not sent, because the stream returned no "
+                                  "comparable text"}
+        elif detected_format != "anthropic":
+            # A Chat Completions reply is not comparable with an Anthropic
+            # stream, and an undetected client would auto-detect with a
+            # thinking body and could pin the wrong format for later steps.
+            nonstream = {"error": "not sent, because the non-stream client "
+                                  "format is " + repr(detected_format)
+                                  + " rather than 'anthropic'"}
+        else:
+            nonstream = client.call(
+                messages, max_tokens=max_tokens, with_thinking=with_thinking,
+            )
+        parity = compare_stream_nonstream(signals, nonstream)
+    except Exception as exc:  # informational block must never fail Step 10
+        parity = {
+            "verdict": "inconclusive",
+            "input_tokens_delta": None,
+            "output_tokens_delta": None,
+            "output_tokens_tolerance": None,
+            "similarity": None,
+            "stop_reason": None,
+            "stop_reason_valid": False,
+            "notes": [f"Parity check failed: {type(exc).__name__}: {exc}"[:240]],
+        }
+
+    def _delta(value):
+        return "—" if value is None else f"{value:+d}"
+
+    inconclusive = parity["verdict"] == "inconclusive"
+    tolerance = parity.get("output_tokens_tolerance")
+    similarity = parity.get("similarity")
+    if inconclusive:
+        stop_cell = "—"
+    else:
+        stop_cell = (
+            ("yes" if parity["stop_reason_valid"] else "NO")
+            + f" ({parity.get('stop_reason') or 'missing'})"
+        )
+    report.p("| Metric | Observed | Provisional threshold |")
+    report.p("|--------|----------|-----------------------|")
+    report.p(
+        f"| input_tokens delta (stream - non-stream) | "
+        f"{_delta(parity['input_tokens_delta'])} | "
+        f"abs <= {PARITY_INPUT_TOKEN_TOLERANCE} |"
+    )
+    report.p(
+        f"| output_tokens delta (stream - non-stream) | "
+        f"{_delta(parity['output_tokens_delta'])} | "
+        + (f"abs <= {tolerance}" if tolerance is not None
+           else "abs <= max(3, 50% of the larger count)")
+        + " |"
+    )
+    report.p(
+        "| Text similarity (difflib ratio) | "
+        + ("—" if similarity is None else f"{similarity:.3f}")
+        + f" | >= {PARITY_SIMILARITY_MIN} |"
+    )
+    report.p(
+        f"| Streamed stop_reason valid | {stop_cell} | "
+        f"{', '.join(sorted(PARITY_VALID_STOP_REASONS))} |"
+    )
+    report.p(f"| Observed parity | {parity['verdict']} | not scored |")
+    if parity["notes"]:
+        report.p("\n**Parity notes (observed)**:")
+        for note in parity["notes"]:
+            report.p(f"- {note}")
 
 
 def test_web3_injection(client, report):

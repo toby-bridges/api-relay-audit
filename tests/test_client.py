@@ -616,3 +616,99 @@ class TestLog:
     def test_quiet_no_output(self, client, capsys):
         client._log("hello")
         assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------------
+# call(): with_thinking / temperature (v2.6 stream parity)
+# ---------------------------------------------------------------------------
+
+class TestCallThinkingAndTemperature:
+    def _anthropic_resp(self):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 12, "output_tokens": 2},
+        }
+        return resp
+
+    def _openai_resp(self):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 2},
+        }
+        return resp
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_anthropic_body_carries_thinking_and_temperature(self, mock_post, client):
+        mock_post.return_value = self._anthropic_resp()
+        client._format = "anthropic"
+        result = client.call([{"role": "user", "content": "x"}], max_tokens=100,
+                             with_thinking=True, temperature=0)
+        body = mock_post.call_args[1]["json"]
+        assert body["thinking"] == {"type": "enabled", "budget_tokens": 99}
+        assert body["temperature"] == 0
+        assert result["text"] == "ok"
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_openai_body_carries_temperature_but_not_thinking(self, mock_post, client):
+        mock_post.return_value = self._openai_resp()
+        client._format = "openai"
+        client.call([{"role": "user", "content": "x"}], max_tokens=100,
+                    with_thinking=True, temperature=0)
+        body = mock_post.call_args[1]["json"]
+        assert body["temperature"] == 0
+        assert "thinking" not in body
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_anthropic_defaults_add_neither_field(self, mock_post, client):
+        mock_post.return_value = self._anthropic_resp()
+        client._format = "anthropic"
+        client.call([{"role": "user", "content": "x"}])
+        body = mock_post.call_args[1]["json"]
+        assert "thinking" not in body
+        assert "temperature" not in body
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_openai_defaults_add_neither_field(self, mock_post, client):
+        mock_post.return_value = self._openai_resp()
+        client._format = "openai"
+        client.call([{"role": "user", "content": "x"}])
+        body = mock_post.call_args[1]["json"]
+        assert "thinking" not in body
+        assert "temperature" not in body
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_anthropic_temperature_without_thinking(self, mock_post, client):
+        mock_post.return_value = self._anthropic_resp()
+        client._call_anthropic([{"role": "user", "content": "x"}], temperature=0.7)
+        body = mock_post.call_args[1]["json"]
+        assert body["temperature"] == 0.7
+        assert "thinking" not in body
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_auto_detection_threads_thinking_and_temperature(self, mock_post, client):
+        mock_post.return_value = self._anthropic_resp()
+        client.call([{"role": "user", "content": "x"}], max_tokens=50,
+                    with_thinking=True, temperature=0)
+        assert client.detected_format == "anthropic"
+        body = mock_post.call_args[1]["json"]
+        assert body["thinking"] == {"type": "enabled", "budget_tokens": 49}
+        assert body["temperature"] == 0
+
+    def test_thinking_config_shared_with_stream_call(self):
+        from api_relay_audit.client import _thinking_config
+
+        assert _thinking_config(100) == {"type": "enabled", "budget_tokens": 99}
+        assert _thinking_config(1) == {"type": "enabled", "budget_tokens": 1}
+
+    @patch("api_relay_audit.client.httpx.post")
+    def test_transparent_log_records_thinking_and_temperature(self, mock_post, client):
+        mock_post.return_value = self._anthropic_resp()
+        client._format = "anthropic"
+        with patch.object(client, "_log_transparent") as log:
+            client.call([{"role": "user", "content": "x"}], max_tokens=100,
+                        with_thinking=True, temperature=0)
+        logged = json.loads(log.call_args[0][3])
+        assert logged["temperature"] == 0
+        assert logged["thinking"] == {"type": "enabled", "budget_tokens": 99}

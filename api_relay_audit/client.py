@@ -44,6 +44,29 @@ def _extract_anthropic_text(content) -> str:
     return "".join(parts)
 
 
+def _thinking_config(max_tokens: int) -> dict:
+    """Return the ``thinking`` request field shared by :meth:`APIClient.call`
+    and :meth:`APIClient.stream_call`.
+
+    ``thinking.budget_tokens`` must be strictly less than ``max_tokens``.
+    Keeping one builder means a stream / non-stream request pair always
+    asks for the same thinking configuration.
+    """
+    return {"type": "enabled", "budget_tokens": max(1, max_tokens - 1)}
+
+
+def _optional_call_kwargs(with_thinking=False, temperature=None) -> dict:
+    """Return the optional ``call()`` fields as keyword arguments, only when
+    set, so a default call keeps its original ``(messages, system,
+    max_tokens)`` shape all the way down to the format-specific helpers."""
+    kwargs = {}
+    if with_thinking:
+        kwargs["with_thinking"] = True
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    return kwargs
+
+
 def _parse_curl_i_output(output: str) -> dict:
     """Parse ``curl -i`` (or ``curl -sk -i``) stdout into a response dict.
 
@@ -151,6 +174,9 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 
             if delta_type == "text_delta":
                 signals.has_text_delta = True
+                text = delta.get("text")
+                if isinstance(text, str) and len(signals.text) < MAX_STREAM_TEXT_CHARS:
+                    signals.text = (signals.text + text)[:MAX_STREAM_TEXT_CHARS]
             elif delta_type == "thinking_delta":
                 signals.thinking_delta_seen = True
             elif delta_type == "signature_delta":
@@ -160,6 +186,11 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 
     elif event_type == "message_delta":
         signals.has_message_delta = True
+        message_delta = event.get("delta", {})
+        if isinstance(message_delta, dict):
+            stop_reason = message_delta.get("stop_reason")
+            if isinstance(stop_reason, str) and stop_reason:
+                signals.stop_reason = stop_reason
         usage = event.get("usage", {})
         if isinstance(usage, dict):
             input_tokens = usage.get("input_tokens")
@@ -178,6 +209,9 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 # grow memory unboundedly. 1 MB is comfortably above any real
 # Anthropic event size (biggest thinking blocks are ~100 KB).
 MAX_STREAM_BUFFER_BYTES = 1024 * 1024
+# Same idea for StreamSignals.text: bound memory and CPU when a relay streams
+# far more text than requested. 64 KiB is far above Step 10's 100-token probe.
+MAX_STREAM_TEXT_CHARS = 64 * 1024
 CURL_STATUS_SENTINEL = "__CODEX_HTTP_STATUS__:"
 
 
@@ -347,7 +381,8 @@ class APIClient:
 
     # -- Anthropic native format ----------------------------------------------
 
-    def _call_anthropic(self, messages, system=None, max_tokens=512):
+    def _call_anthropic(self, messages, system=None, max_tokens=512,
+                        with_thinking=False, temperature=None):
         url = self.base_url
         if url.endswith("/v1"):
             url = url[:-3]
@@ -356,6 +391,10 @@ class APIClient:
         body = {"model": self.model, "max_tokens": max_tokens, "messages": messages}
         if system:
             body["system"] = system
+        if with_thinking:
+            body["thinking"] = _thinking_config(max_tokens)
+        if temperature is not None:
+            body["temperature"] = temperature
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
@@ -376,7 +415,11 @@ class APIClient:
 
     # -- OpenAI compatible format ---------------------------------------------
 
-    def _call_openai(self, messages, system=None, max_tokens=512):
+    def _call_openai(self, messages, system=None, max_tokens=512,
+                     with_thinking=False, temperature=None):
+        # ``with_thinking`` is accepted for signature parity with
+        # ``_call_anthropic`` but ignored: Chat Completions has no standard
+        # ``thinking`` field, and strict endpoints reject unknown fields.
         url = self.base_url
         if not url.endswith("/v1"):
             url += "/v1"
@@ -387,6 +430,8 @@ class APIClient:
             msgs.append({"role": "system", "content": system})
         msgs.extend(messages)
         body = {"model": self.model, "max_tokens": max_tokens, "messages": msgs}
+        if temperature is not None:
+            body["temperature"] = temperature
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "content-type": "application/json",
@@ -432,7 +477,8 @@ class APIClient:
         except Exception:
             pass
 
-    def call(self, messages, system=None, max_tokens=512):
+    def call(self, messages, system=None, max_tokens=512,
+             with_thinking=False, temperature=None):
         """Send a chat completion request, auto-detecting format on first call.
 
         The method records wall-clock elapsed time and attaches it as the
@@ -445,6 +491,14 @@ class APIClient:
                 ``"system"`` field (Anthropic) or as a system-role message
                 (OpenAI).
             max_tokens: Maximum tokens to generate. Defaults to 512.
+            with_thinking: If True, send the same ``thinking`` block that
+                :meth:`stream_call` sends. Anthropic format only; the
+                OpenAI-compatible body ignores it. Defaults to False.
+            temperature: Optional sampling temperature. When not ``None``
+                it is sent as ``temperature`` in both formats. Defaults to
+                ``None`` (the relay's default). The Anthropic API accepts
+                only its default temperature while thinking is enabled, so
+                do not combine a non-default value with ``with_thinking``.
 
         Returns:
             A dict with the following keys on success:
@@ -464,10 +518,17 @@ class APIClient:
             ...     print(result["text"])
         """
         start = time.time()
-        request_body = json.dumps({"model": self.model, "max_tokens": max_tokens,
-                                   "messages": messages, "system": system or ""})
+        logged_request = {"model": self.model, "max_tokens": max_tokens,
+                          "messages": messages, "system": system or ""}
+        if with_thinking:
+            logged_request["thinking"] = _thinking_config(max_tokens)
+        if temperature is not None:
+            logged_request["temperature"] = temperature
+        request_body = json.dumps(logged_request)
         try:
-            result = self._call_with_detection(messages, system, max_tokens)
+            result = self._call_with_detection(
+                messages, system, max_tokens,
+                **_optional_call_kwargs(with_thinking, temperature))
             result["time"] = time.time() - start
             # v1.7.7 transparent-log
             self._log_transparent(
@@ -495,17 +556,19 @@ class APIClient:
             base = base[:-3]
         return base + "/v1/messages"
 
-    def _call_with_detection(self, messages, system, max_tokens):
+    def _call_with_detection(self, messages, system, max_tokens,
+                             with_thinking=False, temperature=None):
+        extra = _optional_call_kwargs(with_thinking, temperature)
         # Already detected — use that format
         if self._format == "openai":
-            return self._call_openai(messages, system, max_tokens)
+            return self._call_openai(messages, system, max_tokens, **extra)
         if self._format == "anthropic":
-            return self._call_anthropic(messages, system, max_tokens)
+            return self._call_anthropic(messages, system, max_tokens, **extra)
 
         # Auto-detect: try Anthropic first
         anthropic_result = None
         try:
-            anthropic_result = self._call_anthropic(messages, system, max_tokens)
+            anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
             if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                 self._format = "anthropic"
                 self._log("  [format] -> Anthropic native")
@@ -514,7 +577,7 @@ class APIClient:
             if self._handle_ssl_error(e):
                 # Retry Anthropic with curl before falling through to OpenAI
                 try:
-                    anthropic_result = self._call_anthropic(messages, system, max_tokens)
+                    anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
                     if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                         self._format = "anthropic"
                         self._log("  [format] -> Anthropic native (curl)")
@@ -526,7 +589,7 @@ class APIClient:
         self._log("  [format] Anthropic failed/empty, trying OpenAI...")
         openai_result = None
         try:
-            openai_result = self._call_openai(messages, system, max_tokens)
+            openai_result = self._call_openai(messages, system, max_tokens, **extra)
             if "error" not in openai_result and openai_result.get("text", "").strip():
                 self._format = "openai"
                 suffix = " (curl)" if self._use_curl else ""
@@ -534,7 +597,7 @@ class APIClient:
                 return openai_result
         except Exception as e:
             if self._handle_ssl_error(e):
-                return self._call_with_detection(messages, system, max_tokens)
+                return self._call_with_detection(messages, system, max_tokens, **extra)
 
         # Both failed — return whichever has more info
         if anthropic_result and "error" not in anthropic_result:
@@ -737,7 +800,8 @@ class APIClient:
     # -- Streaming (Step 10 stream integrity) --------------------------------
 
     def stream_call(self, messages, system=None, max_tokens=512,
-                    with_thinking: bool = True, timeout: int = 120) -> StreamSignals:
+                    with_thinking: bool = True, timeout: int = 120,
+                    temperature=None) -> StreamSignals:
         """Open an Anthropic-format streaming request and capture SSE signals.
 
         Unlike :meth:`call`, this method is **Anthropic-only**. The SSE event
@@ -762,6 +826,8 @@ class APIClient:
                 Defaults to True because Step 10's whole point is to
                 watch for thinking signature anomalies.
             timeout: Per-stream timeout in seconds. Defaults to 120.
+            temperature: Optional sampling temperature, sent as
+                ``temperature`` when not ``None``. Defaults to ``None``.
 
         Returns:
             A fully populated :class:`StreamSignals` dataclass.
@@ -781,10 +847,9 @@ class APIClient:
             body["system"] = system
         if with_thinking:
             # thinking.budget_tokens must be strictly less than max_tokens
-            body["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": max(1, max_tokens - 1),
-            }
+            body["thinking"] = _thinking_config(max_tokens)
+        if temperature is not None:
+            body["temperature"] = temperature
 
         headers = {
             "x-api-key": self.api_key,

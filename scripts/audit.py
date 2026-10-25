@@ -69,7 +69,13 @@ from api_relay_audit.refusal import (
     _strip_markdown_code_fence,
 )
 from api_relay_audit.reporter import Reporter
-from api_relay_audit.stream_integrity import analyze_stream
+from api_relay_audit.stream_integrity import (
+    PARITY_INPUT_TOKEN_TOLERANCE,
+    PARITY_SIMILARITY_MIN,
+    PARITY_VALID_STOP_REASONS,
+    analyze_stream,
+    compare_stream_nonstream,
+)
 from api_relay_audit.tool_substitution import run_tool_substitution_test
 from api_relay_audit.web3.injection_probes import run_web3_injection_probes
 
@@ -1090,10 +1096,13 @@ def test_stream_integrity(client, report):
         "2026-04-11. See reference_hvoy_relayapi memory for details.\n"
     )
 
+    probe_messages = [{"role": "user", "content": "Reply with the single word: ok"}]
+    probe_max_tokens = 100
+    probe_with_thinking = True
     signals = client.stream_call(
-        [{"role": "user", "content": "Reply with the single word: ok"}],
-        max_tokens=100,
-        with_thinking=True,
+        probe_messages,
+        max_tokens=probe_max_tokens,
+        with_thinking=probe_with_thinking,
     )
     analysis = analyze_stream(signals)
     verdict = analysis["verdict"]
@@ -1149,8 +1158,114 @@ def test_stream_integrity(client, report):
             "identity all passed",
         )
 
+    # Informational only: never changes ``verdict``, emits no flag and does
+    # not feed the risk matrix. The helper never raises.
+    _report_stream_parity(
+        client, report, signals,
+        probe_messages, probe_max_tokens, probe_with_thinking,
+    )
+
     print(f"  Done: stream integrity ({verdict})")
     return verdict, verdict == "inconclusive"
+
+
+def _report_stream_parity(client, report, signals, messages, max_tokens,
+                          with_thinking):
+    """Append Step 10's informational stream / non-stream parity section.
+
+    Sends one non-stream request with the same messages, max_tokens and
+    thinking setting as the Step 10 stream, then compares the pair with
+    :func:`compare_stream_nonstream`. The result is an observation only:
+    it never changes the Step 10 verdict, never calls ``report.flag()`` and
+    never feeds the risk matrix.
+
+    Must not raise: ``_run_step`` would turn an exception into an
+    inconclusive Step 10, so every failure degrades to an inconclusive
+    parity row instead.
+
+    No ``temperature`` is sent on either request. The Step 10 probe enables
+    thinking, and the Anthropic API accepts only its default temperature
+    with thinking enabled; adding ``temperature=0`` to the stream would
+    change the Step 10 request itself.
+    """
+    report.h3("Stream / non-stream parity (informational)")
+    report.p(
+        "Observed comparison between the Step 10 stream and one non-stream "
+        "request with the same messages, max_tokens and thinking setting "
+        "(both at the API default temperature). Informational only: it does "
+        "not change the Step 10 verdict or the risk matrix, and its "
+        "thresholds are provisional and uncalibrated.\n"
+    )
+    try:
+        detected_format = getattr(client, "detected_format", None)
+        if signals.transport_error or not (signals.text or "").strip():
+            nonstream = {"error": "not sent, because the stream returned no "
+                                  "comparable text"}
+        elif detected_format != "anthropic":
+            # A Chat Completions reply is not comparable with an Anthropic
+            # stream, and an undetected client would auto-detect with a
+            # thinking body and could pin the wrong format for later steps.
+            nonstream = {"error": "not sent, because the non-stream client "
+                                  "format is " + repr(detected_format)
+                                  + " rather than 'anthropic'"}
+        else:
+            nonstream = client.call(
+                messages, max_tokens=max_tokens, with_thinking=with_thinking,
+            )
+        parity = compare_stream_nonstream(signals, nonstream)
+    except Exception as exc:  # informational block must never fail Step 10
+        parity = {
+            "verdict": "inconclusive",
+            "input_tokens_delta": None,
+            "output_tokens_delta": None,
+            "output_tokens_tolerance": None,
+            "similarity": None,
+            "stop_reason": None,
+            "stop_reason_valid": False,
+            "notes": [f"Parity check failed: {type(exc).__name__}: {exc}"[:240]],
+        }
+
+    def _delta(value):
+        return "—" if value is None else f"{value:+d}"
+
+    inconclusive = parity["verdict"] == "inconclusive"
+    tolerance = parity.get("output_tokens_tolerance")
+    similarity = parity.get("similarity")
+    if inconclusive:
+        stop_cell = "—"
+    else:
+        stop_cell = (
+            ("yes" if parity["stop_reason_valid"] else "NO")
+            + f" ({parity.get('stop_reason') or 'missing'})"
+        )
+    report.p("| Metric | Observed | Provisional threshold |")
+    report.p("|--------|----------|-----------------------|")
+    report.p(
+        f"| input_tokens delta (stream - non-stream) | "
+        f"{_delta(parity['input_tokens_delta'])} | "
+        f"abs <= {PARITY_INPUT_TOKEN_TOLERANCE} |"
+    )
+    report.p(
+        f"| output_tokens delta (stream - non-stream) | "
+        f"{_delta(parity['output_tokens_delta'])} | "
+        + (f"abs <= {tolerance}" if tolerance is not None
+           else "abs <= max(3, 50% of the larger count)")
+        + " |"
+    )
+    report.p(
+        "| Text similarity (difflib ratio) | "
+        + ("—" if similarity is None else f"{similarity:.3f}")
+        + f" | >= {PARITY_SIMILARITY_MIN} |"
+    )
+    report.p(
+        f"| Streamed stop_reason valid | {stop_cell} | "
+        f"{', '.join(sorted(PARITY_VALID_STOP_REASONS))} |"
+    )
+    report.p(f"| Observed parity | {parity['verdict']} | not scored |")
+    if parity["notes"]:
+        report.p("\n**Parity notes (observed)**:")
+        for note in parity["notes"]:
+            report.p(f"- {note}")
 
 
 def test_web3_injection(client, report):
