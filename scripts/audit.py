@@ -37,7 +37,10 @@ from urllib.request import Request, urlopen
 # Allow importing from parent directory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from api_relay_audit.channel_classifier import run_channel_classifier
+from api_relay_audit.channel_classifier import (
+    run_channel_classifier,
+    run_openai_usage_probe,
+)
 from api_relay_audit.client import APIClient
 from api_relay_audit.connectivity import run_connectivity_check
 from api_relay_audit.context import run_context_scan
@@ -1610,7 +1613,90 @@ def test_channel_classifier(client, report):
 
     print(f"  Done: channel classifier ({channel}, conf={confidence:.2f}, "
           f"verdict={verdict})")
+    if getattr(client, "detected_format", None) == "openai":
+        result["openai_usage"] = _report_openai_usage_fingerprint(client, report)
     return result
+
+
+def _report_openai_usage_fingerprint(client, report):
+    """Step 14 add-on for OpenAI-format relays (v2.6, informational).
+
+    Runs only when the client already detected OpenAI-compatible format;
+    the Anthropic path and an undetected format keep the original Step 14
+    behavior (no extra request). One minimal ``client.call()`` with
+    ``max_tokens=4``; its ``usage`` key names are checked by
+    ``classify_openai_usage``. Not fed into the risk matrix. A failed probe
+    is recorded as inconclusive and the audit continues.
+    """
+    report.h3("OpenAI-format usage fingerprint (informational)")
+    report.p(
+        "The client talks to this relay in OpenAI-compatible format, so "
+        "Step 14 also sends one minimal `/v1/chat/completions` call "
+        "(`max_tokens=4`) and checks the key names of its `usage` object. "
+        "Any `claude_cache_creation*` key or the Anthropic `input_tokens` + "
+        "`output_tokens` pair means the relay translates an Anthropic-shaped "
+        "upstream response (Tier 1, `anthropic-translated`); a `usage_source` "
+        "other than `openai` names another upstream (Tier 1, "
+        "`foreign-usage-source`). Only key names are shown, plus a sanitized "
+        "`usage_source` value. "
+        "**Informational only** -- not fed into the overall risk rating.\n"
+    )
+
+    usage = run_openai_usage_probe(client)
+    verdict = usage["verdict"]
+    keys = ", ".join(f"`{k}`" for k in usage["usage_keys"])[:200]
+    matched = ", ".join(f"`{k}`" for k in usage["matched_keys"])
+    confidence = f"{usage['confidence']:.2f}"
+    if usage["tier"]:
+        confidence += f" (Tier {usage['tier']})"
+
+    report.p("| Field | Value |")
+    report.p("|-------|-------|")
+    if usage["error"]:
+        report.p(f"| probe | ERR: {str(usage['error'])[:80]} |")
+    report.p(f"| usage keys | {keys or '—'} |")
+    report.p(f"| matched keys | {matched or '—'} |")
+    source = usage.get("usage_source_value")
+    if source is not None:
+        report.p(f"| usage_source | `usage_source={source}` |")
+    report.p(f"| classified | `{usage['channel']}` |")
+    report.p(f"| confidence | {confidence} |")
+    report.p(f"| verdict | `{verdict}` |")
+
+    if verdict == "classified" and usage["channel"] == "anthropic-translated":
+        report.flag(
+            "green",
+            f"OpenAI-format usage carries Anthropic-translated fields "
+            f"({matched}): the relay converts an Anthropic-shaped upstream "
+            "response into OpenAI format. Expected when the audited model is "
+            "Claude; not by itself fraud -- it matters only if the claimed "
+            "model is not Claude or Steps 5/13 also flag. Informational only, "
+            "not in the risk matrix.",
+        )
+    elif verdict == "classified":
+        report.flag(
+            "green",
+            f"OpenAI-format usage declares a non-OpenAI upstream "
+            f"(`usage_source={source}`): the relay passes through another "
+            "provider's usage accounting. Worth a look only if that provider "
+            "does not match the claimed model. Informational only, not in the "
+            "risk matrix.",
+        )
+    elif verdict == "no-signal":
+        report.p(
+            "\nNo Anthropic-translated or foreign-source usage fields: the "
+            "`usage` object uses standard OpenAI names (or the relay scrubs "
+            "them). Informational only."
+        )
+    else:
+        report.p(
+            "\nUsage fingerprint **inconclusive**: the probe failed or the "
+            "response had no `usage` object. Informational only; the audit "
+            "continues."
+        )
+
+    print(f"  Done: OpenAI usage fingerprint ({verdict})")
+    return usage
 
 
 # ============================================================

@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 8011cb00a19f633718a179655d9b1f8ba2d7b19b900c12b7e1e77572c87108e6
-# standalone_body_sha256: 25ca81a111261f35589993d3a48e560dcbd76adf459f9c0ba49cc81d9c50eef1
+# source_sha256: c60862f67f280160be8ed100899c96a22b3995941750243dbcc4f7f69b8c9840
+# standalone_body_sha256: 2cad3032a34c59d6ae9f967a28cf8394eb81902847d846b93b4b7689ff88e331
 # END GENERATED STANDALONE HEADER
 
 """
@@ -4631,6 +4631,12 @@ AGPL-3.0; algorithm reproduced from observed behavior, not source code):
              a native Anthropic message id with no other signal implies a
              transparent relay (returns 0.5 confidence)
 
+OpenAI-format usage fingerprint (v2.6): when the client already detected
+OpenAI-compatible format, Step 14 also sends one minimal chat-completions
+call and checks the key names of its `usage` object for foreign-upstream
+residue (``classify_openai_usage``, Tier 1, labels ``anthropic-translated``
+and ``foreign-usage-source``).
+
 Informational only: result does NOT feed the 6D risk matrix. Channel labels
 like aws-bedrock or anthropic-official are legitimate serving paths; they
 become a fraud signal only when combined with Step 5 identity substitution
@@ -4840,6 +4846,103 @@ def classify_channel(headers, message_id, raw_body):
 
 
 # ----------------------------------------------------------------------
+# OpenAI-format usage fingerprint (Tier 1, informational, v2.6)
+# ----------------------------------------------------------------------
+#
+# Official Chat Completions usage is {prompt_tokens, completion_tokens,
+# total_tokens} plus optional *_details objects. Anthropic-shaped keys in
+# that object are residue left by a relay that translates an Anthropic
+# upstream response into OpenAI format; a non-OpenAI ``usage_source``
+# names another upstream outright.
+OPENAI_USAGE_TRANSLATED_LABEL = "anthropic-translated"
+OPENAI_USAGE_FOREIGN_SOURCE_LABEL = "foreign-usage-source"
+OPENAI_USAGE_CLAUDE_CACHE_PREFIX = "claude_cache_creation"
+OPENAI_USAGE_ANTHROPIC_PAIR = ("input_tokens", "output_tokens")
+# usage_source is the only usage value ever surfaced; it is reduced to this
+# character set and length before it can reach a report.
+OPENAI_USAGE_SOURCE_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
+OPENAI_USAGE_SOURCE_MAX_LEN = 32
+
+
+def classify_openai_usage(usage):
+    """Flag foreign-upstream residue in an OpenAI-format ``usage`` object.
+
+    Concept inspired by canarybyte/veridrop protocol_templates.py (AGPL-3.0); reimplemented independently.
+
+    Tier 1, deterministic, confidence 1.0 when any rule fires:
+
+      1. Any key starts with ``claude_cache_creation``
+         -> ``anthropic-translated``.
+      2. Both ``input_tokens`` and ``output_tokens`` are present (Anthropic
+         naming instead of ``prompt_tokens`` / ``completion_tokens``)
+         -> ``anthropic-translated``.
+      3. ``usage_source`` is present and its value is not ``openai``
+         (compared after strip + lowercase; ``None`` and the empty string
+         do not fire) -> ``foreign-usage-source``.
+
+    When rule 3 fires together with rule 1 or 2, ``anthropic-translated``
+    is the channel and rule 3 stays in ``evidence``.
+
+    No usage value is returned except ``usage_source_value``: the declared
+    ``usage_source`` reduced to ``[A-Za-z0-9_.-]`` and cut to 32 characters
+    (``None`` when rule 3 did not fire). Non-dict input returns the
+    no-match result instead of raising.
+
+    Returns:
+        dict with keys ``channel`` (``anthropic-translated``,
+        ``foreign-usage-source`` or ``unknown``), ``confidence`` (1.0 or
+        0.0), ``tier`` (1 or None), ``matched_keys`` (key names, rule
+        order), ``evidence`` (one string per fired rule, no values) and
+        ``usage_source_value``.
+    """
+    matched_keys = []
+    evidence = []
+    source_value = None
+    translated = False
+    if isinstance(usage, dict):
+        cache_keys = sorted(
+            k for k in usage
+            if isinstance(k, str) and k.startswith(OPENAI_USAGE_CLAUDE_CACHE_PREFIX)
+        )
+        if cache_keys:
+            translated = True
+            matched_keys.extend(cache_keys)
+            evidence.append(f"usage_key_prefix:{OPENAI_USAGE_CLAUDE_CACHE_PREFIX}")
+        if all(k in usage for k in OPENAI_USAGE_ANTHROPIC_PAIR):
+            translated = True
+            matched_keys.extend(OPENAI_USAGE_ANTHROPIC_PAIR)
+            evidence.append("usage_keys:input_tokens+output_tokens")
+        if "usage_source" in usage:
+            source = usage.get("usage_source")
+            normalized = source.strip().lower() if isinstance(source, str) else source
+            if normalized not in (None, "", "openai"):
+                matched_keys.append("usage_source")
+                evidence.append("usage_source:non-openai")
+                source_value = OPENAI_USAGE_SOURCE_UNSAFE.sub("", str(source))
+                source_value = source_value[:OPENAI_USAGE_SOURCE_MAX_LEN]
+    if translated:
+        channel = OPENAI_USAGE_TRANSLATED_LABEL
+    elif source_value is not None:
+        channel = OPENAI_USAGE_FOREIGN_SOURCE_LABEL
+    else:
+        return {
+            "channel": "unknown",
+            "confidence": 0.0,
+            "tier": None,
+            "matched_keys": [],
+            "evidence": [],
+            "usage_source_value": None,
+        }
+    return {
+        "channel": channel,
+        "confidence": 1.0,
+        "tier": 1,
+        "matched_keys": matched_keys,
+        "evidence": evidence,
+        "usage_source_value": source_value,
+    }
+
+# ----------------------------------------------------------------------
 # Probe runner
 # ----------------------------------------------------------------------
 #
@@ -4952,6 +5055,41 @@ def run_channel_classifier(client):
         "no-signal" if classification["channel"] == "unknown" else "classified"
     )
     return classification
+
+
+def run_openai_usage_probe(client):
+    """Fingerprint the ``usage`` object of one minimal OpenAI-format call.
+
+    Uses the client's normal ``call()`` path with ``max_tokens=4``; Step 14
+    only invokes this when the client already detected OpenAI format, so the
+    request goes to ``/v1/chat/completions``. Never raises.
+
+    Returns the ``classify_openai_usage`` dict plus:
+        usage_keys -- sorted top-level key names of ``usage`` (no values)
+        error      -- error string from the call, or None
+        verdict    -- "classified" (a rule fired), "no-signal" (usage present,
+                      no rule fired) or "inconclusive" (call failed or the
+                      response had no usage object)
+    """
+    try:
+        res = client.call([{"role": "user", "content": "ping"}], max_tokens=4)
+    except Exception as exc:  # call() catches internally; stay defensive
+        res = {"error": f"probe-exception: {exc}"}
+    if not isinstance(res, dict):
+        res = {"error": "probe returned no result"}
+    error = res.get("error")
+    raw = res.get("raw")
+    usage = raw.get("usage") if isinstance(raw, dict) and not error else None
+    result = classify_openai_usage(usage)
+    result["usage_keys"] = sorted(str(k) for k in usage) if isinstance(usage, dict) else []
+    result["error"] = error
+    if error or not isinstance(usage, dict):
+        result["verdict"] = "inconclusive"
+    elif result["matched_keys"]:
+        result["verdict"] = "classified"
+    else:
+        result["verdict"] = "no-signal"
+    return result
 
 
 # ============================================================
@@ -6532,7 +6670,90 @@ def test_channel_classifier(client, report):
 
     print(f"  Done: channel classifier ({channel}, conf={confidence:.2f}, "
           f"verdict={verdict})")
+    if getattr(client, "detected_format", None) == "openai":
+        result["openai_usage"] = _report_openai_usage_fingerprint(client, report)
     return result
+
+
+def _report_openai_usage_fingerprint(client, report):
+    """Step 14 add-on for OpenAI-format relays (v2.6, informational).
+
+    Runs only when the client already detected OpenAI-compatible format;
+    the Anthropic path and an undetected format keep the original Step 14
+    behavior (no extra request). One minimal ``client.call()`` with
+    ``max_tokens=4``; its ``usage`` key names are checked by
+    ``classify_openai_usage``. Not fed into the risk matrix. A failed probe
+    is recorded as inconclusive and the audit continues.
+    """
+    report.h3("OpenAI-format usage fingerprint (informational)")
+    report.p(
+        "The client talks to this relay in OpenAI-compatible format, so "
+        "Step 14 also sends one minimal `/v1/chat/completions` call "
+        "(`max_tokens=4`) and checks the key names of its `usage` object. "
+        "Any `claude_cache_creation*` key or the Anthropic `input_tokens` + "
+        "`output_tokens` pair means the relay translates an Anthropic-shaped "
+        "upstream response (Tier 1, `anthropic-translated`); a `usage_source` "
+        "other than `openai` names another upstream (Tier 1, "
+        "`foreign-usage-source`). Only key names are shown, plus a sanitized "
+        "`usage_source` value. "
+        "**Informational only** -- not fed into the overall risk rating.\n"
+    )
+
+    usage = run_openai_usage_probe(client)
+    verdict = usage["verdict"]
+    keys = ", ".join(f"`{k}`" for k in usage["usage_keys"])[:200]
+    matched = ", ".join(f"`{k}`" for k in usage["matched_keys"])
+    confidence = f"{usage['confidence']:.2f}"
+    if usage["tier"]:
+        confidence += f" (Tier {usage['tier']})"
+
+    report.p("| Field | Value |")
+    report.p("|-------|-------|")
+    if usage["error"]:
+        report.p(f"| probe | ERR: {str(usage['error'])[:80]} |")
+    report.p(f"| usage keys | {keys or '—'} |")
+    report.p(f"| matched keys | {matched or '—'} |")
+    source = usage.get("usage_source_value")
+    if source is not None:
+        report.p(f"| usage_source | `usage_source={source}` |")
+    report.p(f"| classified | `{usage['channel']}` |")
+    report.p(f"| confidence | {confidence} |")
+    report.p(f"| verdict | `{verdict}` |")
+
+    if verdict == "classified" and usage["channel"] == "anthropic-translated":
+        report.flag(
+            "green",
+            f"OpenAI-format usage carries Anthropic-translated fields "
+            f"({matched}): the relay converts an Anthropic-shaped upstream "
+            "response into OpenAI format. Expected when the audited model is "
+            "Claude; not by itself fraud -- it matters only if the claimed "
+            "model is not Claude or Steps 5/13 also flag. Informational only, "
+            "not in the risk matrix.",
+        )
+    elif verdict == "classified":
+        report.flag(
+            "green",
+            f"OpenAI-format usage declares a non-OpenAI upstream "
+            f"(`usage_source={source}`): the relay passes through another "
+            "provider's usage accounting. Worth a look only if that provider "
+            "does not match the claimed model. Informational only, not in the "
+            "risk matrix.",
+        )
+    elif verdict == "no-signal":
+        report.p(
+            "\nNo Anthropic-translated or foreign-source usage fields: the "
+            "`usage` object uses standard OpenAI names (or the relay scrubs "
+            "them). Informational only."
+        )
+    else:
+        report.p(
+            "\nUsage fingerprint **inconclusive**: the probe failed or the "
+            "response had no `usage` object. Informational only; the audit "
+            "continues."
+        )
+
+    print(f"  Done: OpenAI usage fingerprint ({verdict})")
+    return usage
 
 
 # ============================================================

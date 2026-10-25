@@ -25,6 +25,12 @@ AGPL-3.0; algorithm reproduced from observed behavior, not source code):
              a native Anthropic message id with no other signal implies a
              transparent relay (returns 0.5 confidence)
 
+OpenAI-format usage fingerprint (v2.6): when the client already detected
+OpenAI-compatible format, Step 14 also sends one minimal chat-completions
+call and checks the key names of its `usage` object for foreign-upstream
+residue (``classify_openai_usage``, Tier 1, labels ``anthropic-translated``
+and ``foreign-usage-source``).
+
 Informational only: result does NOT feed the 6D risk matrix. Channel labels
 like aws-bedrock or anthropic-official are legitimate serving paths; they
 become a fraud signal only when combined with Step 5 identity substitution
@@ -234,6 +240,103 @@ def classify_channel(headers, message_id, raw_body):
 
 
 # ----------------------------------------------------------------------
+# OpenAI-format usage fingerprint (Tier 1, informational, v2.6)
+# ----------------------------------------------------------------------
+#
+# Official Chat Completions usage is {prompt_tokens, completion_tokens,
+# total_tokens} plus optional *_details objects. Anthropic-shaped keys in
+# that object are residue left by a relay that translates an Anthropic
+# upstream response into OpenAI format; a non-OpenAI ``usage_source``
+# names another upstream outright.
+OPENAI_USAGE_TRANSLATED_LABEL = "anthropic-translated"
+OPENAI_USAGE_FOREIGN_SOURCE_LABEL = "foreign-usage-source"
+OPENAI_USAGE_CLAUDE_CACHE_PREFIX = "claude_cache_creation"
+OPENAI_USAGE_ANTHROPIC_PAIR = ("input_tokens", "output_tokens")
+# usage_source is the only usage value ever surfaced; it is reduced to this
+# character set and length before it can reach a report.
+OPENAI_USAGE_SOURCE_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
+OPENAI_USAGE_SOURCE_MAX_LEN = 32
+
+
+def classify_openai_usage(usage):
+    """Flag foreign-upstream residue in an OpenAI-format ``usage`` object.
+
+    Concept inspired by canarybyte/veridrop protocol_templates.py (AGPL-3.0); reimplemented independently.
+
+    Tier 1, deterministic, confidence 1.0 when any rule fires:
+
+      1. Any key starts with ``claude_cache_creation``
+         -> ``anthropic-translated``.
+      2. Both ``input_tokens`` and ``output_tokens`` are present (Anthropic
+         naming instead of ``prompt_tokens`` / ``completion_tokens``)
+         -> ``anthropic-translated``.
+      3. ``usage_source`` is present and its value is not ``openai``
+         (compared after strip + lowercase; ``None`` and the empty string
+         do not fire) -> ``foreign-usage-source``.
+
+    When rule 3 fires together with rule 1 or 2, ``anthropic-translated``
+    is the channel and rule 3 stays in ``evidence``.
+
+    No usage value is returned except ``usage_source_value``: the declared
+    ``usage_source`` reduced to ``[A-Za-z0-9_.-]`` and cut to 32 characters
+    (``None`` when rule 3 did not fire). Non-dict input returns the
+    no-match result instead of raising.
+
+    Returns:
+        dict with keys ``channel`` (``anthropic-translated``,
+        ``foreign-usage-source`` or ``unknown``), ``confidence`` (1.0 or
+        0.0), ``tier`` (1 or None), ``matched_keys`` (key names, rule
+        order), ``evidence`` (one string per fired rule, no values) and
+        ``usage_source_value``.
+    """
+    matched_keys = []
+    evidence = []
+    source_value = None
+    translated = False
+    if isinstance(usage, dict):
+        cache_keys = sorted(
+            k for k in usage
+            if isinstance(k, str) and k.startswith(OPENAI_USAGE_CLAUDE_CACHE_PREFIX)
+        )
+        if cache_keys:
+            translated = True
+            matched_keys.extend(cache_keys)
+            evidence.append(f"usage_key_prefix:{OPENAI_USAGE_CLAUDE_CACHE_PREFIX}")
+        if all(k in usage for k in OPENAI_USAGE_ANTHROPIC_PAIR):
+            translated = True
+            matched_keys.extend(OPENAI_USAGE_ANTHROPIC_PAIR)
+            evidence.append("usage_keys:input_tokens+output_tokens")
+        if "usage_source" in usage:
+            source = usage.get("usage_source")
+            normalized = source.strip().lower() if isinstance(source, str) else source
+            if normalized not in (None, "", "openai"):
+                matched_keys.append("usage_source")
+                evidence.append("usage_source:non-openai")
+                source_value = OPENAI_USAGE_SOURCE_UNSAFE.sub("", str(source))
+                source_value = source_value[:OPENAI_USAGE_SOURCE_MAX_LEN]
+    if translated:
+        channel = OPENAI_USAGE_TRANSLATED_LABEL
+    elif source_value is not None:
+        channel = OPENAI_USAGE_FOREIGN_SOURCE_LABEL
+    else:
+        return {
+            "channel": "unknown",
+            "confidence": 0.0,
+            "tier": None,
+            "matched_keys": [],
+            "evidence": [],
+            "usage_source_value": None,
+        }
+    return {
+        "channel": channel,
+        "confidence": 1.0,
+        "tier": 1,
+        "matched_keys": matched_keys,
+        "evidence": evidence,
+        "usage_source_value": source_value,
+    }
+
+# ----------------------------------------------------------------------
 # Probe runner
 # ----------------------------------------------------------------------
 #
@@ -346,3 +449,38 @@ def run_channel_classifier(client):
         "no-signal" if classification["channel"] == "unknown" else "classified"
     )
     return classification
+
+
+def run_openai_usage_probe(client):
+    """Fingerprint the ``usage`` object of one minimal OpenAI-format call.
+
+    Uses the client's normal ``call()`` path with ``max_tokens=4``; Step 14
+    only invokes this when the client already detected OpenAI format, so the
+    request goes to ``/v1/chat/completions``. Never raises.
+
+    Returns the ``classify_openai_usage`` dict plus:
+        usage_keys -- sorted top-level key names of ``usage`` (no values)
+        error      -- error string from the call, or None
+        verdict    -- "classified" (a rule fired), "no-signal" (usage present,
+                      no rule fired) or "inconclusive" (call failed or the
+                      response had no usage object)
+    """
+    try:
+        res = client.call([{"role": "user", "content": "ping"}], max_tokens=4)
+    except Exception as exc:  # call() catches internally; stay defensive
+        res = {"error": f"probe-exception: {exc}"}
+    if not isinstance(res, dict):
+        res = {"error": "probe returned no result"}
+    error = res.get("error")
+    raw = res.get("raw")
+    usage = raw.get("usage") if isinstance(raw, dict) and not error else None
+    result = classify_openai_usage(usage)
+    result["usage_keys"] = sorted(str(k) for k in usage) if isinstance(usage, dict) else []
+    result["error"] = error
+    if error or not isinstance(usage, dict):
+        result["verdict"] = "inconclusive"
+    elif result["matched_keys"]:
+        result["verdict"] = "classified"
+    else:
+        result["verdict"] = "no-signal"
+    return result
