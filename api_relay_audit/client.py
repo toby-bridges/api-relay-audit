@@ -16,6 +16,7 @@ import httpx
 
 from api_relay_audit import _transport
 from api_relay_audit.error_diagnosis import diagnose_error
+from api_relay_audit.error_leakage import redact_sensitive_text
 from api_relay_audit.stream_integrity import StreamSignals
 
 
@@ -183,6 +184,8 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
                 signals.content_block_types.append(block_type)
             if block.get("type") == "thinking":
                 signals.thinking_start_seen = True
+            if block.get("type") in ("thinking", "redacted_thinking"):
+                _capture_thinking_block_start(block, signals)
 
     elif event_type == "content_block_delta":
         signals.has_content_block_delta = True
@@ -199,10 +202,12 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
                     signals.text = (signals.text + text)[:MAX_STREAM_TEXT_CHARS]
             elif delta_type == "thinking_delta":
                 signals.thinking_delta_seen = True
+                _capture_thinking_delta(signals, "thinking", delta.get("thinking"))
             elif delta_type == "signature_delta":
                 signature = delta.get("signature")
                 if isinstance(signature, str) and not signature.strip():
                     signals.empty_signature_delta_count += 1
+                _capture_thinking_delta(signals, "signature", signature)
 
     elif event_type == "message_delta":
         signals.has_message_delta = True
@@ -224,6 +229,65 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
         signals.has_message_stop = True
 
 
+def _thinking_capture_size(signals: StreamSignals) -> int:
+    """Characters held in ``signals.thinking_blocks`` payload fields."""
+    size = 0
+    for block in signals.thinking_blocks:
+        for key in ("thinking", "signature", "data"):
+            value = block.get(key)
+            if isinstance(value, str):
+                size += len(value)
+    return size
+
+
+def _capture_thinking_block_start(block: dict, signals: StreamSignals) -> None:
+    """Open one captured ``thinking`` / ``redacted_thinking`` block.
+
+    The block is kept in the shape the Messages API accepts back. Once a
+    bound is hit the capture stops for good and is marked truncated, so a
+    partial block is never replayed.
+    """
+    if signals.thinking_capture_truncated:
+        return
+    if block.get("type") == "redacted_thinking":
+        data = block.get("data")
+        entry = {"type": "redacted_thinking",
+                 "data": data if isinstance(data, str) else ""}
+    else:
+        thinking = block.get("thinking")
+        signature = block.get("signature")
+        entry = {"type": "thinking",
+                 "thinking": thinking if isinstance(thinking, str) else "",
+                 "signature": signature if isinstance(signature, str) else ""}
+    added = sum(len(v) for k, v in entry.items() if k != "type")
+    if (len(signals.thinking_blocks) >= MAX_STREAM_THINKING_BLOCKS
+            or _thinking_capture_size(signals) + added > MAX_STREAM_THINKING_CHARS):
+        signals.thinking_capture_truncated = True
+        return
+    signals.thinking_blocks.append(entry)
+
+
+def _capture_thinking_delta(signals: StreamSignals, key: str, value) -> None:
+    """Append a ``thinking_delta`` / ``signature_delta`` value to the open block.
+
+    Deltas belong to the block opened by the latest ``content_block_start``,
+    so they are applied only while that block is a captured thinking block.
+    A genuine stream sends one ``signature_delta`` per block; appending keeps
+    a relay that splits it into several deltas replayable.
+    """
+    if signals.thinking_capture_truncated or not isinstance(value, str):
+        return
+    if (not signals.thinking_blocks
+            or not signals.content_block_types
+            or signals.content_block_types[-1] != "thinking"
+            or signals.thinking_blocks[-1].get("type") != "thinking"):
+        return
+    if _thinking_capture_size(signals) + len(value) > MAX_STREAM_THINKING_CHARS:
+        signals.thinking_capture_truncated = True
+        return
+    signals.thinking_blocks[-1][key] += value
+
+
 # v1.7.1 safety valve: cap the SSE parser buffer so a malformed/
 # malicious relay that sends a huge chunk without newlines cannot
 # grow memory unboundedly. 1 MB is comfortably above any real
@@ -232,7 +296,24 @@ MAX_STREAM_BUFFER_BYTES = 1024 * 1024
 # Same idea for StreamSignals.text: bound memory and CPU when a relay streams
 # far more text than requested. 64 KiB is far above Step 10's 100-token probe.
 MAX_STREAM_TEXT_CHARS = 64 * 1024
+# Same idea for StreamSignals.thinking_blocks (thinking text, signatures and
+# redacted data kept for the opt-in signature round-trip). Step 10's probe
+# thinks for under 100 tokens, so real streams stay far below both bounds.
+MAX_STREAM_THINKING_CHARS = 64 * 1024
+MAX_STREAM_THINKING_BLOCKS = 16
+# Error text kept from a signature replay, after redaction.
+REPLAY_ERROR_CHARS = 160
 CURL_STATUS_SENTINEL = "__CODEX_HTTP_STATUS__:"
+
+
+def _clip_replay_error(text, api_key: str) -> str:
+    """Redact, flatten and clip the error text of a signature replay.
+
+    Redaction runs on the full text before the cut, so a credential cannot
+    survive by being split at the boundary.
+    """
+    text = redact_sensitive_text(str(text), api_key)
+    return " ".join(text.split())[:REPLAY_ERROR_CHARS]
 
 
 def _process_sse_line(line: str, signals: StreamSignals) -> bool:
@@ -1105,6 +1186,83 @@ class APIClient:
                 signals.transport_error)
 
         return signals
+
+    def replay_thinking(self, messages_prefix, assistant_content,
+                        follow_up_text, max_tokens=32) -> dict:
+        """Pass a streamed assistant turn back once (opt-in signature round-trip).
+
+        Sends one non-stream Anthropic request whose ``messages`` are
+        ``messages_prefix`` (the original user turn, unchanged), an assistant
+        turn whose ``content`` is ``assistant_content`` exactly as given (the
+        streamed thinking blocks plus the reply text) and a new user turn with
+        ``follow_up_text``. ``thinking`` comes from the same builder as the
+        Step 10 stream. No system prompt, tools or sampling parameters are
+        sent: current API versions reject temperature / top_p / top_k.
+
+        Never raises. Returns a normalized dict:
+
+        - ``status``: HTTP status code, or ``None`` on a transport failure
+        - ``error``: ``None`` on 2xx; otherwise the error message of an error
+          body (else the raw body or transport error), redacted and clipped
+          to :data:`REPLAY_ERROR_CHARS` characters
+        - ``error_type``: ``error.type`` of an Anthropic error body, or ``None``
+        - ``input_tokens``: ``usage.input_tokens`` of a 2xx reply, or ``None``
+        """
+        result = {"status": None, "error": None, "error_type": None,
+                  "input_tokens": None}
+        try:
+            body = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "messages": list(messages_prefix) + [
+                    {"role": "assistant", "content": assistant_content},
+                    {"role": "user", "content": follow_up_text},
+                ],
+                "thinking": _thinking_config(max_tokens),
+            }
+            headers = {
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+            }
+            response = self.raw_request(
+                "POST", "/v1/messages", headers,
+                json.dumps(body).encode("utf-8"),
+                content_type="application/json", timeout=self.timeout,
+            )
+            if not isinstance(response, dict):
+                response = {"status": 0, "error": "unexpected raw_request result"}
+            status = response.get("status")
+            if isinstance(status, bool) or not isinstance(status, int) or status <= 0:
+                result["error"] = _clip_replay_error(
+                    response.get("error") or "no HTTP status", self.api_key)
+                return result
+            result["status"] = status
+            body_text = response.get("body")
+            body_text = body_text if isinstance(body_text, str) else ""
+            try:
+                payload = json.loads(body_text) if body_text.strip() else None
+            except ValueError:
+                payload = None
+            if 200 <= status < 300:
+                usage = payload.get("usage") if isinstance(payload, dict) else None
+                input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
+                if isinstance(input_tokens, int) and not isinstance(input_tokens, bool):
+                    result["input_tokens"] = input_tokens
+                return result
+            message = body_text
+            error_obj = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(error_obj, dict):
+                if payload.get("type") == "error" and isinstance(error_obj.get("type"), str):
+                    result["error_type"] = _clip_replay_error(
+                        error_obj["type"], self.api_key)
+                if isinstance(error_obj.get("message"), str) and error_obj["message"].strip():
+                    message = error_obj["message"]
+            result["error"] = _clip_replay_error(
+                message if message.strip() else f"HTTP {status}", self.api_key)
+        except Exception as e:
+            result["error"] = _clip_replay_error(
+                f"{type(e).__name__}: {e}", self.api_key)
+        return result
 
     def _stream_via_httpx(self, url: str, headers: dict, body: dict,
                           timeout: int, signals: StreamSignals,

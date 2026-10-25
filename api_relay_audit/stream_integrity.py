@@ -170,6 +170,17 @@ class StreamSignals:
             stream / non-stream parity check.
         stop_reason: The last non-empty ``delta.stop_reason`` seen in a
             ``message_delta`` event, or ``None``.
+        thinking_blocks: Every ``thinking`` and ``redacted_thinking`` content
+            block, in stream order, in the shape the Messages API accepts
+            back: ``{"type": "thinking", "thinking": <accumulated
+            thinking_delta text>, "signature": <signature_delta value>}`` or
+            ``{"type": "redacted_thinking", "data": ...}``. Read only by the
+            opt-in signature round-trip check; :func:`analyze_stream` ignores
+            it. Bounded by the client's ``MAX_STREAM_THINKING_CHARS`` and
+            ``MAX_STREAM_THINKING_BLOCKS``.
+        thinking_capture_truncated: True iff one of those bounds stopped the
+            capture. :attr:`thinking_blocks` then no longer matches the
+            stream byte for byte and must not be replayed.
     """
 
     # Ordered event type sequence (for whitelist check)
@@ -206,6 +217,10 @@ class StreamSignals:
     # Content and terminal signals (stream / non-stream parity)
     text: str = ""
     stop_reason: Optional[str] = None
+
+    # Thinking blocks as streamed (opt-in signature round-trip replay)
+    thinking_blocks: List[dict] = field(default_factory=list)
+    thinking_capture_truncated: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -693,4 +708,232 @@ def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
         )
 
     result["verdict"] = "consistent" if (input_ok and stop_reason_valid) else "divergent"
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Thinking signature round-trip (opt-in, informational)
+# ---------------------------------------------------------------------------
+#
+# The Messages API checks a thinking block's signature when the block is
+# passed back: the block must come from the current model and nothing before
+# it (system, tools, earlier messages) may have changed. With
+# ``--verify-signature`` Step 10 passes its own streamed assistant turn back
+# twice, intact and with one signature character changed. Without a tool-use
+# turn the model may strip replayed thinking blocks before any check, so two
+# accepted replays carry no signal either way. Informational only: nothing
+# here feeds the Step 10 verdict or the risk matrix.
+
+# A tampered replay rejected with HTTP 400 counts as a signature rejection
+# only when its error text mentions one of these words (casefolded).
+SIGNATURE_ERROR_KEYWORDS = ("signature", "thinking")
+
+
+def has_replayable_signature(signals: "StreamSignals") -> bool:
+    """True iff the stream captured a thinking block with a non-empty signature."""
+    blocks = getattr(signals, "thinking_blocks", None)
+    if not isinstance(blocks, list):
+        return False
+    return any(
+        isinstance(block, dict)
+        and block.get("type") == "thinking"
+        and isinstance(block.get("signature"), str)
+        and bool(block["signature"].strip())
+        for block in blocks
+    )
+
+
+def tamper_signature(signature: str) -> str:
+    """Return ``signature`` with only its middle character replaced.
+
+    The replacement stays in the base64 alphabet (``A``, or ``B`` when the
+    middle character already is ``A``), so the length and encoding do not
+    change and the value differs in exactly one character.
+    """
+    if not isinstance(signature, str) or not signature:
+        return signature
+    mid = len(signature) // 2
+    replacement = "B" if signature[mid] == "A" else "A"
+    return signature[:mid] + replacement + signature[mid + 1:]
+
+
+def build_replay_assistant_content(thinking_blocks, text, tamper=False) -> list:
+    """Rebuild the streamed assistant turn for the signature round-trip.
+
+    Returns every captured ``thinking`` / ``redacted_thinking`` block in
+    stream order, unchanged, followed by ``text`` as one text block when it is
+    not blank. With ``tamper=True`` the first thinking block with a non-empty
+    signature carries :func:`tamper_signature` instead, so the tampered turn
+    differs from the intact one in exactly one character.
+    """
+    content = []
+    tampered = False
+    for block in thinking_blocks if isinstance(thinking_blocks, list) else []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "thinking":
+            thinking = block.get("thinking")
+            signature = block.get("signature")
+            item = {
+                "type": "thinking",
+                "thinking": thinking if isinstance(thinking, str) else "",
+                "signature": signature if isinstance(signature, str) else "",
+            }
+            if tamper and not tampered and item["signature"].strip():
+                item["signature"] = tamper_signature(item["signature"])
+                tampered = True
+            content.append(item)
+        elif block.get("type") == "redacted_thinking":
+            data = block.get("data")
+            content.append({
+                "type": "redacted_thinking",
+                "data": data if isinstance(data, str) else "",
+            })
+    if isinstance(text, str) and text.strip():
+        content.append({"type": "text", "text": text})
+    return content
+
+
+def replay_status(result) -> Optional[int]:
+    """Return the HTTP status of a replay result, or ``None``."""
+    if not isinstance(result, dict):
+        return None
+    status = result.get("status")
+    if isinstance(status, bool) or not isinstance(status, int):
+        return None
+    return status
+
+
+def replay_accepted(result) -> bool:
+    """True iff a replay result carries a 2xx HTTP status."""
+    status = replay_status(result)
+    return status is not None and 200 <= status < 300
+
+
+def _replay_mentions_signature(result) -> bool:
+    error = result.get("error") if isinstance(result, dict) else None
+    if not isinstance(error, str):
+        return False
+    folded = error.casefold()
+    return any(word in folded for word in SIGNATURE_ERROR_KEYWORDS)
+
+
+def _replay_input_tokens(result) -> Optional[int]:
+    value = result.get("input_tokens") if isinstance(result, dict) else None
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def analyze_signature_roundtrip(intact, tampered) -> dict:
+    """Judge the opt-in thinking signature round-trip.
+
+    ``intact`` is the :meth:`api_relay_audit.client.APIClient.replay_thinking`
+    result for the streamed assistant turn passed back unchanged; ``tampered``
+    is the result with one signature character changed, or ``None`` when it
+    was not sent. Each result carries ``status`` (HTTP status or ``None``),
+    ``error``, ``error_type`` and ``input_tokens``.
+
+    Returns a dict with ``verdict``, ``intact_status``, ``tampered_status``,
+    ``tampered_mentions_signature`` and ``notes``. Verdict, first match wins:
+
+    1. ``"inconclusive"``: the intact replay was not accepted (no 2xx).
+    2. ``"upstream-verified"``: intact 2xx, tampered HTTP 400 with an error
+       mentioning one of :data:`SIGNATURE_ERROR_KEYWORDS`.
+    3. ``"no-signal"``: both replays 2xx. The model may strip non-tool-use
+       thinking blocks before checking them, so this shows neither that
+       nothing verifies signatures nor that the signature was forged.
+    4. ``"inconclusive"``: any other combination.
+
+    ``input_tokens`` never decides the verdict. When both replays are
+    accepted it is compared and noted as an inference: dropped blocks are
+    not billed, so a lower tampered count fits "dropped" rather than
+    "accepted"; equal counts are uninformative.
+
+    Informational only. Pure and deterministic, no I/O.
+    """
+    intact_status = replay_status(intact)
+    tampered_status = replay_status(tampered)
+    mentions = _replay_mentions_signature(tampered)
+    notes = []
+    result = {
+        "verdict": "inconclusive",
+        "intact_status": intact_status,
+        "tampered_status": tampered_status,
+        "tampered_mentions_signature": mentions,
+        "notes": notes,
+    }
+
+    if not replay_accepted(intact):
+        error_type = intact.get("error_type") if isinstance(intact, dict) else None
+        notes.append(
+            "Intact replay not accepted (HTTP "
+            + (str(intact_status) if intact_status is not None else "none")
+            + (f", error_type {error_type}" if error_type else "")
+            + "); the round-trip cannot be judged."
+        )
+        return result
+
+    if tampered is None:
+        notes.append("Tampered replay not sent; the round-trip cannot be judged.")
+        return result
+
+    if tampered_status == 400 and mentions:
+        result["verdict"] = "upstream-verified"
+        notes.append(
+            "Intact replay accepted and the one-character signature change "
+            "rejected with HTTP 400: something upstream checks thinking "
+            "signatures. A valid signature shows only that the block was "
+            "produced for this model; it says nothing about pricing tier or "
+            "text-only substitution."
+        )
+        return result
+
+    if replay_accepted(tampered):
+        result["verdict"] = "no-signal"
+        notes.append(
+            "Both replays accepted. The model may strip thinking blocks that "
+            "are not part of a tool-use turn before checking them, so this "
+            "shows neither that nothing upstream verifies signatures nor that "
+            "the signature was forged."
+        )
+        intact_tokens = _replay_input_tokens(intact)
+        tampered_tokens = _replay_input_tokens(tampered)
+        if intact_tokens is not None and tampered_tokens is not None:
+            if tampered_tokens < intact_tokens:
+                notes.append(
+                    f"Inference, not part of the verdict: the tampered replay "
+                    f"billed fewer input_tokens ({tampered_tokens} vs "
+                    f"{intact_tokens}). Dropped blocks are not billed, so this "
+                    "fits the tampered block being dropped rather than accepted."
+                )
+            elif tampered_tokens > intact_tokens:
+                notes.append(
+                    f"Inference, not part of the verdict: the tampered replay "
+                    f"billed more input_tokens ({tampered_tokens} vs "
+                    f"{intact_tokens}); a dropped block does not explain that, "
+                    "so it is not interpreted."
+                )
+            else:
+                notes.append(
+                    f"input_tokens equal on both replays ({intact_tokens}): "
+                    "uninformative, both blocks may have been stripped or both "
+                    "accepted."
+                )
+        return result
+
+    if tampered_status == 400:
+        notes.append(
+            "Tampered replay returned HTTP 400, but its error does not mention "
+            "signature or thinking, so the rejection cannot be attributed to "
+            "the signature."
+        )
+    else:
+        error_type = tampered.get("error_type") if isinstance(tampered, dict) else None
+        notes.append(
+            "Tampered replay returned HTTP "
+            + (str(tampered_status) if tampered_status is not None else "none")
+            + (f" ({error_type})" if error_type else "")
+            + "; only HTTP 400 counts as a signature rejection."
+        )
     return result
