@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 1555ba8e88ced425338ee24fcd712a652e3a8c3c2fbf596efd8ef14976090f85
-# standalone_body_sha256: f5ce2ca92df4efc29bb6d7be2935bdc95e2b2c05d02382090d64f60600f2021b
+# source_sha256: c9bfb2a88711f8d01aae857284d87917f1b045e25cccddcf808cc8c3a773744f
+# standalone_body_sha256: 1a096865cb89cf34ed475699ced70a21ef36f86a09c1848b2c3618204b5f52f9
 # END GENERATED STANDALONE HEADER
 
 """
@@ -327,9 +327,13 @@ class StreamSignals:
             opt-in signature round-trip check; :func:`analyze_stream` ignores
             it. Bounded by the client's ``MAX_STREAM_THINKING_CHARS`` and
             ``MAX_STREAM_THINKING_BLOCKS``.
-        thinking_capture_truncated: True iff one of those bounds stopped the
-            capture. :attr:`thinking_blocks` then no longer matches the
-            stream byte for byte and must not be replayed.
+        thinking_block_indexes: The content block ``index`` of each entry in
+            :attr:`thinking_blocks`, in the same order. Deltas are attributed
+            by this index, so interleaved blocks cannot leak into each other.
+        thinking_capture_issue: ``None`` while the capture is faithful;
+            otherwise why it stopped (a bound was hit, or a delta could not
+            be attributed to a started thinking block). :attr:`thinking_blocks`
+            must then not be replayed.
     """
 
     # Ordered event type sequence (for whitelist check)
@@ -369,7 +373,8 @@ class StreamSignals:
 
     # Thinking blocks as streamed (opt-in signature round-trip replay)
     thinking_blocks: List[dict] = field(default_factory=list)
-    thinking_capture_truncated: bool = False
+    thinking_block_indexes: List[int] = field(default_factory=list)
+    thinking_capture_issue: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -874,21 +879,27 @@ def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
 # here feeds the Step 10 verdict or the risk matrix.
 
 # A tampered replay rejected with HTTP 400 counts as a signature rejection
-# only when its error text mentions one of these words (casefolded).
-SIGNATURE_ERROR_KEYWORDS = ("signature", "thinking")
+# only when its error text mentions this word (casefolded). "thinking" alone
+# is not enough: a 400 about the thinking configuration (budget_tokens, say)
+# says nothing about the signature. The keyword is presumed until a
+# direct-upstream baseline records the real error text.
+SIGNATURE_ERROR_KEYWORD = "signature"
 
 
 def has_replayable_signature(signals: "StreamSignals") -> bool:
-    """True iff the stream captured a thinking block with a non-empty signature."""
+    """True iff at least one thinking block was captured and every captured
+    thinking block has a non-empty signature.
+
+    A thinking block without a signature cannot be passed back, so even the
+    intact replay would be rejected.
+    """
     blocks = getattr(signals, "thinking_blocks", None)
     if not isinstance(blocks, list):
         return False
-    return any(
-        isinstance(block, dict)
-        and block.get("type") == "thinking"
-        and isinstance(block.get("signature"), str)
-        and bool(block["signature"].strip())
-        for block in blocks
+    thinking = [b for b in blocks if isinstance(b, dict) and b.get("type") == "thinking"]
+    return bool(thinking) and all(
+        isinstance(b.get("signature"), str) and bool(b["signature"].strip())
+        for b in thinking
     )
 
 
@@ -954,17 +965,22 @@ def replay_status(result) -> Optional[int]:
 
 
 def replay_accepted(result) -> bool:
-    """True iff a replay result carries a 2xx HTTP status."""
+    """True iff a replay result is a 2xx without an error.
+
+    :meth:`api_relay_audit.client.APIClient.replay_thinking` sets ``error``
+    on a 2xx whose body is an error or not a message, so such a reply never
+    counts as accepted.
+    """
     status = replay_status(result)
-    return status is not None and 200 <= status < 300
+    return (status is not None and 200 <= status < 300
+            and not result.get("error"))
 
 
 def _replay_mentions_signature(result) -> bool:
     error = result.get("error") if isinstance(result, dict) else None
     if not isinstance(error, str):
         return False
-    folded = error.casefold()
-    return any(word in folded for word in SIGNATURE_ERROR_KEYWORDS)
+    return SIGNATURE_ERROR_KEYWORD in error.casefold()
 
 
 def _replay_input_tokens(result) -> Optional[int]:
@@ -986,18 +1002,20 @@ def analyze_signature_roundtrip(intact, tampered) -> dict:
     Returns a dict with ``verdict``, ``intact_status``, ``tampered_status``,
     ``tampered_mentions_signature`` and ``notes``. Verdict, first match wins:
 
-    1. ``"inconclusive"``: the intact replay was not accepted (no 2xx).
-    2. ``"upstream-verified"``: intact 2xx, tampered HTTP 400 with an error
-       mentioning one of :data:`SIGNATURE_ERROR_KEYWORDS`.
+    1. ``"inconclusive"``: the intact replay was not accepted (no 2xx
+       without an error, see :func:`replay_accepted`).
+    2. ``"upstream-verified"``: intact accepted, tampered HTTP 400 with an
+       error mentioning :data:`SIGNATURE_ERROR_KEYWORD`.
     3. ``"no-signal"``: both replays 2xx. The model may strip non-tool-use
        thinking blocks before checking them, so this shows neither that
        nothing verifies signatures nor that the signature was forged.
     4. ``"inconclusive"``: any other combination.
 
     ``input_tokens`` never decides the verdict. When both replays are
-    accepted it is compared and noted as an inference: dropped blocks are
-    not billed, so a lower tampered count fits "dropped" rather than
-    "accepted"; equal counts are uninformative.
+    accepted it is compared and noted as an inference: the docs say blocks
+    the model cannot read are dropped without billing, so if an invalid
+    block is handled the same way, a lower tampered count fits "dropped"
+    rather than "accepted"; equal counts are uninformative.
 
     Informational only. Pure and deterministic, no I/O.
     """
@@ -1053,8 +1071,10 @@ def analyze_signature_roundtrip(intact, tampered) -> dict:
                 notes.append(
                     f"Inference, not part of the verdict: the tampered replay "
                     f"billed fewer input_tokens ({tampered_tokens} vs "
-                    f"{intact_tokens}). Dropped blocks are not billed, so this "
-                    "fits the tampered block being dropped rather than accepted."
+                    f"{intact_tokens}). The docs say blocks the model cannot "
+                    "read are dropped without billing; if an invalid block is "
+                    "handled the same way, this fits the tampered block being "
+                    "dropped rather than accepted."
                 )
             elif tampered_tokens > intact_tokens:
                 notes.append(
@@ -1071,18 +1091,30 @@ def analyze_signature_roundtrip(intact, tampered) -> dict:
                 )
         return result
 
+    error_type = tampered.get("error_type") if isinstance(tampered, dict) else None
+    type_text = f" ({error_type})" if error_type else ""
     if tampered_status == 400:
+        error = tampered.get("error") if isinstance(tampered, dict) else None
+        only_thinking = isinstance(error, str) and "thinking" in error.casefold()
         notes.append(
-            "Tampered replay returned HTTP 400, but its error does not mention "
-            "signature or thinking, so the rejection cannot be attributed to "
-            "the signature."
+            f"Tampered replay returned HTTP 400{type_text}, but its error does "
+            "not mention signature"
+            + (" (it mentions thinking only)" if only_thinking else "")
+            + ", so the rejection is not attributed to the signature. The "
+            "keyword rule is presumed until a direct-upstream baseline records "
+            "the real error text."
+        )
+    elif tampered_status is not None and 200 <= tampered_status < 300:
+        notes.append(
+            f"Tampered replay returned HTTP {tampered_status}{type_text} with "
+            "an error or non-message body; it counts neither as accepted nor "
+            "as a signature rejection."
         )
     else:
-        error_type = tampered.get("error_type") if isinstance(tampered, dict) else None
         notes.append(
             "Tampered replay returned HTTP "
             + (str(tampered_status) if tampered_status is not None else "none")
-            + (f" ({error_type})" if error_type else "")
+            + type_text
             + "; only HTTP 400 counts as a signature rejection."
         )
     return result
@@ -1468,7 +1500,7 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
             if block.get("type") == "thinking":
                 signals.thinking_start_seen = True
             if block.get("type") in ("thinking", "redacted_thinking"):
-                _capture_thinking_block_start(block, signals)
+                _capture_thinking_block_start(event, block, signals)
 
     elif event_type == "content_block_delta":
         signals.has_content_block_delta = True
@@ -1485,12 +1517,12 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
                     signals.text = (signals.text + text)[:MAX_STREAM_TEXT_CHARS]
             elif delta_type == "thinking_delta":
                 signals.thinking_delta_seen = True
-                _capture_thinking_delta(signals, "thinking", delta.get("thinking"))
+                _capture_thinking_delta(event, signals, "thinking", delta.get("thinking"))
             elif delta_type == "signature_delta":
                 signature = delta.get("signature")
                 if isinstance(signature, str) and not signature.strip():
                     signals.empty_signature_delta_count += 1
-                _capture_thinking_delta(signals, "signature", signature)
+                _capture_thinking_delta(event, signals, "signature", signature)
 
     elif event_type == "message_delta":
         signals.has_message_delta = True
@@ -1523,14 +1555,38 @@ def _thinking_capture_size(signals: StreamSignals) -> int:
     return size
 
 
-def _capture_thinking_block_start(block: dict, signals: StreamSignals) -> None:
+def _content_block_index(event: dict):
+    """Return the event's content block ``index``, or ``None`` if missing."""
+    index = event.get("index")
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        return None
+    return index
+
+
+def _stop_thinking_capture(signals: StreamSignals, reason: str) -> None:
+    """Mark the thinking capture as not replayable; the first reason wins."""
+    if signals.thinking_capture_issue is None:
+        signals.thinking_capture_issue = reason
+
+
+def _capture_thinking_block_start(event: dict, block: dict,
+                                  signals: StreamSignals) -> None:
     """Open one captured ``thinking`` / ``redacted_thinking`` block.
 
-    The block is kept in the shape the Messages API accepts back. Once a
-    bound is hit the capture stops for good and is marked truncated, so a
-    partial block is never replayed.
+    The block is kept in the shape the Messages API accepts back and keyed by
+    the event's content block ``index``. A missing or repeated index, or a
+    bound being hit, stops the capture for good with a reason, so an
+    uncertain or partial capture is never replayed.
     """
-    if signals.thinking_capture_truncated:
+    if signals.thinking_capture_issue is not None:
+        return
+    index = _content_block_index(event)
+    if index is None:
+        _stop_thinking_capture(
+            signals, "a thinking block started without a content block index")
+        return
+    if index in signals.thinking_block_indexes:
+        _stop_thinking_capture(signals, f"content block {index} started twice")
         return
     if block.get("type") == "redacted_thinking":
         data = block.get("data")
@@ -1545,31 +1601,40 @@ def _capture_thinking_block_start(block: dict, signals: StreamSignals) -> None:
     added = sum(len(v) for k, v in entry.items() if k != "type")
     if (len(signals.thinking_blocks) >= MAX_STREAM_THINKING_BLOCKS
             or _thinking_capture_size(signals) + added > MAX_STREAM_THINKING_CHARS):
-        signals.thinking_capture_truncated = True
+        _stop_thinking_capture(signals, "the thinking capture bound was exceeded")
         return
     signals.thinking_blocks.append(entry)
+    signals.thinking_block_indexes.append(index)
 
 
-def _capture_thinking_delta(signals: StreamSignals, key: str, value) -> None:
-    """Append a ``thinking_delta`` / ``signature_delta`` value to the open block.
+def _capture_thinking_delta(event: dict, signals: StreamSignals, key: str,
+                            value) -> None:
+    """Append a ``thinking_delta`` / ``signature_delta`` value to its block.
 
-    Deltas belong to the block opened by the latest ``content_block_start``,
-    so they are applied only while that block is a captured thinking block.
-    A genuine stream sends one ``signature_delta`` per block; appending keeps
-    a relay that splits it into several deltas replayable.
+    The block is found by the event's content block ``index``, so interleaved
+    blocks and a signature_delta that precedes the thinking text are still
+    attributed correctly. A delta whose index is not a started thinking block
+    stops the capture. A genuine stream sends one ``signature_delta`` per
+    block; values are appended (official SDKs assign), which is the same on a
+    genuine stream and keeps a relay that splits the signature replayable.
     """
-    if signals.thinking_capture_truncated or not isinstance(value, str):
+    if signals.thinking_capture_issue is not None or not isinstance(value, str):
         return
-    if (not signals.thinking_blocks
-            or not signals.content_block_types
-            or signals.content_block_types[-1] != "thinking"
-            or signals.thinking_blocks[-1].get("type") != "thinking"):
+    index = _content_block_index(event)
+    if index is None or index not in signals.thinking_block_indexes:
+        _stop_thinking_capture(
+            signals, f"a {key} delta arrived for content block {index}, which "
+                     "is not a started thinking block")
+        return
+    block = signals.thinking_blocks[signals.thinking_block_indexes.index(index)]
+    if block.get("type") != "thinking":
+        _stop_thinking_capture(
+            signals, f"a {key} delta arrived for redacted_thinking block {index}")
         return
     if _thinking_capture_size(signals) + len(value) > MAX_STREAM_THINKING_CHARS:
-        signals.thinking_capture_truncated = True
+        _stop_thinking_capture(signals, "the thinking capture bound was exceeded")
         return
-    signals.thinking_blocks[-1][key] += value
-
+    block[key] += value
 
 # v1.7.1 safety valve: cap the SSE parser buffer so a malformed/
 # malicious relay that sends a huge chunk without newlines cannot
@@ -2483,11 +2548,14 @@ class APIClient:
         Never raises. Returns a normalized dict:
 
         - ``status``: HTTP status code, or ``None`` on a transport failure
-        - ``error``: ``None`` on 2xx; otherwise the error message of an error
-          body (else the raw body or transport error), redacted and clipped
-          to :data:`REPLAY_ERROR_CHARS` characters
+        - ``error``: ``None`` on a 2xx message reply; otherwise the message of
+          an error body, else ``"HTTP <status>"`` (a 2xx whose body is an
+          error or not a message is an error too) or the transport error,
+          redacted and clipped to :data:`REPLAY_ERROR_CHARS` characters. A
+          raw response body is never copied.
         - ``error_type``: ``error.type`` of an Anthropic error body, or ``None``
-        - ``input_tokens``: ``usage.input_tokens`` of a 2xx reply, or ``None``
+        - ``input_tokens``: ``usage.input_tokens`` of a 2xx message reply, or
+          ``None``
         """
         result = {"status": None, "error": None, "error_type": None,
                   "input_tokens": None}
@@ -2524,13 +2592,18 @@ class APIClient:
                 payload = json.loads(body_text) if body_text.strip() else None
             except ValueError:
                 payload = None
-            if 200 <= status < 300:
-                usage = payload.get("usage") if isinstance(payload, dict) else None
+            is_message = isinstance(payload, dict) and payload.get("type") == "message"
+            if 200 <= status < 300 and is_message:
+                usage = payload.get("usage")
                 input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
                 if isinstance(input_tokens, int) and not isinstance(input_tokens, bool):
                     result["input_tokens"] = input_tokens
                 return result
-            message = body_text
+            # Not an accepted replay: a non-2xx status, or a 2xx whose body is
+            # an error or not a message. Only the error object's type and
+            # message are kept; a raw body (an HTML error page, say) is never
+            # copied into the result.
+            message = None
             error_obj = payload.get("error") if isinstance(payload, dict) else None
             if isinstance(error_obj, dict):
                 if payload.get("type") == "error" and isinstance(error_obj.get("type"), str):
@@ -2538,8 +2611,10 @@ class APIClient:
                         error_obj["type"], self.api_key)
                 if isinstance(error_obj.get("message"), str) and error_obj["message"].strip():
                     message = error_obj["message"]
-            result["error"] = _clip_replay_error(
-                message if message.strip() else f"HTTP {status}", self.api_key)
+            if message is None:
+                message = (f"HTTP {status} without a message body"
+                           if 200 <= status < 300 else f"HTTP {status}")
+            result["error"] = _clip_replay_error(message, self.api_key)
         except Exception as e:
             result["error"] = _clip_replay_error(
                 f"{type(e).__name__}: {e}", self.api_key)
@@ -7632,7 +7707,8 @@ def test_stream_integrity(client, report, verify_signature=False):
     # Opt-in (--verify-signature) and informational, same contract as the
     # parity section. A default run sends nothing extra.
     if verify_signature:
-        _report_signature_roundtrip(client, report, signals, probe_messages)
+        _report_signature_roundtrip(client, report, signals, probe_messages,
+                                    probe_max_tokens)
 
     print(f"  Done: stream integrity ({verdict})")
     return verdict, verdict == "inconclusive"
@@ -7745,6 +7821,17 @@ def _report_stream_parity(client, report, signals, messages, max_tokens,
 SIGNATURE_REPLAY_FOLLOW_UP = "Reply with the single word: done"
 
 
+def _redacted_excerpt(client, text, limit=160):
+    """Redact, flatten and clip text before it reaches the report."""
+    text = redact_sensitive_text(str(text), getattr(client, "api_key", "") or "")
+    return " ".join(text.split())[:limit]
+
+
+def _roundtrip_verdict_line(report, verdict):
+    report.p(f"\nObserved round-trip result: **{verdict}** "
+             "(informational, not scored)")
+
+
 def _signature_roundtrip_skip_reason(client, signals):
     """Return why the signature round-trip cannot run, or ``None``."""
     detected_format = getattr(client, "detected_format", None)
@@ -7753,12 +7840,16 @@ def _signature_roundtrip_skip_reason(client, signals):
                 "'anthropic'")
     if signals.transport_error:
         return "the Step 10 stream had a transport error"
-    if signals.thinking_capture_truncated:
-        return ("the streamed thinking exceeded the capture bound, so it "
-                "cannot be replayed byte for byte")
+    issue = getattr(signals, "thinking_capture_issue", None)
+    if issue:
+        return f"the thinking capture cannot be replayed byte for byte ({issue})"
     if not has_replayable_signature(signals):
         blocks = signals.thinking_blocks if isinstance(signals.thinking_blocks, list) else []
-        if any(isinstance(b, dict) and b.get("type") == "redacted_thinking" for b in blocks):
+        types = {b.get("type") for b in blocks if isinstance(b, dict)}
+        if "thinking" in types:
+            return ("a thinking block carried no signature, so even the intact "
+                    "replay could not be accepted")
+        if "redacted_thinking" in types:
             return ("the stream carried only redacted_thinking blocks, with no "
                     "thinking block signature to change")
         return "the stream carried no thinking block with a non-empty signature"
@@ -7768,27 +7859,30 @@ def _signature_roundtrip_skip_reason(client, signals):
     return None
 
 
-def _report_signature_roundtrip(client, report, signals, messages):
+def _report_signature_roundtrip(client, report, signals, messages, max_tokens):
     """Append Step 10's opt-in thinking signature round-trip section.
 
     Runs only under ``--verify-signature``. Passes the streamed assistant
     turn (thinking blocks plus reply text) back to the same model with the
-    same user message, once unchanged and then, only if that replay was
-    accepted, with one signature character changed. The pair is judged by
-    :func:`analyze_signature_roundtrip`. Observation only: it never changes
-    the Step 10 verdict, never calls ``report.flag()`` and never feeds the
-    risk matrix.
+    stream's user message, ``max_tokens`` and thinking setting, once
+    unchanged and then, only if that replay was accepted, with one signature
+    character changed. The pair is judged by
+    :func:`analyze_signature_roundtrip`; a skipped check is recorded as
+    inconclusive. Observation only: it never changes the Step 10 verdict,
+    never calls ``report.flag()`` and never feeds the risk matrix.
 
-    Must not raise: every failure degrades to an inconclusive result.
+    Must not raise: every failure degrades to an inconclusive result, and
+    every error excerpt goes through redaction and clipping.
     """
     report.h3("Thinking signature round-trip (opt-in, informational)")
     report.p(
         "Passes the Step 10 thinking block back to the same model twice: once "
         "unchanged, then with one character in the middle of its signature "
-        "changed. Nothing else differs between the two requests (same user "
-        "message, reply text and thinking setting; no system prompt, tools or "
-        "sampling parameters). An upstream that checks signatures accepts the "
-        "intact replay and rejects the tampered one with HTTP 400 "
+        "changed. Both requests reuse the stream's user message, reply text, "
+        "max_tokens and thinking setting, with no system prompt, tools or "
+        "sampling parameters, so they differ only in that character. An "
+        "upstream that checks signatures accepts the intact replay and "
+        "rejects the tampered one with an HTTP 400 that names the signature "
         "(upstream-verified). Without a tool-use turn the model may strip "
         "replayed thinking blocks before checking them, so two accepted "
         "replays are no-signal: they show neither that nothing upstream "
@@ -7807,37 +7901,54 @@ def _report_signature_roundtrip(client, report, signals, messages):
         skip = _signature_roundtrip_skip_reason(client, signals)
         if skip:
             report.p(f"Skipped: {skip}. No replay request sent.")
+            _roundtrip_verdict_line(report, "inconclusive")
             return
         intact = client.replay_thinking(
             messages,
             build_replay_assistant_content(signals.thinking_blocks, signals.text),
-            SIGNATURE_REPLAY_FOLLOW_UP,
+            SIGNATURE_REPLAY_FOLLOW_UP, max_tokens=max_tokens,
         )
         if replay_accepted(intact):
             tampered = client.replay_thinking(
                 messages,
                 build_replay_assistant_content(
                     signals.thinking_blocks, signals.text, tamper=True),
-                SIGNATURE_REPLAY_FOLLOW_UP,
+                SIGNATURE_REPLAY_FOLLOW_UP, max_tokens=max_tokens,
             )
         roundtrip = analyze_signature_roundtrip(intact, tampered)
     except Exception as exc:  # informational block must never fail Step 10
         roundtrip = {
             "verdict": "inconclusive",
-            "notes": [f"Signature round-trip failed: {type(exc).__name__}: {exc}"[:240]],
+            "notes": ["Signature round-trip failed: "
+                      + _redacted_excerpt(client, f"{type(exc).__name__}: {exc}")],
         }
 
+    try:
+        _render_signature_roundtrip(client, report, intact, tampered, roundtrip)
+    except Exception as exc:  # rendering must not fail Step 10 either
+        _roundtrip_verdict_line(report, "inconclusive")
+        report.p("- Signature round-trip report failed: "
+                 + _redacted_excerpt(client, f"{type(exc).__name__}: {exc}"))
+
+
+def _render_signature_roundtrip(client, report, intact, tampered, roundtrip):
+    """Render the round-trip table, verdict and notes. Sends no request."""
     def _cell(value):
         if value is None:
             return "—"
-        return str(value)[:60].replace("|", "\\|").replace("\n", " ")
+        return _redacted_excerpt(client, value, 60).replace("|", "\\|")
 
     def _observation(res):
         if res is None:
             return "not sent"
-        if not isinstance(res, dict) or res.get("status") is None:
+        status = res.get("status") if isinstance(res, dict) else None
+        if status is None:
             return "no HTTP response"
-        return "accepted" if replay_accepted(res) else "rejected"
+        if replay_accepted(res):
+            return "accepted"
+        if isinstance(status, int) and 200 <= status < 300:
+            return "error body"
+        return "rejected"
 
     rows = (
         ("intact (signature unchanged)", intact),
@@ -7852,21 +7963,18 @@ def _report_signature_roundtrip(client, report, signals, messages):
             f"{_cell(res_dict.get('error_type'))} | "
             f"{_cell(res_dict.get('input_tokens'))} | {_observation(res)} |"
         )
-    report.p(
-        f"\nObserved round-trip result: **{roundtrip['verdict']}** "
-        "(informational, not scored)"
-    )
+    _roundtrip_verdict_line(report, roundtrip["verdict"])
     notes = list(roundtrip.get("notes") or [])
     for label, res in rows:
         error = res.get("error") if isinstance(res, dict) else None
         if error:
-            notes.append(f"{label.split(' ', 1)[0]} replay error (redacted): {error}")
+            notes.append(f"{label.split(' ', 1)[0]} replay error (redacted): "
+                         + _redacted_excerpt(client, error))
     if notes:
         report.p("\n**Round-trip notes (observed)**:")
         for note in notes:
             safe = str(note)[:400].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
             report.p(f"- {safe}")
-
 
 def test_web3_injection(client, report):
     """Step 11: Web3 Prompt Injection (SlowMist signature isolation).
@@ -8663,7 +8771,8 @@ def _run_audit(args, report_stdout):
         print("[10/14] Stream integrity test...")
         stream_verdict, stream_inconclusive = _run_step(
             "Step 10 stream integrity", report,
-            test_stream_integrity, client, report, args.verify_signature,
+            test_stream_integrity, client, report,
+            getattr(args, "verify_signature", False),
             default=("clean", True), crashes=step_crashes,
         )
     else:

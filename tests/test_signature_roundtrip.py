@@ -33,6 +33,7 @@ from api_relay_audit.stream_integrity import (
     analyze_signature_roundtrip,
     build_replay_assistant_content,
     has_replayable_signature,
+    replay_accepted,
     tamper_signature,
 )
 
@@ -104,12 +105,30 @@ class TestAnalyzeSignatureRoundtrip:
         assert result["verdict"] == "inconclusive"
         assert "invalid_request_error" in result["notes"][0]
 
-    def test_tampered_400_without_keyword_is_inconclusive(self):
+    @pytest.mark.parametrize("error, thinking_only", [
+        ("thinking.budget_tokens: Input should be greater than or equal to 1024", True),
+        ("messages.1.content.0: Invalid `thinking` block", True),
+        ("Bad request: malformed body", False),
+    ])
+    def test_tampered_400_without_signature_is_inconclusive(self, error, thinking_only):
         result = analyze_signature_roundtrip(
-            _ok(), _rejected(400, "Bad request: malformed body", "invalid_request_error"))
+            _ok(), _rejected(400, error, "invalid_request_error"))
         assert result["verdict"] == "inconclusive"
         assert result["tampered_mentions_signature"] is False
-        assert "cannot be attributed" in result["notes"][0]
+        note = result["notes"][0]
+        assert "invalid_request_error" in note and "not attributed" in note
+        assert ("thinking only" in note) is thinking_only
+
+    def test_2xx_with_an_error_body_is_never_accepted(self):
+        error_200 = {"status": 200, "error": "Overloaded",
+                     "error_type": "overloaded_error", "input_tokens": None}
+        assert not replay_accepted(error_200)
+        intact_side = analyze_signature_roundtrip(error_200, None)
+        assert intact_side["verdict"] == "inconclusive"
+        assert "overloaded_error" in intact_side["notes"][0]
+        tampered_side = analyze_signature_roundtrip(_ok(), error_200)
+        assert tampered_side["verdict"] == "inconclusive"
+        assert "non-message body" in tampered_side["notes"][0]
 
     @pytest.mark.parametrize("tampered", [
         _rejected(500, "signature service unavailable", "api_error"),
@@ -140,6 +159,8 @@ class TestReplayContent:
         intact = build_replay_assistant_content(blocks, "ok")
         assert intact == [REDACTED, SIGNED, second, {"type": "text", "text": "ok"}]
         tampered = build_replay_assistant_content(blocks, "ok", tamper=True)
+        assert blocks == [REDACTED, SIGNED, second]
+        assert SIGNED["signature"] == SIGNATURE
         assert tampered[0] == REDACTED and tampered[2] == second
         assert _diff_positions(SIGNATURE, tampered[1]["signature"]) == [len(SIGNATURE) // 2]
         assert build_replay_assistant_content([SIGNED], "  ") == [SIGNED]
@@ -179,16 +200,52 @@ class TestThinkingCapture:
             {"type": "content_block_stop", "index": 1},
             _start({"type": "text", "text": ""}, 2),
             _delta({"type": "text_delta", "text": "ok"}, 2),
-            # Stray deltas inside a text block must not touch thinking blocks.
-            _delta({"type": "thinking_delta", "thinking": "stray"}, 2),
-            _delta({"type": "signature_delta", "signature": "stray"}, 2),
             {"type": "content_block_stop", "index": 2},
         ])
         assert signals.thinking_blocks == [SIGNED, REDACTED]
-        assert signals.thinking_capture_truncated is False
+        assert signals.thinking_block_indexes == [0, 1]
+        assert signals.thinking_capture_issue is None
         assert signals.text == "ok"
         assert signals.empty_signature_delta_count == 0
         assert has_replayable_signature(signals)
+
+    def test_interleaved_blocks_and_early_signature_are_attributed_by_index(self):
+        signals = _feed([
+            _start({"type": "thinking", "thinking": "", "signature": ""}, 0),
+            _start({"type": "thinking", "thinking": "", "signature": ""}, 1),
+            _delta({"type": "signature_delta", "signature": "S1"}, 1),
+            _delta({"type": "thinking_delta", "thinking": "B"}, 1),
+            _start({"type": "text", "text": ""}, 2),
+            _delta({"type": "text_delta", "text": "ok"}, 2),
+            _delta({"type": "thinking_delta", "thinking": "A"}, 0),
+            _delta({"type": "signature_delta", "signature": "S0"}, 0),
+        ])
+        assert signals.thinking_blocks == [
+            {"type": "thinking", "thinking": "A", "signature": "S0"},
+            {"type": "thinking", "thinking": "B", "signature": "S1"},
+        ]
+        assert signals.thinking_capture_issue is None
+        assert has_replayable_signature(signals)
+
+    @pytest.mark.parametrize("events", [
+        # signature_delta before its content_block_start
+        [_delta({"type": "signature_delta", "signature": SIGNATURE}, 0),
+         _start({"type": "thinking", "thinking": "", "signature": ""}, 0)],
+        # thinking_delta inside a text block
+        [_start({"type": "thinking", "thinking": "", "signature": SIGNATURE}, 0),
+         _start({"type": "text", "text": ""}, 1),
+         _delta({"type": "thinking_delta", "thinking": "stray"}, 1)],
+        # delta without an index
+        [_start({"type": "thinking", "thinking": "", "signature": ""}, 0),
+         {"type": "content_block_delta",
+          "delta": {"type": "signature_delta", "signature": SIGNATURE}}],
+        # the same block index started twice
+        [_start({"type": "thinking", "thinking": "", "signature": ""}, 0),
+         _start({"type": "thinking", "thinking": "", "signature": ""}, 0)],
+    ])
+    def test_unattributable_events_stop_the_capture(self, events):
+        signals = _feed(events)
+        assert signals.thinking_capture_issue
 
     def test_only_redacted_thinking_has_no_replayable_signature(self):
         signals = _feed([_start(dict(REDACTED), 0)])
@@ -202,13 +259,13 @@ class TestThinkingCapture:
                     "thinking": "x" * (MAX_STREAM_THINKING_CHARS + 1)}, 0),
             _delta({"type": "signature_delta", "signature": SIGNATURE}, 0),
         ])
-        assert oversized.thinking_capture_truncated is True
+        assert "bound" in oversized.thinking_capture_issue
         assert oversized.thinking_blocks[0]["signature"] == ""
         many = _feed([
             _start({"type": "thinking", "thinking": "", "signature": ""}, i)
             for i in range(MAX_STREAM_THINKING_BLOCKS + 1)
         ])
-        assert many.thinking_capture_truncated is True
+        assert "bound" in many.thinking_capture_issue
         assert len(many.thinking_blocks) == MAX_STREAM_THINKING_BLOCKS
 
 
@@ -298,6 +355,26 @@ class TestReplayThinkingClient:
         assert API_KEY not in result["error"] and API_KEY[:8] not in result["error"]
         assert "REDACTED" in result["error"]
         assert len(result["error"]) <= 160
+
+    def test_error_bodies_are_not_accepted_and_raw_bodies_never_copied(self, dist):
+        client = _client(dist, [
+            _raw(200, {"type": "error", "error": {"type": "overloaded_error",
+                                                   "message": "Overloaded"}}),
+            {"status": 200, "headers": {}, "body": "<html>ok</html>", "error": None},
+            {"status": 502, "headers": {},
+             "body": "<html>internal-host-7.corp trace=abc123</html>", "error": None},
+        ])
+        content = dist.build([SIGNED], "ok")
+        error_200 = client.replay_thinking(PROBE, content, FOLLOW_UP)
+        assert error_200 == {"status": 200, "error": "Overloaded",
+                             "error_type": "overloaded_error", "input_tokens": None}
+        assert not replay_accepted(error_200)
+        html_200 = client.replay_thinking(PROBE, content, FOLLOW_UP)
+        assert html_200["error"] == "HTTP 200 without a message body"
+        assert not replay_accepted(html_200)
+        html_502 = client.replay_thinking(PROBE, content, FOLLOW_UP)
+        assert html_502["status"] == 502 and html_502["error"] == "HTTP 502"
+        assert dist.analyze(error_200, None)["verdict"] == "inconclusive"
 
     def test_transport_failure_and_exception_never_raise(self, dist):
         client = _client(dist, [
@@ -395,7 +472,8 @@ class TestStep10SignatureWiring:
         monkeypatch.setattr("sys.argv", ["audit.py", "--key", "k", "--url", "https://x",
                                          "--verify-signature"])
         assert audit_module.parse_args().verify_signature is True
-        assert "args.verify_signature" in inspect.getsource(audit_module._run_audit)
+        assert ('getattr(args, "verify_signature", False)'
+                in inspect.getsource(audit_module._run_audit))
         client = _FakeClient(_stream([SIGNED]), replays=[_ok(), _rejected()])
         body = _run(audit_module, client, verify_signature=False)
         assert client.replay_calls == []
@@ -408,7 +486,9 @@ class TestStep10SignatureWiring:
         assert "| intact (signature unchanged) | 200 | — | 57 | accepted |" in body
         assert TAMPERED_ROW + " 400 | invalid_request_error | — | rejected |" in body
         assert "Observed round-trip result: **upstream-verified**" in body
-        (intact_args, _), (tampered_args, _) = client.replay_calls
+        (intact_args, intact_kwargs), (tampered_args, tampered_kwargs) = client.replay_calls
+        # Same max_tokens as the Step 10 stream, so the thinking config matches.
+        assert intact_kwargs == tampered_kwargs == {"max_tokens": 100}
         assert intact_args[0] == PROBE and intact_args[2] == FOLLOW_UP
         assert intact_args[1] == [SIGNED, {"type": "text", "text": "ok"}]
         assert len(_diff_positions(SIGNATURE, tampered_args[1][0]["signature"])) == 1
@@ -420,12 +500,27 @@ class TestStep10SignatureWiring:
         assert "- Inference, not part of the verdict" in body
         assert "tool-use turn" in body
 
-    def test_only_redacted_thinking_is_skipped_with_a_reason(self, audit_module):
-        client = _FakeClient(_stream([REDACTED]), replays=[_ok(), _ok()])
+    @pytest.mark.parametrize("blocks, text, issue, fmt, reason", [
+        ([REDACTED], "ok", None, "anthropic",
+         "the stream carried only redacted_thinking blocks"),
+        ([SIGNED, {"type": "thinking", "thinking": "x", "signature": ""}], "ok",
+         None, "anthropic", "a thinking block carried no signature"),
+        ([SIGNED], "ok", "content block 1 started twice", "anthropic",
+         "the thinking capture cannot be replayed byte for byte"),
+        ([SIGNED], "", None, "anthropic", "the stream carried no reply text"),
+        ([SIGNED], "ok", None, "openai",
+         "the client format is 'openai' rather than 'anthropic'"),
+    ])
+    def test_skips_send_nothing_and_are_recorded_inconclusive(
+            self, audit_module, blocks, text, issue, fmt, reason):
+        signals = _stream(blocks, text=text)
+        signals.thinking_capture_issue = issue
+        client = _FakeClient(signals, replays=[_ok(), _ok()], detected_format=fmt)
         body = _run(audit_module, client)
         assert client.replay_calls == []
         assert HEADING in body
-        assert "Skipped: the stream carried only redacted_thinking blocks" in body
+        assert f"Skipped: {reason}" in body
+        assert "Observed round-trip result: **inconclusive**" in body
 
     def test_rejected_intact_replay_sends_no_tampered_request(self, audit_module):
         client = _FakeClient(_stream([SIGNED]), replays=[
@@ -441,10 +536,3 @@ class TestStep10SignatureWiring:
         body = _run(audit_module, client)
         assert "Observed round-trip result: **inconclusive**" in body
         assert "Signature round-trip failed: RuntimeError: boom" in body
-
-    def test_non_anthropic_format_is_skipped(self, audit_module):
-        client = _FakeClient(_stream([SIGNED]), replays=[_ok(), _ok()],
-                             detected_format="openai")
-        body = _run(audit_module, client)
-        assert client.replay_calls == []
-        assert "Skipped: the client format is 'openai' rather than 'anthropic'" in body

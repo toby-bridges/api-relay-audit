@@ -178,9 +178,13 @@ class StreamSignals:
             opt-in signature round-trip check; :func:`analyze_stream` ignores
             it. Bounded by the client's ``MAX_STREAM_THINKING_CHARS`` and
             ``MAX_STREAM_THINKING_BLOCKS``.
-        thinking_capture_truncated: True iff one of those bounds stopped the
-            capture. :attr:`thinking_blocks` then no longer matches the
-            stream byte for byte and must not be replayed.
+        thinking_block_indexes: The content block ``index`` of each entry in
+            :attr:`thinking_blocks`, in the same order. Deltas are attributed
+            by this index, so interleaved blocks cannot leak into each other.
+        thinking_capture_issue: ``None`` while the capture is faithful;
+            otherwise why it stopped (a bound was hit, or a delta could not
+            be attributed to a started thinking block). :attr:`thinking_blocks`
+            must then not be replayed.
     """
 
     # Ordered event type sequence (for whitelist check)
@@ -220,7 +224,8 @@ class StreamSignals:
 
     # Thinking blocks as streamed (opt-in signature round-trip replay)
     thinking_blocks: List[dict] = field(default_factory=list)
-    thinking_capture_truncated: bool = False
+    thinking_block_indexes: List[int] = field(default_factory=list)
+    thinking_capture_issue: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -725,21 +730,27 @@ def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
 # here feeds the Step 10 verdict or the risk matrix.
 
 # A tampered replay rejected with HTTP 400 counts as a signature rejection
-# only when its error text mentions one of these words (casefolded).
-SIGNATURE_ERROR_KEYWORDS = ("signature", "thinking")
+# only when its error text mentions this word (casefolded). "thinking" alone
+# is not enough: a 400 about the thinking configuration (budget_tokens, say)
+# says nothing about the signature. The keyword is presumed until a
+# direct-upstream baseline records the real error text.
+SIGNATURE_ERROR_KEYWORD = "signature"
 
 
 def has_replayable_signature(signals: "StreamSignals") -> bool:
-    """True iff the stream captured a thinking block with a non-empty signature."""
+    """True iff at least one thinking block was captured and every captured
+    thinking block has a non-empty signature.
+
+    A thinking block without a signature cannot be passed back, so even the
+    intact replay would be rejected.
+    """
     blocks = getattr(signals, "thinking_blocks", None)
     if not isinstance(blocks, list):
         return False
-    return any(
-        isinstance(block, dict)
-        and block.get("type") == "thinking"
-        and isinstance(block.get("signature"), str)
-        and bool(block["signature"].strip())
-        for block in blocks
+    thinking = [b for b in blocks if isinstance(b, dict) and b.get("type") == "thinking"]
+    return bool(thinking) and all(
+        isinstance(b.get("signature"), str) and bool(b["signature"].strip())
+        for b in thinking
     )
 
 
@@ -805,17 +816,22 @@ def replay_status(result) -> Optional[int]:
 
 
 def replay_accepted(result) -> bool:
-    """True iff a replay result carries a 2xx HTTP status."""
+    """True iff a replay result is a 2xx without an error.
+
+    :meth:`api_relay_audit.client.APIClient.replay_thinking` sets ``error``
+    on a 2xx whose body is an error or not a message, so such a reply never
+    counts as accepted.
+    """
     status = replay_status(result)
-    return status is not None and 200 <= status < 300
+    return (status is not None and 200 <= status < 300
+            and not result.get("error"))
 
 
 def _replay_mentions_signature(result) -> bool:
     error = result.get("error") if isinstance(result, dict) else None
     if not isinstance(error, str):
         return False
-    folded = error.casefold()
-    return any(word in folded for word in SIGNATURE_ERROR_KEYWORDS)
+    return SIGNATURE_ERROR_KEYWORD in error.casefold()
 
 
 def _replay_input_tokens(result) -> Optional[int]:
@@ -837,18 +853,20 @@ def analyze_signature_roundtrip(intact, tampered) -> dict:
     Returns a dict with ``verdict``, ``intact_status``, ``tampered_status``,
     ``tampered_mentions_signature`` and ``notes``. Verdict, first match wins:
 
-    1. ``"inconclusive"``: the intact replay was not accepted (no 2xx).
-    2. ``"upstream-verified"``: intact 2xx, tampered HTTP 400 with an error
-       mentioning one of :data:`SIGNATURE_ERROR_KEYWORDS`.
+    1. ``"inconclusive"``: the intact replay was not accepted (no 2xx
+       without an error, see :func:`replay_accepted`).
+    2. ``"upstream-verified"``: intact accepted, tampered HTTP 400 with an
+       error mentioning :data:`SIGNATURE_ERROR_KEYWORD`.
     3. ``"no-signal"``: both replays 2xx. The model may strip non-tool-use
        thinking blocks before checking them, so this shows neither that
        nothing verifies signatures nor that the signature was forged.
     4. ``"inconclusive"``: any other combination.
 
     ``input_tokens`` never decides the verdict. When both replays are
-    accepted it is compared and noted as an inference: dropped blocks are
-    not billed, so a lower tampered count fits "dropped" rather than
-    "accepted"; equal counts are uninformative.
+    accepted it is compared and noted as an inference: the docs say blocks
+    the model cannot read are dropped without billing, so if an invalid
+    block is handled the same way, a lower tampered count fits "dropped"
+    rather than "accepted"; equal counts are uninformative.
 
     Informational only. Pure and deterministic, no I/O.
     """
@@ -904,8 +922,10 @@ def analyze_signature_roundtrip(intact, tampered) -> dict:
                 notes.append(
                     f"Inference, not part of the verdict: the tampered replay "
                     f"billed fewer input_tokens ({tampered_tokens} vs "
-                    f"{intact_tokens}). Dropped blocks are not billed, so this "
-                    "fits the tampered block being dropped rather than accepted."
+                    f"{intact_tokens}). The docs say blocks the model cannot "
+                    "read are dropped without billing; if an invalid block is "
+                    "handled the same way, this fits the tampered block being "
+                    "dropped rather than accepted."
                 )
             elif tampered_tokens > intact_tokens:
                 notes.append(
@@ -922,18 +942,30 @@ def analyze_signature_roundtrip(intact, tampered) -> dict:
                 )
         return result
 
+    error_type = tampered.get("error_type") if isinstance(tampered, dict) else None
+    type_text = f" ({error_type})" if error_type else ""
     if tampered_status == 400:
+        error = tampered.get("error") if isinstance(tampered, dict) else None
+        only_thinking = isinstance(error, str) and "thinking" in error.casefold()
         notes.append(
-            "Tampered replay returned HTTP 400, but its error does not mention "
-            "signature or thinking, so the rejection cannot be attributed to "
-            "the signature."
+            f"Tampered replay returned HTTP 400{type_text}, but its error does "
+            "not mention signature"
+            + (" (it mentions thinking only)" if only_thinking else "")
+            + ", so the rejection is not attributed to the signature. The "
+            "keyword rule is presumed until a direct-upstream baseline records "
+            "the real error text."
+        )
+    elif tampered_status is not None and 200 <= tampered_status < 300:
+        notes.append(
+            f"Tampered replay returned HTTP {tampered_status}{type_text} with "
+            "an error or non-message body; it counts neither as accepted nor "
+            "as a signature rejection."
         )
     else:
-        error_type = tampered.get("error_type") if isinstance(tampered, dict) else None
         notes.append(
             "Tampered replay returned HTTP "
             + (str(tampered_status) if tampered_status is not None else "none")
-            + (f" ({error_type})" if error_type else "")
+            + type_text
             + "; only HTTP 400 counts as a signature rejection."
         )
     return result

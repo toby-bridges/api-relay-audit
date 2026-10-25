@@ -185,7 +185,7 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
             if block.get("type") == "thinking":
                 signals.thinking_start_seen = True
             if block.get("type") in ("thinking", "redacted_thinking"):
-                _capture_thinking_block_start(block, signals)
+                _capture_thinking_block_start(event, block, signals)
 
     elif event_type == "content_block_delta":
         signals.has_content_block_delta = True
@@ -202,12 +202,12 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
                     signals.text = (signals.text + text)[:MAX_STREAM_TEXT_CHARS]
             elif delta_type == "thinking_delta":
                 signals.thinking_delta_seen = True
-                _capture_thinking_delta(signals, "thinking", delta.get("thinking"))
+                _capture_thinking_delta(event, signals, "thinking", delta.get("thinking"))
             elif delta_type == "signature_delta":
                 signature = delta.get("signature")
                 if isinstance(signature, str) and not signature.strip():
                     signals.empty_signature_delta_count += 1
-                _capture_thinking_delta(signals, "signature", signature)
+                _capture_thinking_delta(event, signals, "signature", signature)
 
     elif event_type == "message_delta":
         signals.has_message_delta = True
@@ -240,14 +240,38 @@ def _thinking_capture_size(signals: StreamSignals) -> int:
     return size
 
 
-def _capture_thinking_block_start(block: dict, signals: StreamSignals) -> None:
+def _content_block_index(event: dict):
+    """Return the event's content block ``index``, or ``None`` if missing."""
+    index = event.get("index")
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        return None
+    return index
+
+
+def _stop_thinking_capture(signals: StreamSignals, reason: str) -> None:
+    """Mark the thinking capture as not replayable; the first reason wins."""
+    if signals.thinking_capture_issue is None:
+        signals.thinking_capture_issue = reason
+
+
+def _capture_thinking_block_start(event: dict, block: dict,
+                                  signals: StreamSignals) -> None:
     """Open one captured ``thinking`` / ``redacted_thinking`` block.
 
-    The block is kept in the shape the Messages API accepts back. Once a
-    bound is hit the capture stops for good and is marked truncated, so a
-    partial block is never replayed.
+    The block is kept in the shape the Messages API accepts back and keyed by
+    the event's content block ``index``. A missing or repeated index, or a
+    bound being hit, stops the capture for good with a reason, so an
+    uncertain or partial capture is never replayed.
     """
-    if signals.thinking_capture_truncated:
+    if signals.thinking_capture_issue is not None:
+        return
+    index = _content_block_index(event)
+    if index is None:
+        _stop_thinking_capture(
+            signals, "a thinking block started without a content block index")
+        return
+    if index in signals.thinking_block_indexes:
+        _stop_thinking_capture(signals, f"content block {index} started twice")
         return
     if block.get("type") == "redacted_thinking":
         data = block.get("data")
@@ -262,31 +286,40 @@ def _capture_thinking_block_start(block: dict, signals: StreamSignals) -> None:
     added = sum(len(v) for k, v in entry.items() if k != "type")
     if (len(signals.thinking_blocks) >= MAX_STREAM_THINKING_BLOCKS
             or _thinking_capture_size(signals) + added > MAX_STREAM_THINKING_CHARS):
-        signals.thinking_capture_truncated = True
+        _stop_thinking_capture(signals, "the thinking capture bound was exceeded")
         return
     signals.thinking_blocks.append(entry)
+    signals.thinking_block_indexes.append(index)
 
 
-def _capture_thinking_delta(signals: StreamSignals, key: str, value) -> None:
-    """Append a ``thinking_delta`` / ``signature_delta`` value to the open block.
+def _capture_thinking_delta(event: dict, signals: StreamSignals, key: str,
+                            value) -> None:
+    """Append a ``thinking_delta`` / ``signature_delta`` value to its block.
 
-    Deltas belong to the block opened by the latest ``content_block_start``,
-    so they are applied only while that block is a captured thinking block.
-    A genuine stream sends one ``signature_delta`` per block; appending keeps
-    a relay that splits it into several deltas replayable.
+    The block is found by the event's content block ``index``, so interleaved
+    blocks and a signature_delta that precedes the thinking text are still
+    attributed correctly. A delta whose index is not a started thinking block
+    stops the capture. A genuine stream sends one ``signature_delta`` per
+    block; values are appended (official SDKs assign), which is the same on a
+    genuine stream and keeps a relay that splits the signature replayable.
     """
-    if signals.thinking_capture_truncated or not isinstance(value, str):
+    if signals.thinking_capture_issue is not None or not isinstance(value, str):
         return
-    if (not signals.thinking_blocks
-            or not signals.content_block_types
-            or signals.content_block_types[-1] != "thinking"
-            or signals.thinking_blocks[-1].get("type") != "thinking"):
+    index = _content_block_index(event)
+    if index is None or index not in signals.thinking_block_indexes:
+        _stop_thinking_capture(
+            signals, f"a {key} delta arrived for content block {index}, which "
+                     "is not a started thinking block")
+        return
+    block = signals.thinking_blocks[signals.thinking_block_indexes.index(index)]
+    if block.get("type") != "thinking":
+        _stop_thinking_capture(
+            signals, f"a {key} delta arrived for redacted_thinking block {index}")
         return
     if _thinking_capture_size(signals) + len(value) > MAX_STREAM_THINKING_CHARS:
-        signals.thinking_capture_truncated = True
+        _stop_thinking_capture(signals, "the thinking capture bound was exceeded")
         return
-    signals.thinking_blocks[-1][key] += value
-
+    block[key] += value
 
 # v1.7.1 safety valve: cap the SSE parser buffer so a malformed/
 # malicious relay that sends a huge chunk without newlines cannot
@@ -1202,11 +1235,14 @@ class APIClient:
         Never raises. Returns a normalized dict:
 
         - ``status``: HTTP status code, or ``None`` on a transport failure
-        - ``error``: ``None`` on 2xx; otherwise the error message of an error
-          body (else the raw body or transport error), redacted and clipped
-          to :data:`REPLAY_ERROR_CHARS` characters
+        - ``error``: ``None`` on a 2xx message reply; otherwise the message of
+          an error body, else ``"HTTP <status>"`` (a 2xx whose body is an
+          error or not a message is an error too) or the transport error,
+          redacted and clipped to :data:`REPLAY_ERROR_CHARS` characters. A
+          raw response body is never copied.
         - ``error_type``: ``error.type`` of an Anthropic error body, or ``None``
-        - ``input_tokens``: ``usage.input_tokens`` of a 2xx reply, or ``None``
+        - ``input_tokens``: ``usage.input_tokens`` of a 2xx message reply, or
+          ``None``
         """
         result = {"status": None, "error": None, "error_type": None,
                   "input_tokens": None}
@@ -1243,13 +1279,18 @@ class APIClient:
                 payload = json.loads(body_text) if body_text.strip() else None
             except ValueError:
                 payload = None
-            if 200 <= status < 300:
-                usage = payload.get("usage") if isinstance(payload, dict) else None
+            is_message = isinstance(payload, dict) and payload.get("type") == "message"
+            if 200 <= status < 300 and is_message:
+                usage = payload.get("usage")
                 input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
                 if isinstance(input_tokens, int) and not isinstance(input_tokens, bool):
                     result["input_tokens"] = input_tokens
                 return result
-            message = body_text
+            # Not an accepted replay: a non-2xx status, or a 2xx whose body is
+            # an error or not a message. Only the error object's type and
+            # message are kept; a raw body (an HTML error page, say) is never
+            # copied into the result.
+            message = None
             error_obj = payload.get("error") if isinstance(payload, dict) else None
             if isinstance(error_obj, dict):
                 if payload.get("type") == "error" and isinstance(error_obj.get("type"), str):
@@ -1257,8 +1298,10 @@ class APIClient:
                         error_obj["type"], self.api_key)
                 if isinstance(error_obj.get("message"), str) and error_obj["message"].strip():
                     message = error_obj["message"]
-            result["error"] = _clip_replay_error(
-                message if message.strip() else f"HTTP {status}", self.api_key)
+            if message is None:
+                message = (f"HTTP {status} without a message body"
+                           if 200 <= status < 300 else f"HTTP {status}")
+            result["error"] = _clip_replay_error(message, self.api_key)
         except Exception as e:
             result["error"] = _clip_replay_error(
                 f"{type(e).__name__}: {e}", self.api_key)
