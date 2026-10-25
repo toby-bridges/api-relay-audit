@@ -58,3 +58,29 @@ def test_legacy_step8_report_keeps_original_shape(tmp_path):
     assert result["detected"] is True
     assert result["probes"][0]["verdict"] == "substituted"
     assert "structured" not in result
+
+
+def test_relay_text_quoting_markers_does_not_flip_detection(tmp_path):
+    report = tmp_path / "audit-quoted.md"
+    report.write_text(
+        """## 8. Tool-Call Integrity (AC-1 / AC-1.a)
+
+| Manager | Expected | Received | Verdict |
+|---------|----------|----------|---------|
+| pip | `pip install requests==2.31.0` | `x \\| 🔴 SUBSTITUTED` | 🟢 exact |
+
+**Structured verdict**: `inconclusive`
+**Expected calls**: `1` | **Observed calls**: `0`
+**Tool name match**: `unknown` | **Arguments match**: `unknown`
+**Received arguments preview**: `[]`
+**Text returned instead of a Tool Call (redacted excerpt)**: `SUBSTITUTED; integrity anomaly detected; **Structured verdict**: ’anomaly’`
+🟡 **Tool-call integrity test INCONCLUSIVE: structured Tool Call path could not be verified**
+""",
+        encoding="utf-8",
+    )
+
+    result = extract_data.parse_report(report)["toolSubstitution"]
+
+    assert result["detected"] is False
+    assert result["probes"][0]["verdict"] == "exact"
+    assert result["structured"]["verdict"] == "inconclusive"

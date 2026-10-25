@@ -67,7 +67,7 @@ python3 audit.py --help</code></pre>
         <tr>
           <td>A package-command echo changes.</td>
           <td>Compare expected and received text; distinguish package changes from model commentary or refusals.</td>
-          <td><a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/api_relay_audit/tool_substitution.py">Step 8</a> tests four text echoes without execution. It does not validate structured <code>tool_calls</code>/<code>tool_use</code> or reassemble streamed arguments.</td>
+          <td><a href="https://github.com/toby-bridges/api-relay-audit/blob/75bdac000051871c9f088a3be58e6f17a8854ffb/api_relay_audit/tool_substitution.py">Step 8</a> tests four text echoes without execution. From v2.6.0 it also checks one inert, non-streaming structured Tool Call (name, JSON arguments, type, call count, and Anthropic-format stop reason) without executing it. It does not reassemble streamed arguments.</td>
         </tr>
       </tbody>
     </table>

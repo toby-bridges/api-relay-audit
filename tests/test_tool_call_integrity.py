@@ -382,7 +382,8 @@ def test_tool_call_preview_is_escaped_and_bounded():
 
     assert len(preview) <= 80
     assert "\\|" in preview
-    assert "\\`" in preview
+    assert "`" not in preview
+    assert "’" in preview
     assert "must-not-be-rendered" not in preview
     assert preview.endswith("...")
 
@@ -409,3 +410,13 @@ def test_tool_call_preview_redacts_caller_key_and_secret_shapes():
     assert caller_key[:8] not in preview
     assert leaked_key not in preview
     assert "<REDACTED" in preview
+
+
+def test_unhashable_stop_reason_without_calls_does_not_raise():
+    for stop_reason in ({"type": "tool_use"}, ["tool_use"]):
+        result = analyze_tool_call_integrity(
+            {"tool_calls": [], "stop_reason": stop_reason},
+            expected_name="record_probe_fixed",
+            expected_arguments={"probe_token": "TC_fixed"},
+        )
+        assert result["verdict"] == "inconclusive"

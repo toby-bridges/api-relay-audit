@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: ebd222b3bb1cf5ad8a6d60008efa28af6e91432251f94b2d22e66403a0777c61
-# standalone_body_sha256: e5450c5ef7ac3615e3e75c35e6c4b3d65061e356820a5ad23535acbc602964ac
+# source_sha256: 66fe3d44a32ac402488cc1051773bdf8124994e9b8cb329d14e661d0b57f1fd5
+# standalone_body_sha256: adbc5ffcef899ff72f60a65bbc83cd1a0c5d2de27ff50bc6f383383027298a80
 # END GENERATED STANDALONE HEADER
 
 """
@@ -835,7 +835,7 @@ TOOL_PROBE_TEXT_LIMIT = 200
 
 
 def _is_token_char(char) -> bool:
-    return char.isalnum() or char in "-_.~+/="
+    return (char.isascii() and char.isalnum()) or char in "-_.~+/="
 
 
 def _clip_probe_text(text, limit=TOOL_PROBE_TEXT_LIMIT) -> str:
@@ -2577,6 +2577,7 @@ returned tool call and never sends a ``tool_result`` follow-up request.
 
 import json
 import re
+import unicodedata
 import uuid
 
 
@@ -2590,6 +2591,8 @@ PROBE_DESCRIPTION = (
     "has no side effects, and will not be executed. Call it exactly once."
 )
 TEXT_EXCERPT_LIMIT = 200
+_BACKTICK_STAND_IN = "\u2019"
+_CONTROL_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 
 
 def _json_deep_equal(left, right):
@@ -2609,13 +2612,31 @@ def _json_deep_equal(left, right):
     return left == right
 
 
+def _fold_controls(text):
+    """Replace line breaks and other control characters with spaces."""
+    return "".join(
+        " " if unicodedata.category(char) in _CONTROL_CATEGORIES else char
+        for char in text
+    )
+
+
 def _markdown_safe(text, max_chars, api_key=""):
-    """Redact secrets, escape Markdown table/code delimiters, then bound."""
+    """Redact secrets and make text safe inside a Markdown code span.
+
+    A backslash does not escape anything inside a code span, so a relay
+    backtick could close the span and inject links or HTML; backticks become
+    U+2019 instead. Line breaks and other control characters fold to spaces,
+    and pipes stay escaped for GFM table cells.
+    """
     text = redact_sensitive_text(text, api_key)
-    text = text.replace("|", "\\|").replace("`", "\\`")
+    text = _fold_controls(text)
+    text = text.replace("`", _BACKTICK_STAND_IN).replace("|", "\\|")
     limit = max(3, int(max_chars))
     if len(text) > limit:
-        return text[:limit - 3] + "..."
+        cut = limit - 3
+        if text[cut - 1:cut + 1] == "\\|":
+            cut -= 1
+        return text[:cut] + "..."
     return text
 
 
@@ -2636,7 +2657,8 @@ def format_tool_calls_preview(calls, max_chars=240, api_key=""):
 
 def format_text_excerpt(text, max_chars=TEXT_EXCERPT_LIMIT, api_key=""):
     """Return a redacted, Markdown-safe, single-line excerpt of returned text."""
-    return _markdown_safe(" ".join(str(text).split()), max_chars, api_key)
+    flattened = " ".join(_fold_controls(str(text)).split())
+    return _markdown_safe(flattened, max_chars, api_key)
 
 
 def _id_prefix(value):
@@ -2664,7 +2686,8 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments,
     evidence. A returned call whose stop reason is not ``tool_use`` is an
     anomaly, because agent loops key on that field and may ignore the call.
     OpenAI-format forced calls may finish with ``stop`` or ``tool_calls``, so
-    neither value is flagged. A response without ``protocol`` keeps the
+    neither value is flagged; any other finish reason is recorded in
+    ``protocol_notes`` only. A response without ``protocol`` keeps the
     protocol-neutral checks only. When no call is returned, a redacted,
     bounded ``text_excerpt`` records what the relay said instead.
 
@@ -2696,7 +2719,11 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments,
             "protocol_notes": [],
         }
     if not calls:
-        claimed_tool_stop = response.get("stop_reason") in {"tool_use", "tool_calls"}
+        stop_reason = response.get("stop_reason")
+        claimed_tool_stop = (
+            isinstance(stop_reason, str)
+            and stop_reason in {"tool_use", "tool_calls"}
+        )
         result = {
             "verdict": "anomaly" if claimed_tool_stop else "inconclusive",
             "expected_count": 1,
@@ -2759,6 +2786,13 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments,
                 f"Anthropic stop reason was {_describe_stop_reason(stop_reason)}, "
                 "not 'tool_use', although a Tool Call was returned; agent loops "
                 "keyed on stop_reason may ignore the call"
+            )
+    elif response.get("protocol") == "openai":
+        finish_reason = response.get("stop_reason")
+        if finish_reason not in ("stop", "tool_calls"):
+            protocol_notes.append(
+                f"OpenAI finish_reason was {_describe_stop_reason(finish_reason)}, "
+                "not 'stop' or 'tool_calls'; recorded for context, verdict unchanged"
             )
     return {
         "verdict": (
@@ -6349,7 +6383,10 @@ def test_tool_substitution(client, report):
             received_cell = f"ERROR: {err_short}"
             icon = "\u26aa skipped"
         else:
-            disp = r["received"][:80].replace("|", "\\|").replace("\n", " ")
+            disp = (
+                r["received"][:80].replace("\r", " ").replace("\n", " ")
+                .replace("`", "\u2019").replace("|", "\\|")
+            )
             received_cell = f"`{disp}`"
             if r["verdict"] == "exact":
                 icon = "\U0001f7e2 exact"
@@ -6429,9 +6466,11 @@ def test_tool_substitution(client, report):
             safe = str(note)[:240].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
             report.p(f"- {safe}")
     if structured.get("text_excerpt"):
-        # Already redacted, Markdown-escaped, and bounded by the detector;
-        # re-bound and flatten here without escaping twice.
+        # Already redacted, code-span-safe, and bounded by the detector. Only
+        # idempotent steps run here (flatten, bound, backtick stand-in), so
+        # pipes are never escaped twice.
         excerpt = " ".join(str(structured["text_excerpt"]).split())[:240]
+        excerpt = excerpt.replace("`", "\u2019")
         report.p(f"**Text returned instead of a Tool Call (redacted excerpt)**: `{excerpt}`")
 
     structured_anomaly = structured["verdict"] == "anomaly"
@@ -6473,7 +6512,8 @@ def test_tool_substitution(client, report):
         report.flag(
             "green",
             "Tool-call integrity clean: package-command text and structured "
-            "tool name, arguments, and call count all matched",
+            "tool name, arguments, and call count all matched (stop reason "
+            "also checked for Anthropic format)",
         )
 
     state = "detected" if detected else ("inconclusive" if inconclusive else "clean")
@@ -7475,9 +7515,9 @@ def _run_audit(args, report_stdout):
         if d3:
             reasons.append(
                 "**Tool-call integrity anomaly detected (AC-1 / AC-1.a).** "
-                "A malicious middleware may be rewriting a structured tool name, "
-                "arguments, call count, stop reason, or package-install command on "
-                "the return path -- a code-execution-level finding."
+                "A Tool Call or package-install command on the return path was "
+                "rewritten, or the Tool Call's stop reason did not match; an agent "
+                "loop may execute the wrong call or ignore the call."
             )
         if err_severity == "critical":
             reasons.append(

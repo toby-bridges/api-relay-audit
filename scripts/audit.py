@@ -913,7 +913,10 @@ def test_tool_substitution(client, report):
             received_cell = f"ERROR: {err_short}"
             icon = "\u26aa skipped"
         else:
-            disp = r["received"][:80].replace("|", "\\|").replace("\n", " ")
+            disp = (
+                r["received"][:80].replace("\r", " ").replace("\n", " ")
+                .replace("`", "\u2019").replace("|", "\\|")
+            )
             received_cell = f"`{disp}`"
             if r["verdict"] == "exact":
                 icon = "\U0001f7e2 exact"
@@ -993,9 +996,11 @@ def test_tool_substitution(client, report):
             safe = str(note)[:240].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
             report.p(f"- {safe}")
     if structured.get("text_excerpt"):
-        # Already redacted, Markdown-escaped, and bounded by the detector;
-        # re-bound and flatten here without escaping twice.
+        # Already redacted, code-span-safe, and bounded by the detector. Only
+        # idempotent steps run here (flatten, bound, backtick stand-in), so
+        # pipes are never escaped twice.
         excerpt = " ".join(str(structured["text_excerpt"]).split())[:240]
+        excerpt = excerpt.replace("`", "\u2019")
         report.p(f"**Text returned instead of a Tool Call (redacted excerpt)**: `{excerpt}`")
 
     structured_anomaly = structured["verdict"] == "anomaly"
@@ -1037,7 +1042,8 @@ def test_tool_substitution(client, report):
         report.flag(
             "green",
             "Tool-call integrity clean: package-command text and structured "
-            "tool name, arguments, and call count all matched",
+            "tool name, arguments, and call count all matched (stop reason "
+            "also checked for Anthropic format)",
         )
 
     state = "detected" if detected else ("inconclusive" if inconclusive else "clean")
@@ -2040,9 +2046,9 @@ def _run_audit(args, report_stdout):
         if d3:
             reasons.append(
                 "**Tool-call integrity anomaly detected (AC-1 / AC-1.a).** "
-                "A malicious middleware may be rewriting a structured tool name, "
-                "arguments, call count, stop reason, or package-install command on "
-                "the return path -- a code-execution-level finding."
+                "A Tool Call or package-install command on the return path was "
+                "rewritten, or the Tool Call's stop reason did not match; an agent "
+                "loop may execute the wrong call or ignore the call."
             )
         if err_severity == "critical":
             reasons.append(

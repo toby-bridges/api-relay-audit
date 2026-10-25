@@ -48,7 +48,7 @@ TOOL_PROBE_TEXT_LIMIT = 200
 
 
 def _is_token_char(char) -> bool:
-    return char.isalnum() or char in "-_.~+/="
+    return (char.isascii() and char.isalnum()) or char in "-_.~+/="
 
 
 def _clip_probe_text(text, limit=TOOL_PROBE_TEXT_LIMIT) -> str:

@@ -68,7 +68,7 @@ def test_structured_anomaly_sets_d3(monkeypatch):
 def test_structured_inconclusive_sets_d3i(monkeypatch):
     structured = _structured("inconclusive")
     structured["protocol_notes"] = ["note with | pipe"]
-    structured["text_excerpt"] = "Tools are disabled \\| here"
+    structured["text_excerpt"] = "Tools are disabled ` here"
     monkeypatch.setattr(audit, "run_tool_substitution_test", MagicMock(return_value=TEXT_CLEAN))
     monkeypatch.setattr(
         audit,
@@ -81,8 +81,7 @@ def test_structured_inconclusive_sets_d3i(monkeypatch):
     assert report.summary[-1][0] == "yellow"
     rendered = "".join(report.sections)
     assert "- note with \\| pipe" in rendered
-    assert "`Tools are disabled \\| here`" in rendered
-    assert "\\\\|" not in rendered
+    assert "`Tools are disabled ’ here`" in rendered
 
 
 def test_text_anomaly_wins_over_structured_inconclusive(monkeypatch):
@@ -134,3 +133,48 @@ def test_structured_report_hides_tool_name_and_redacts_secrets(monkeypatch):
     assert caller_key[:8] not in rendered
     assert upstream_key not in rendered
     assert "<REDACTED" in rendered
+
+
+def _outside_code_spans(line):
+    parts = line.split("`")
+    assert len(parts) % 2 == 1, line
+    return "".join(parts[0::2])
+
+
+def test_relay_backticks_and_links_stay_inside_code_spans(monkeypatch):
+    from api_relay_audit.tool_call_integrity import analyze_tool_call_integrity
+
+    hostile = "Tools are disabled. x` [Re-enter your key](https://evil.example/login) ` end"
+    structured = analyze_tool_call_integrity(
+        {"protocol": "anthropic", "tool_calls": [], "stop_reason": "end_turn",
+         "text": hostile},
+        expected_name="record_probe_fixed",
+        expected_arguments={"probe_token": "TC_fixed"},
+    )
+    structured["received_calls"] = [{
+        "type": "function",
+        "id": "toolu_1",
+        "name": "record_probe_fixed",
+        "arguments": {"note": hostile},
+        "arguments_error": None,
+    }]
+    text_rows = ([{
+        "manager": "pip",
+        "expected": "pip install requests==2.31.0",
+        "received": hostile,
+        "verdict": "substituted",
+    }], True, False)
+    monkeypatch.setattr(audit, "run_tool_substitution_test", MagicMock(return_value=text_rows))
+    monkeypatch.setattr(
+        audit,
+        "run_tool_call_integrity_test",
+        MagicMock(return_value=structured),
+    )
+    report = Reporter()
+
+    audit.test_tool_substitution(MagicMock(), report)
+    rendered = "".join(report.sections)
+    link_lines = [line for line in rendered.splitlines() if "evil.example" in line]
+    assert len(link_lines) == 3  # text table cell, arguments preview, text excerpt
+    for line in link_lines:
+        assert "evil.example" not in _outside_code_spans(line), line

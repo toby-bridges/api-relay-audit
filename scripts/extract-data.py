@@ -110,22 +110,32 @@ def parse_report(file_path):
     )
     if sub_section_match:
         section = sub_section_match.group(0)
-        # Detection verdict from the flag line
-        if (
-            "SUBSTITUTED" in section
-            or "substitution detected" in section.lower()
-            or "integrity anomaly detected" in section.lower()
-            or "**Structured verdict**: `anomaly`" in section
+        lines = section.split("\n")
+        # Detection comes only from report-generated markers: red flag lines,
+        # the structured verdict field, and per-probe verdict cells. Relay
+        # text (received cells, argument previews, text excerpts) never starts
+        # a line with these markers, so quoting "SUBSTITUTED" cannot flip it.
+        flag_detected = any(
+            line.startswith("\U0001f534 **")
+            and (
+                "substitution detected" in line.lower()
+                or "integrity anomaly detected" in line.lower()
+            )
+            for line in lines
+        )
+        if flag_detected or re.search(
+            r"^\*\*Structured verdict\*\*:\s*`anomaly`", section, re.MULTILINE
         ):
             tool_substitution["detected"] = True
         # Parse the per-probe table rows
-        for line in section.split("\n"):
+        for line in lines:
             if not line.startswith("| "):
                 continue
             # Skip the header and separator rows
             if "Manager" in line or "---" in line:
                 continue
-            parts = [p.strip() for p in line.split("|")[1:-1]]
+            # Split on unescaped pipes only; reports escape relay "|" as "\|".
+            parts = [p.strip() for p in re.split(r"(?<!\\)\|", line)[1:-1]]
             if len(parts) >= 4:
                 verdict_cell = parts[3]
                 if "exact" in verdict_cell:
@@ -144,6 +154,8 @@ def parse_report(file_path):
                     "received": parts[2].strip("`"),
                     "verdict": verdict,
                 })
+        if any(p["verdict"] == "substituted" for p in tool_substitution["probes"]):
+            tool_substitution["detected"] = True
 
         structured_verdict = re.search(
             r"\*\*Structured verdict\*\*:\s*`([^`]+)`", section)

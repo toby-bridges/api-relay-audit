@@ -116,7 +116,8 @@ def test_text_excerpt_redacts_sk_style_key():
     assert key not in excerpt
     assert key[:12] not in excerpt
     assert "<REDACTED_SECRET>" in excerpt
-    assert "\\|" in excerpt and "\\`" in excerpt and "\n" not in excerpt
+    assert "\\|" in excerpt and "\n" not in excerpt
+    assert "`" not in excerpt and "’" in excerpt
     assert len(excerpt) <= 200
 
     # A key cut by the client's 200-character bound must not survive as a
@@ -124,3 +125,38 @@ def test_text_excerpt_redacts_sk_style_key():
     clipped = _clip_probe_text("x" * 190 + " " + key)
     assert len(clipped) <= 200
     assert "sk-" not in clipped
+
+
+def test_v5_missing_stop_reason_is_anomaly():
+    for response in (
+        {"protocol": "anthropic", "tool_calls": [_call()], "stop_reason": None},
+        {"protocol": "anthropic", "tool_calls": [_call()]},
+    ):
+        result = _analyze(response)
+        assert result["verdict"] == "anomaly"
+        assert any("missing" in f for f in result["findings"])
+
+
+def test_openai_other_finish_reasons_are_noted_but_clean():
+    for finish_reason in ("length", "content_filter", None):
+        result = _analyze({
+            "protocol": "openai",
+            "tool_calls": [_call(id="call_abc123")],
+            "stop_reason": finish_reason,
+        })
+        assert result["verdict"] == "clean", finish_reason
+        assert result["findings"] == []
+        assert any("finish_reason" in note for note in result["protocol_notes"])
+
+
+def test_chinese_text_excerpt_survives_clipping():
+    clipped = _clip_probe_text("中转站已禁用工具调用" * 30)
+    assert len(clipped) == 200
+    result = _analyze({
+        "protocol": "anthropic",
+        "tool_calls": [],
+        "stop_reason": "end_turn",
+        "text": clipped,
+    })
+    assert result["text_excerpt"].startswith("中转站已禁用工具调用")
+    assert len(result["text_excerpt"]) <= 200

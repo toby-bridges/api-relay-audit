@@ -6,6 +6,7 @@ returned tool call and never sends a ``tool_result`` follow-up request.
 
 import json
 import re
+import unicodedata
 import uuid
 
 from api_relay_audit.error_leakage import redact_sensitive_text
@@ -20,6 +21,8 @@ PROBE_DESCRIPTION = (
     "has no side effects, and will not be executed. Call it exactly once."
 )
 TEXT_EXCERPT_LIMIT = 200
+_BACKTICK_STAND_IN = "\u2019"
+_CONTROL_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 
 
 def _json_deep_equal(left, right):
@@ -39,13 +42,31 @@ def _json_deep_equal(left, right):
     return left == right
 
 
+def _fold_controls(text):
+    """Replace line breaks and other control characters with spaces."""
+    return "".join(
+        " " if unicodedata.category(char) in _CONTROL_CATEGORIES else char
+        for char in text
+    )
+
+
 def _markdown_safe(text, max_chars, api_key=""):
-    """Redact secrets, escape Markdown table/code delimiters, then bound."""
+    """Redact secrets and make text safe inside a Markdown code span.
+
+    A backslash does not escape anything inside a code span, so a relay
+    backtick could close the span and inject links or HTML; backticks become
+    U+2019 instead. Line breaks and other control characters fold to spaces,
+    and pipes stay escaped for GFM table cells.
+    """
     text = redact_sensitive_text(text, api_key)
-    text = text.replace("|", "\\|").replace("`", "\\`")
+    text = _fold_controls(text)
+    text = text.replace("`", _BACKTICK_STAND_IN).replace("|", "\\|")
     limit = max(3, int(max_chars))
     if len(text) > limit:
-        return text[:limit - 3] + "..."
+        cut = limit - 3
+        if text[cut - 1:cut + 1] == "\\|":
+            cut -= 1
+        return text[:cut] + "..."
     return text
 
 
@@ -66,7 +87,8 @@ def format_tool_calls_preview(calls, max_chars=240, api_key=""):
 
 def format_text_excerpt(text, max_chars=TEXT_EXCERPT_LIMIT, api_key=""):
     """Return a redacted, Markdown-safe, single-line excerpt of returned text."""
-    return _markdown_safe(" ".join(str(text).split()), max_chars, api_key)
+    flattened = " ".join(_fold_controls(str(text)).split())
+    return _markdown_safe(flattened, max_chars, api_key)
 
 
 def _id_prefix(value):
@@ -94,7 +116,8 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments,
     evidence. A returned call whose stop reason is not ``tool_use`` is an
     anomaly, because agent loops key on that field and may ignore the call.
     OpenAI-format forced calls may finish with ``stop`` or ``tool_calls``, so
-    neither value is flagged. A response without ``protocol`` keeps the
+    neither value is flagged; any other finish reason is recorded in
+    ``protocol_notes`` only. A response without ``protocol`` keeps the
     protocol-neutral checks only. When no call is returned, a redacted,
     bounded ``text_excerpt`` records what the relay said instead.
 
@@ -126,7 +149,11 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments,
             "protocol_notes": [],
         }
     if not calls:
-        claimed_tool_stop = response.get("stop_reason") in {"tool_use", "tool_calls"}
+        stop_reason = response.get("stop_reason")
+        claimed_tool_stop = (
+            isinstance(stop_reason, str)
+            and stop_reason in {"tool_use", "tool_calls"}
+        )
         result = {
             "verdict": "anomaly" if claimed_tool_stop else "inconclusive",
             "expected_count": 1,
@@ -189,6 +216,13 @@ def analyze_tool_call_integrity(response, expected_name, expected_arguments,
                 f"Anthropic stop reason was {_describe_stop_reason(stop_reason)}, "
                 "not 'tool_use', although a Tool Call was returned; agent loops "
                 "keyed on stop_reason may ignore the call"
+            )
+    elif response.get("protocol") == "openai":
+        finish_reason = response.get("stop_reason")
+        if finish_reason not in ("stop", "tool_calls"):
+            protocol_notes.append(
+                f"OpenAI finish_reason was {_describe_stop_reason(finish_reason)}, "
+                "not 'stop' or 'tool_calls'; recorded for context, verdict unchanged"
             )
     return {
         "verdict": (
