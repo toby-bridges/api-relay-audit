@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = REPO_ROOT / "web"
-PAGES_BASE = "https://toby-bridges.github.io/api-relay-audit/"
+PAGES_BASE = "https://apirelayaudit.com/"
 
 
 class SiteParser(HTMLParser):
@@ -62,9 +62,9 @@ def _html_pages():
 def _local_path_for_url(url):
     parsed = urlparse(url)
     assert parsed.scheme == "https"
-    assert parsed.netloc == "toby-bridges.github.io"
-    assert parsed.path.startswith("/api-relay-audit/")
-    suffix = parsed.path.removeprefix("/api-relay-audit/")
+    assert parsed.netloc == "apirelayaudit.com"
+    assert parsed.path.startswith("/")
+    suffix = parsed.path.removeprefix("/")
     if suffix in ("", "/"):
         return WEB_ROOT / "index.html"
     path = WEB_ROOT / unquote(suffix)
@@ -112,8 +112,8 @@ def test_sitemap_urls_map_to_committed_pages():
     namespace = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
     urls = [item.text for item in root.findall("sm:url/sm:loc", namespace)]
     expected = {
-        "https://toby-bridges.github.io/api-relay-audit/",
-        "https://toby-bridges.github.io/api-relay-audit/zh/",
+        PAGES_BASE,
+        PAGES_BASE + "zh/",
         *{
             PAGES_BASE + path.relative_to(WEB_ROOT).as_posix()
             for path in WEB_ROOT.glob("guides/*.html")
@@ -132,13 +132,13 @@ def test_robots_points_to_sitemap():
 
 def test_homepage_and_chinese_page_have_reciprocal_hreflang():
     expected = {
-        ("en", "https://toby-bridges.github.io/api-relay-audit/"),
-        ("zh-CN", "https://toby-bridges.github.io/api-relay-audit/zh/"),
-        ("x-default", "https://toby-bridges.github.io/api-relay-audit/"),
+        ("en", PAGES_BASE),
+        ("zh-CN", PAGES_BASE + "zh/"),
+        ("x-default", PAGES_BASE),
     }
     for path, canonical in [
-        (WEB_ROOT / "index.html", "https://toby-bridges.github.io/api-relay-audit/"),
-        (WEB_ROOT / "zh" / "index.html", "https://toby-bridges.github.io/api-relay-audit/zh/"),
+        (WEB_ROOT / "index.html", PAGES_BASE),
+        (WEB_ROOT / "zh" / "index.html", PAGES_BASE + "zh/"),
     ]:
         parser = _parse_html(path)
         assert parser.canonicals == [canonical]
