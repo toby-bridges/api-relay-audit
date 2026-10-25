@@ -47,7 +47,7 @@ from api_relay_audit.client import APIClient
 from api_relay_audit.connectivity import run_connectivity_check
 from api_relay_audit.context import run_context_scan
 from api_relay_audit.error_diagnosis import diagnose_error, format_diagnosis
-from api_relay_audit.error_leakage import run_error_leakage_test
+from api_relay_audit.error_leakage import redact_sensitive_text, run_error_leakage_test
 from api_relay_audit.identity_patterns import find_non_claude_identities
 from api_relay_audit.infra_fingerprint import (
     aggregate_framework,
@@ -78,8 +78,12 @@ from api_relay_audit.stream_integrity import (
     PARITY_INPUT_TOKEN_TOLERANCE,
     PARITY_SIMILARITY_MIN,
     PARITY_VALID_STOP_REASONS,
+    analyze_signature_roundtrip,
     analyze_stream,
+    build_replay_assistant_content,
     compare_stream_nonstream,
+    has_replayable_signature,
+    replay_accepted,
 )
 from api_relay_audit.tool_call_integrity import (
     format_tool_calls_preview,
@@ -215,6 +219,12 @@ def parse_args():
     p.add_argument("--skip-stream-integrity", action="store_true",
                    help="Skip stream integrity test (Step 10). Useful if the "
                         "relay does not support Anthropic streaming.")
+    p.add_argument("--verify-signature", action="store_true",
+                   help="Opt-in Step 10 check: pass the streamed thinking block "
+                        "back twice, intact and with one signature character "
+                        "changed, and record whether the upstream tells them "
+                        "apart. Sends up to 2 extra paid requests. "
+                        "Informational only, not scored. Default: off.")
     p.add_argument("--profile", choices=["general", "web3", "full"],
                    default="general",
                    help="Audit profile selector. 'general' (default) runs "
@@ -1171,13 +1181,16 @@ def test_error_leakage(client, args, report):
     return severity, inconclusive
 
 
-def test_stream_integrity(client, report):
+def test_stream_integrity(client, report, verify_signature=False):
     """Step 10: Stream Integrity (SSE whitelist + usage monotonicity +
     thinking signature + stream model identity).
 
     Opens an Anthropic-format streaming request with ``thinking`` enabled
     and captures every SSE event into a :class:`StreamSignals`. Then
     runs :func:`analyze_stream` for a tri-state verdict.
+
+    With ``verify_signature`` (``--verify-signature``) it also appends the
+    opt-in thinking signature round-trip, which is informational only.
 
     Returns ``(verdict, inconclusive)`` where ``verdict`` is one of
     ``"clean"`` / ``"anomaly"`` / ``"inconclusive"`` and
@@ -1269,6 +1282,12 @@ def test_stream_integrity(client, report):
         client, report, signals,
         probe_messages, probe_max_tokens, probe_with_thinking,
     )
+
+    # Opt-in (--verify-signature) and informational, same contract as the
+    # parity section. A default run sends nothing extra.
+    if verify_signature:
+        _report_signature_roundtrip(client, report, signals, probe_messages,
+                                    probe_max_tokens)
 
     print(f"  Done: stream integrity ({verdict})")
     return verdict, verdict == "inconclusive"
@@ -1377,6 +1396,164 @@ def _report_stream_parity(client, report, signals, messages, max_tokens,
         for note in parity["notes"]:
             report.p(f"- {note}")
 
+
+SIGNATURE_REPLAY_FOLLOW_UP = "Reply with the single word: done"
+
+
+def _redacted_excerpt(client, text, limit=160):
+    """Redact, flatten and clip text before it reaches the report."""
+    text = redact_sensitive_text(str(text), getattr(client, "api_key", "") or "")
+    return " ".join(text.split())[:limit]
+
+
+def _roundtrip_verdict_line(report, verdict):
+    report.p(f"\nObserved round-trip result: **{verdict}** "
+             "(informational, not scored)")
+
+
+def _signature_roundtrip_skip_reason(client, signals):
+    """Return why the signature round-trip cannot run, or ``None``."""
+    detected_format = getattr(client, "detected_format", None)
+    if detected_format != "anthropic":
+        return (f"the client format is {detected_format!r} rather than "
+                "'anthropic'")
+    if signals.transport_error:
+        return "the Step 10 stream had a transport error"
+    issue = getattr(signals, "thinking_capture_issue", None)
+    if issue:
+        return f"the thinking capture cannot be replayed byte for byte ({issue})"
+    if not has_replayable_signature(signals):
+        blocks = signals.thinking_blocks if isinstance(signals.thinking_blocks, list) else []
+        types = {b.get("type") for b in blocks if isinstance(b, dict)}
+        if "thinking" in types:
+            return ("a thinking block carried no signature, so even the intact "
+                    "replay could not be accepted")
+        if "redacted_thinking" in types:
+            return ("the stream carried only redacted_thinking blocks, with no "
+                    "thinking block signature to change")
+        return "the stream carried no thinking block with a non-empty signature"
+    text = signals.text if isinstance(signals.text, str) else ""
+    if not text.strip():
+        return "the stream carried no reply text to pass back"
+    return None
+
+
+def _report_signature_roundtrip(client, report, signals, messages, max_tokens):
+    """Append Step 10's opt-in thinking signature round-trip section.
+
+    Runs only under ``--verify-signature``. Passes the streamed assistant
+    turn (thinking blocks plus reply text) back to the same model with the
+    stream's user message, ``max_tokens`` and thinking setting, once
+    unchanged and then, only if that replay was accepted, with one signature
+    character changed. The pair is judged by
+    :func:`analyze_signature_roundtrip`; a skipped check is recorded as
+    inconclusive. Observation only: it never changes the Step 10 verdict,
+    never calls ``report.flag()`` and never feeds the risk matrix.
+
+    Must not raise: every failure degrades to an inconclusive result, and
+    every error excerpt goes through redaction and clipping.
+    """
+    report.h3("Thinking signature round-trip (opt-in, informational)")
+    report.p(
+        "Passes the Step 10 thinking block back to the same model twice: once "
+        "unchanged, then with one character in the middle of its signature "
+        "changed. Both requests reuse the stream's user message, reply text, "
+        "max_tokens and thinking setting, with no system prompt, tools or "
+        "sampling parameters, so they differ only in that character. An "
+        "upstream that checks signatures accepts the intact replay and "
+        "rejects the tampered one with an HTTP 400 that names the signature "
+        "(upstream-verified). Without a tool-use turn the model may strip "
+        "replayed thinking blocks before checking them, so two accepted "
+        "replays are no-signal: they show neither that nothing upstream "
+        "verifies signatures nor that the signature was forged. A stronger "
+        "probe would replay a tool-use turn; this check does not. Sonnet 5.5 "
+        "and Haiku 5.5 thinking blocks are bound to the account that produced "
+        "them, so a relay that rotates one conversation across several "
+        "upstream accounts may fail the intact replay; that is an untested "
+        "hypothesis, only recorded here. Informational only: it does not "
+        "change the Step 10 verdict or the risk matrix.\n"
+    )
+
+    intact = None
+    tampered = None
+    try:
+        skip = _signature_roundtrip_skip_reason(client, signals)
+        if skip:
+            report.p(f"Skipped: {skip}. No replay request sent.")
+            _roundtrip_verdict_line(report, "inconclusive")
+            return
+        intact = client.replay_thinking(
+            messages,
+            build_replay_assistant_content(signals.thinking_blocks, signals.text),
+            SIGNATURE_REPLAY_FOLLOW_UP, max_tokens=max_tokens,
+        )
+        if replay_accepted(intact):
+            tampered = client.replay_thinking(
+                messages,
+                build_replay_assistant_content(
+                    signals.thinking_blocks, signals.text, tamper=True),
+                SIGNATURE_REPLAY_FOLLOW_UP, max_tokens=max_tokens,
+            )
+        roundtrip = analyze_signature_roundtrip(intact, tampered)
+    except Exception as exc:  # informational block must never fail Step 10
+        roundtrip = {
+            "verdict": "inconclusive",
+            "notes": ["Signature round-trip failed: "
+                      + _redacted_excerpt(client, f"{type(exc).__name__}: {exc}")],
+        }
+
+    try:
+        _render_signature_roundtrip(client, report, intact, tampered, roundtrip)
+    except Exception as exc:  # rendering must not fail Step 10 either
+        _roundtrip_verdict_line(report, "inconclusive")
+        report.p("- Signature round-trip report failed: "
+                 + _redacted_excerpt(client, f"{type(exc).__name__}: {exc}"))
+
+
+def _render_signature_roundtrip(client, report, intact, tampered, roundtrip):
+    """Render the round-trip table, verdict and notes. Sends no request."""
+    def _cell(value):
+        if value is None:
+            return "—"
+        return _redacted_excerpt(client, value, 60).replace("|", "\\|")
+
+    def _observation(res):
+        if res is None:
+            return "not sent"
+        status = res.get("status") if isinstance(res, dict) else None
+        if status is None:
+            return "no HTTP response"
+        if replay_accepted(res):
+            return "accepted"
+        if isinstance(status, int) and 200 <= status < 300:
+            return "error body"
+        return "rejected"
+
+    rows = (
+        ("intact (signature unchanged)", intact),
+        ("tampered (1 signature character changed)", tampered),
+    )
+    report.p("| Replay | HTTP status | error_type | input_tokens | Observation |")
+    report.p("|--------|-------------|------------|--------------|-------------|")
+    for label, res in rows:
+        res_dict = res if isinstance(res, dict) else {}
+        report.p(
+            f"| {label} | {_cell(res_dict.get('status'))} | "
+            f"{_cell(res_dict.get('error_type'))} | "
+            f"{_cell(res_dict.get('input_tokens'))} | {_observation(res)} |"
+        )
+    _roundtrip_verdict_line(report, roundtrip["verdict"])
+    notes = list(roundtrip.get("notes") or [])
+    for label, res in rows:
+        error = res.get("error") if isinstance(res, dict) else None
+        if error:
+            notes.append(f"{label.split(' ', 1)[0]} replay error (redacted): "
+                         + _redacted_excerpt(client, error))
+    if notes:
+        report.p("\n**Round-trip notes (observed)**:")
+        for note in notes:
+            safe = str(note)[:400].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
+            report.p(f"- {safe}")
 
 def test_web3_injection(client, report):
     """Step 11: Web3 Prompt Injection (SlowMist signature isolation).
@@ -2175,6 +2352,7 @@ def _run_audit(args, report_stdout):
         stream_verdict, stream_inconclusive = _run_step(
             "Step 10 stream integrity", report,
             test_stream_integrity, client, report,
+            getattr(args, "verify_signature", False),
             default=("clean", True), crashes=step_crashes,
         )
     else:

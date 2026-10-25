@@ -318,6 +318,7 @@ def transform_client(text: str) -> str:
         "import httpx",
         "from api_relay_audit import _transport",
         "from api_relay_audit.error_diagnosis import ",
+        "from api_relay_audit.error_leakage import ",
         "from api_relay_audit.stream_integrity import StreamSignals",
         "from api_relay_audit.transparent_log import ",
     ))
