@@ -518,6 +518,7 @@ class TestClassifyOpenAIUsage:
     @pytest.mark.parametrize(("raw", "expected"), [
         ("Vertex AI/<b>gemini</b>|x`y", "VertexAIbgeminibxy"),
         ("z" * 40, "z" * 32),
+        ("Open AI Proxy", "OpenAIProxy"),
     ])
     def test_usage_source_value_is_sanitized_and_truncated(self, raw, expected):
         result = classify_openai_usage({"usage_source": raw})
@@ -556,7 +557,9 @@ class TestClassifyOpenAIUsage:
             "usage_source_value": None,
         }
 
-    @pytest.mark.parametrize("value", ["openai", "OpenAI", " openai ", "", None])
+    @pytest.mark.parametrize(
+        "value", ["openai", "OpenAI", " openai ", "open ai", "OPEN AI!", "", None]
+    )
     def test_openai_or_empty_usage_source_does_not_match(self, value):
         usage = dict(_STANDARD_OPENAI_USAGE, usage_source=value)
         assert classify_openai_usage(usage)["channel"] == "unknown"
@@ -576,7 +579,7 @@ class TestClassifyOpenAIUsage:
         assert result["confidence"] == 0.0
         assert result["tier"] is None
         assert result["matched_keys"] == []
-        assert result["evidence"] == ["usage_keys:anthropic-style-names"]
+        assert result["evidence"] == ["usage_keys:input_output_pair"]
 
     def test_responses_shape_is_weak_only(self):
         result = classify_openai_usage({
@@ -588,7 +591,7 @@ class TestClassifyOpenAIUsage:
         })
         assert result["channel"] == "unknown"
         assert result["matched_keys"] == []
-        assert result["evidence"] == ["usage_keys:anthropic-style-names"]
+        assert result["evidence"] == ["usage_keys:input_output_pair"]
 
     def test_pair_with_anthropic_only_cache_key_is_translated(self):
         result = classify_openai_usage({
@@ -602,6 +605,32 @@ class TestClassifyOpenAIUsage:
         assert result["channel"] == "anthropic-translated"
         assert result["matched_keys"] == ["input_tokens", "output_tokens"]
         assert result["evidence"] == ["usage_keys:input_tokens+output_tokens"]
+
+    def test_pair_with_anthropic_only_key_but_details_is_weak_only(self):
+        result = classify_openai_usage({
+            "prompt_tokens": 8,
+            "completion_tokens": 4,
+            "total_tokens": 12,
+            "input_tokens": 8,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 0,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        })
+        assert result["channel"] == "unknown"
+        assert result["matched_keys"] == []
+        assert result["evidence"] == ["usage_keys:input_output_pair"]
+
+    @pytest.mark.parametrize("usage", [
+        {"input_tokens": 8, "output_tokens": 4,
+         "cache_creation": {"ephemeral_5m_input_tokens": 0}},
+        {"prompt_tokens": 8, "completion_tokens": 4, "input_tokens": 8,
+         "output_tokens": 4,
+         "cache_creation": {"ephemeral_5m_input_tokens": 0}},
+    ])
+    def test_cache_creation_object_with_pair_is_translated(self, usage):
+        result = classify_openai_usage(usage)
+        assert result["channel"] == "anthropic-translated"
+        assert result["matched_keys"] == ["input_tokens", "output_tokens"]
 
     @pytest.mark.parametrize(
         "value", [False, 0, 42, [], {}, "   ", chr(0x4E2D) + chr(0x6587)]
@@ -896,7 +925,7 @@ def test_step14_report_no_signal_and_inconclusive_branches(
 
 @pytest.mark.parametrize(("path", "module_name"), _AUDIT_DISTRIBUTIONS)
 def test_step14_add_on_exception_is_inconclusive_not_crash(
-        path, module_name, monkeypatch):
+        path, module_name, monkeypatch, capsys):
     module = _load_audit(path, module_name)
 
     def explode(client, report):
@@ -910,3 +939,6 @@ def test_step14_add_on_exception_is_inconclusive_not_crash(
                                       "error": "RuntimeError"}
     assert any("internal error (RuntimeError)" in line for line in report.lines)
     assert not any("secret detail" in line for line in report.lines)
+    err = capsys.readouterr().err
+    assert "step14 usage fingerprint: RuntimeError" in err
+    assert "secret detail" not in err

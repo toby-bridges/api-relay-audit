@@ -1619,6 +1619,8 @@ def test_channel_classifier(client, report):
         try:
             result["openai_usage"] = _report_openai_usage_fingerprint(client, report)
         except Exception as exc:  # the add-on must never become a Step 14 crash
+            print(f"step14 usage fingerprint: {type(exc).__name__}",
+                  file=sys.stderr)
             report.p(
                 "\nUsage fingerprint **inconclusive**: internal error "
                 f"({type(exc).__name__}). Informational only; the audit "

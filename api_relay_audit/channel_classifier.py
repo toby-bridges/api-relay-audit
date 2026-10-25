@@ -258,7 +258,7 @@ OPENAI_USAGE_ANTHROPIC_ONLY_KEYS = (
     "cache_read_input_tokens",
     "cache_creation",
 )
-OPENAI_USAGE_WEAK_PAIR_EVIDENCE = "usage_keys:anthropic-style-names"
+OPENAI_USAGE_WEAK_PAIR_EVIDENCE = "usage_keys:input_output_pair"
 # usage_source is the only usage value ever surfaced. It and every key name
 # shown in a report are reduced to this character set and length first.
 OPENAI_USAGE_SOURCE_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
@@ -301,11 +301,12 @@ def classify_openai_usage(usage):
          ``cache_creation``) is present -> ``anthropic-translated``.
          A pair that misses these conditions (zero-padded next to the
          OpenAI names, or the Responses shape with ``*_details``) only adds
-         the weak evidence ``usage_keys:anthropic-style-names`` and leaves
+         the weak evidence ``usage_keys:input_output_pair`` and leaves
          the channel ``unknown``.
-      3. ``usage_source`` is a string other than ``openai`` (compared after
-         strip + lowercase) whose sanitized form is not empty
-         -> ``foreign-usage-source``. Non-string values never fire.
+      3. ``usage_source`` is a string whose sanitized form is not empty and,
+         after strip + lowercase, is not ``openai`` (so ``open ai`` and
+         `` OpenAI `` do not fire) -> ``foreign-usage-source``. The value
+         compared is the value displayed. Non-string values never fire.
 
     When rule 3 fires together with rule 1 or 2, ``anthropic-translated``
     is the channel and rule 3 stays in ``evidence``.
@@ -349,9 +350,9 @@ def classify_openai_usage(usage):
             else:
                 evidence.append(OPENAI_USAGE_WEAK_PAIR_EVIDENCE)
         source = usage.get("usage_source")
-        if isinstance(source, str) and source.strip().lower() not in ("", "openai"):
+        if isinstance(source, str):
             sanitized = _sanitize_usage_text(source)
-            if sanitized:
+            if sanitized and sanitized.strip().lower() != "openai":
                 matched_keys.append("usage_source")
                 evidence.append("usage_source:non-openai")
                 source_value = sanitized

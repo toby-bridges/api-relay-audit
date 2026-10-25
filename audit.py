@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 961363c0ae235839da3ff6e6547a021021f71fc0a31b9314b5b8c71271df03da
-# standalone_body_sha256: 0ccfc0d3c13747216b090eb4832244f41de03b773e64761ed51e7f5db7ace6ad
+# source_sha256: af1ed8824204130123c059edc2b8a1bd8d28078addf2039014c55a8c4fd73c8d
+# standalone_body_sha256: 4789da6903cefecac52b178b9b87bc042551354eb1011600ab87f714f2e1f11f
 # END GENERATED STANDALONE HEADER
 
 """
@@ -4864,7 +4864,7 @@ OPENAI_USAGE_ANTHROPIC_ONLY_KEYS = (
     "cache_read_input_tokens",
     "cache_creation",
 )
-OPENAI_USAGE_WEAK_PAIR_EVIDENCE = "usage_keys:anthropic-style-names"
+OPENAI_USAGE_WEAK_PAIR_EVIDENCE = "usage_keys:input_output_pair"
 # usage_source is the only usage value ever surfaced. It and every key name
 # shown in a report are reduced to this character set and length first.
 OPENAI_USAGE_SOURCE_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
@@ -4907,11 +4907,12 @@ def classify_openai_usage(usage):
          ``cache_creation``) is present -> ``anthropic-translated``.
          A pair that misses these conditions (zero-padded next to the
          OpenAI names, or the Responses shape with ``*_details``) only adds
-         the weak evidence ``usage_keys:anthropic-style-names`` and leaves
+         the weak evidence ``usage_keys:input_output_pair`` and leaves
          the channel ``unknown``.
-      3. ``usage_source`` is a string other than ``openai`` (compared after
-         strip + lowercase) whose sanitized form is not empty
-         -> ``foreign-usage-source``. Non-string values never fire.
+      3. ``usage_source`` is a string whose sanitized form is not empty and,
+         after strip + lowercase, is not ``openai`` (so ``open ai`` and
+         `` OpenAI `` do not fire) -> ``foreign-usage-source``. The value
+         compared is the value displayed. Non-string values never fire.
 
     When rule 3 fires together with rule 1 or 2, ``anthropic-translated``
     is the channel and rule 3 stays in ``evidence``.
@@ -4955,9 +4956,9 @@ def classify_openai_usage(usage):
             else:
                 evidence.append(OPENAI_USAGE_WEAK_PAIR_EVIDENCE)
         source = usage.get("usage_source")
-        if isinstance(source, str) and source.strip().lower() not in ("", "openai"):
+        if isinstance(source, str):
             sanitized = _sanitize_usage_text(source)
-            if sanitized:
+            if sanitized and sanitized.strip().lower() != "openai":
                 matched_keys.append("usage_source")
                 evidence.append("usage_source:non-openai")
                 source_value = sanitized
@@ -6729,6 +6730,8 @@ def test_channel_classifier(client, report):
         try:
             result["openai_usage"] = _report_openai_usage_fingerprint(client, report)
         except Exception as exc:  # the add-on must never become a Step 14 crash
+            print(f"step14 usage fingerprint: {type(exc).__name__}",
+                  file=sys.stderr)
             report.p(
                 "\nUsage fingerprint **inconclusive**: internal error "
                 f"({type(exc).__name__}). Informational only; the audit "
