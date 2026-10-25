@@ -129,8 +129,9 @@ def test_count_tokens_implausible_beyond_tolerance():
 @pytest.mark.parametrize("response, note_part", [
     (_count(404, '{"error": "not found"}'), "HTTP 404"),
     (_count(400, '{"error": "bad request"}'), "HTTP 400"),
-    (_count(200, "<html>relay home</html>"), "without an integer"),
-    (_count(200, '{"tokens": 9}'), "without an integer"),
+    (_count(200, "<html>relay home</html>"), "without input_tokens"),
+    (_count(200, '{"tokens": 9}'), "without input_tokens"),
+    (_count(200, '{"input_tokens": 9.0}'), "not an integer"),
     (_count(0, "", error="ConnectError: refused"), "request failed"),
 ])
 def test_count_tokens_unsupported_answers_are_inconclusive(response, note_part):
@@ -315,3 +316,259 @@ def test_standalone_usage_constants_match_modular(monkeypatch):
         assert getattr(standalone, name) == getattr(us, name), name
     assert (us.USAGE_DELTA_MIN, us.USAGE_DELTA_MAX) == (40, 240)
     assert us.USAGE_OUTPUT_TOLERANCE == 4
+
+
+# -- Rework: redaction, injection decoupling, readings, thinking, cache -----
+
+FAKE_SECRET = "sk-ant-api03-" + "Z" * 32
+
+
+def _raw(usage, **raw_extra):
+    return {"text": "hi", "input_tokens": 0, "output_tokens": 0,
+            "raw": {"usage": usage, **raw_extra}, "time": 0.01}
+
+
+@pytest.mark.parametrize("error_text", [
+    'HTTP 500: {"error": {"message": "upstream rejected ' + FAKE_SECRET + '"}}',
+    "ConnectError: tunnel refused " + FAKE_SECRET + " for sk-usage-sanity-test",
+])
+def test_long_request_error_body_never_reaches_report(audit_module, monkeypatch,
+                                                      error_text):
+    monkeypatch.setattr(audit_module, "time", MagicMock())
+    reporter = audit_module.Reporter()
+    client = FakeClient({"error": error_text, "time": 0.1},
+                        _count(200, '{"input_tokens": 9}'),
+                        step3_results=[_ok(9, 5), _ok(15, 5), _ok(11, 5)])
+
+    assert audit_module.test_token_injection(client, reporter) == 0
+
+    text = "".join(reporter.sections)
+    assert "### Token usage sanity (informational)" in text
+    assert FAKE_SECRET not in text
+    assert "sk-usage-sanity-test" not in text
+    assert "upstream rejected" not in text
+    assert "long-prompt request failed:" in text
+
+
+def test_count_tokens_transport_error_is_redacted():
+    check = us.check_usage_count_tokens(
+        10, _count(0, "", error="ConnectError: " + FAKE_SECRET), api_key="sk-x")
+    assert check["verdict"] == "inconclusive"
+    assert FAKE_SECRET not in check["note"]
+    assert "<REDACTED_SECRET>" in check["note"]
+
+
+@pytest.mark.parametrize("injection_size, sent", [
+    (None, True), (0, True), (20, True), (21, False), (140, False),
+])
+def test_count_tokens_skipped_when_step3_reports_injection(injection_size, sent):
+    client = FakeClient(_ok(89, 16), _count(200, '{"input_tokens": 9}'))
+    result = us.run_usage_sanity(client, _ok(9, 5), injection_size,
+                                 sleep_fn=lambda _s: None)
+    count = result["checks"][2]
+    if sent:
+        assert len(client.raw_calls) == 1
+        assert count["verdict"] == "plausible"
+    else:
+        assert client.raw_calls == []
+        assert count["verdict"] == "inconclusive"
+        assert "count_tokens cannot see injected content" in count["note"]
+        assert result["requests_sent"] == 1
+
+
+def test_step3_injection_path_keeps_flag_and_skips_count_tokens(audit_module,
+                                                               monkeypatch):
+    monkeypatch.setattr(audit_module, "time", MagicMock())
+    reporter = audit_module.Reporter()
+    # Step 3 expects 10 / 20 / 15, so every probe reads ~140 tokens high.
+    client = FakeClient(_ok(230, 16), _count(200, '{"input_tokens": 9}'),
+                        step3_results=[_ok(150, 5), _ok(160, 5), _ok(155, 5)])
+
+    assert audit_module.test_token_injection(client, reporter) == 140
+
+    assert reporter.summary == [
+        ("red", "Hidden system prompt injection detected (~140 tokens/request)")]
+    assert client.raw_calls == []
+    text = "".join(reporter.sections)
+    assert "count_tokens cannot see injected content" in text
+    assert "| A. Input delta (long - short input_tokens) | +80" in text
+
+
+@pytest.mark.parametrize("baseline, long_result, count_body, expected, note_part", [
+    (_ok(-5, 5), _ok(75, -7), '{"input_tokens": 9}',
+     ("implausible", "implausible", "implausible"), "negative"),
+    (_ok(0, 0), _ok(0, 0), '{"input_tokens": 9}',
+     ("implausible", "plausible", "implausible"), "outside 40..240"),
+    (_ok(9, 5), _raw({"input_tokens": True, "output_tokens": 16}),
+     '{"input_tokens": 9}',
+     ("inconclusive", "plausible", "plausible"), "not an integer"),
+    (_raw({"input_tokens": 9.0, "output_tokens": 5}), _ok(89, 16),
+     '{"input_tokens": 9}',
+     ("inconclusive", "inconclusive", "inconclusive"), "not an integer"),
+    (_ok(9, 5), _ok(89, 16), '{"input_tokens": "12"}',
+     ("plausible", "plausible", "inconclusive"), "not an integer"),
+], ids=["negative", "zero", "bool-true", "float", "string"])
+def test_odd_readings_are_pinned(baseline, long_result, count_body, expected,
+                                 note_part):
+    client = FakeClient(long_result, _count(200, count_body))
+    result = _run(client, baseline)
+    assert tuple(check["verdict"] for check in result["checks"]) == expected
+    assert note_part in " ".join(check["note"] or "" for check in result["checks"])
+
+
+@pytest.mark.parametrize("raw_extra, usage_extra, verdict, note_part", [
+    ({"stop_reason": "max_tokens"}, {}, "plausible", None),
+    ({"stop_reason": "refusal"}, {}, "inconclusive", "neither a natural stop"),
+    ({"choices": [{"finish_reason": "length"}]},
+     {"completion_tokens_details": {"reasoning_tokens": 0}}, "plausible", None),
+    ({"choices": [{"finish_reason": "stop"}]},
+     {"completion_tokens_details": {"reasoning_tokens": 12}}, "inconclusive",
+     "completion_tokens_details.reasoning_tokens=12"),
+    ({}, {"thinking_tokens": 7}, "inconclusive", "thinking_tokens=7"),
+], ids=["max-tokens", "refusal", "reasoning-zero", "reasoning-12", "thinking"])
+def test_output_cap_inconclusive_on_thinking_or_odd_stop(raw_extra, usage_extra,
+                                                         verdict, note_part):
+    long_result = _raw({"input_tokens": 89, "output_tokens": 16, **usage_extra},
+                       **raw_extra)
+    client = FakeClient(long_result, _count(200, '{"input_tokens": 9}'))
+    cap = _run(client, _ok(9, 5))["checks"][1]
+    assert cap["verdict"] == verdict
+    if note_part:
+        assert note_part in cap["note"]
+
+
+@pytest.mark.parametrize("where", ["baseline", "long", "zero"])
+def test_prompt_caching_makes_input_checks_inconclusive(where):
+    baseline = _ok(9, 5)
+    long_result = _ok(89, 16)
+    if where == "baseline":
+        baseline = _raw({"input_tokens": 9, "output_tokens": 5,
+                         "cache_read_input_tokens": 4096})
+    elif where == "long":
+        long_result = _raw({"input_tokens": 89, "output_tokens": 16,
+                            "cache_creation_input_tokens": 3})
+    else:
+        baseline = _raw({"input_tokens": 9, "output_tokens": 5,
+                         "cache_read_input_tokens": 0,
+                         "cache_creation_input_tokens": 0})
+    client = FakeClient(long_result, _count(200, '{"input_tokens": 9}'))
+    delta, cap, count = _run(client, baseline)["checks"]
+
+    assert cap["verdict"] == "plausible"
+    if where == "zero":
+        assert (delta["verdict"], count["verdict"]) == ("plausible", "plausible")
+        return
+    assert delta["verdict"] == "inconclusive"
+    assert "prompt caching" in delta["note"]
+    if where == "baseline":
+        assert count["verdict"] == "inconclusive"
+        assert "prompt caching" in count["note"]
+        assert client.raw_calls == []
+    else:
+        assert count["verdict"] == "plausible"
+        assert len(client.raw_calls) == 1
+
+
+def test_real_client_count_tokens_url_and_headers(monkeypatch):
+    from api_relay_audit import _transport
+    from api_relay_audit.client import APIClient
+
+    posts, raws = [], []
+
+    def fake_post(url, headers, body, timeout, httpx_module=None):
+        posts.append(url)
+        long = body["messages"][0]["content"] != "Say hi"
+        return {"content": [{"type": "text", "text": "Hi"}],
+                "usage": {"input_tokens": 89 if long else 9,
+                          "output_tokens": 16 if long else 5},
+                "stop_reason": "max_tokens" if long else "end_turn"}
+
+    def fake_raw(method, url, headers, body, content_type, timeout,
+                 httpx_module=None):
+        raws.append({"method": method, "url": url, "headers": headers,
+                     "body": body, "content_type": content_type})
+        return {"status": 200, "headers": {}, "body": '{"input_tokens": 9}',
+                "error": None}
+
+    monkeypatch.setattr(_transport, "httpx_post_json", fake_post)
+    monkeypatch.setattr(_transport, "httpx_raw_request", fake_raw)
+    client = APIClient("https://x/v1", "sk-real-client-test-key", "claude-test",
+                       verbose=False)
+    baseline = client.call([{"role": "user", "content": "Say hi"}], max_tokens=100)
+    assert client.detected_format == "anthropic"
+
+    result = us.run_usage_sanity(client, baseline, 0, sleep_fn=lambda _s: None)
+
+    assert result["verdict"] == "plausible"
+    assert result["requests_sent"] == 2
+    assert posts == ["https://x/v1/messages", "https://x/v1/messages"]
+    (raw,) = raws
+    assert raw["method"] == "POST"
+    assert raw["url"] == "https://x/v1/messages/count_tokens"
+    assert raw["headers"]["x-api-key"] == "sk-real-client-test-key"
+    assert raw["headers"]["anthropic-version"] == "2023-06-01"
+    assert raw["content_type"] == "application/json"
+    assert json.loads(raw["body"]) == {
+        "model": "claude-test",
+        "messages": [{"role": "user", "content": "Say hi"}]}
+
+
+def test_runner_openai_positive_path():
+    client = FakeClient(_ok(89, 16, fmt="openai"), detected_format="openai")
+    result = _run(client, _ok(9, 5, fmt="openai"))
+    assert _verdicts(result) == {"input_delta": "plausible",
+                                 "output_cap": "plausible",
+                                 "count_tokens": "inconclusive"}
+    assert result["verdict"] == "plausible"
+    assert result["requests_sent"] == 1
+    assert client.raw_calls == []
+
+
+def test_step3_all_errors_keeps_result_and_flag(audit_module, monkeypatch):
+    monkeypatch.setattr(audit_module, "time", MagicMock())
+    reporter = audit_module.Reporter()
+    err = {"error": "HTTP 503: no available accounts", "time": 0.1}
+    client = FakeClient(_ok(89, 16), _count(200, '{"input_tokens": 9}'),
+                        step3_results=[err, err, err])
+
+    assert audit_module.test_token_injection(client, reporter) is None
+
+    assert len(reporter.summary) == 1
+    level, message = reporter.summary[0]
+    assert level == "yellow" and "Token injection test INCONCLUSIVE" in message
+    assert len(client.calls) == 3 and client.raw_calls == []
+    text = "".join(reporter.sections)
+    assert "### Token usage sanity (informational)" in text
+    assert "not sent" in text
+    assert "| Observed usage sanity | inconclusive |" in text
+
+
+def test_report_usage_sanity_exception_branch(audit_module, monkeypatch):
+    monkeypatch.setattr(audit_module, "time", MagicMock())
+    monkeypatch.setattr(audit_module, "run_usage_sanity",
+                        lambda *args, **kwargs: {"verdict": "plausible"})
+    reporter = audit_module.Reporter()
+
+    result = audit_module.test_token_injection(
+        _step3_client('{"input_tokens": 9}'), reporter)
+
+    assert result == 0
+    assert reporter.summary == [("green", "No token injection detected")]
+    assert ("Usage sanity could not be evaluated (KeyError)"
+            in "".join(reporter.sections))
+
+
+def test_step3_call_site_guard_contains_render_crash(audit_module, monkeypatch):
+    monkeypatch.setattr(audit_module, "time", MagicMock())
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("renderer exploded")
+
+    monkeypatch.setattr(audit_module, "_report_usage_sanity", boom)
+    reporter = audit_module.Reporter()
+
+    result = audit_module.test_token_injection(
+        _step3_client('{"input_tokens": 9}'), reporter)
+
+    assert result == 0
+    assert reporter.summary == [("green", "No token injection detected")]

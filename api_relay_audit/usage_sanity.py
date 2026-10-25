@@ -28,8 +28,18 @@ reads the idle level: a minimal prompt whose input_tokens sit well above the
 expected count suggests a hidden prompt. Check A reads the increment after a
 fixed payload is added; a hidden prefix adds the same tokens to both
 requests and cancels out of the difference. Check C does not cancel it:
-count_tokens does not see a prompt the relay injects into Messages
-requests, so a gap in C can also come from Step 3's hidden prompt.
+count_tokens does not see a prompt the relay injects into Messages requests,
+so when Step 3 already reports injection (above
+``USAGE_STEP3_INJECTION_THRESHOLD`` tokens) C is not sent and stays
+inconclusive instead of reporting the same cause twice.
+
+Readings that cannot be compared make a check inconclusive: a missing or
+non-integer count, prompt caching (``cache_read_input_tokens`` /
+``cache_creation_input_tokens``, which input_tokens excludes) for A and C,
+and reported thinking tokens or an unexpected stop / finish reason for B.
+A negative count is impossible and makes the check implausible. Relay error
+text never reaches a note verbatim: HTTP errors keep only the status code
+and anything else is redacted, then clipped.
 
 Stream / non-stream usage parity lives in Step 10 and is not repeated here.
 No sampling parameters are sent: current Messages API versions reject
@@ -42,7 +52,10 @@ if at least one check is plausible and none is implausible, and
 """
 
 import json
+import re
 import time
+
+from api_relay_audit.error_leakage import redact_sensitive_text
 
 USAGE_BASELINE_PROMPT = "Say hi"
 USAGE_PAYLOAD_WORD = " apple"
@@ -54,6 +67,14 @@ USAGE_OUTPUT_MAX_TOKENS = 16
 USAGE_OUTPUT_TOLERANCE = 4
 USAGE_COUNT_TOKENS_TOLERANCE = 2
 USAGE_COUNT_TOKENS_PATH = "/v1/messages/count_tokens"
+# Step 3 reports injection above this many tokens (its yellow threshold).
+USAGE_STEP3_INJECTION_THRESHOLD = 20
+# Stop / finish reasons of a plain text reply that ended on its own or at
+# max_tokens (Anthropic, then OpenAI-compatible). Anything else leaves B
+# inconclusive.
+USAGE_EXPECTED_STOP_REASONS = frozenset(
+    {"end_turn", "max_tokens", "stop_sequence", "stop", "length"})
+USAGE_CACHE_FIELDS = ("cache_read_input_tokens", "cache_creation_input_tokens")
 
 USAGE_PLAUSIBLE = "plausible"
 USAGE_IMPLAUSIBLE = "implausible"
@@ -63,6 +84,8 @@ _USAGE_TOKEN_KEYS = {
     "input": ("input_tokens", "prompt_tokens"),
     "output": ("output_tokens", "completion_tokens"),
 }
+_USAGE_HTTP_STATUS = re.compile(r"^\s*HTTP\s+(\d{3})\b")
+_USAGE_THINKING_KEY = re.compile(r"reasoning|thinking|thought", re.IGNORECASE)
 
 
 def usage_long_prompt(base_prompt=USAGE_BASELINE_PROMPT):
@@ -70,10 +93,8 @@ def usage_long_prompt(base_prompt=USAGE_BASELINE_PROMPT):
     return base_prompt + USAGE_PAYLOAD_WORD * USAGE_PAYLOAD_REPEATS
 
 
-def _usage_int(value):
-    if isinstance(value, bool) or not isinstance(value, int):
-        return None
-    return value
+def _usage_is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _usage_clip(text, limit=160):
@@ -82,39 +103,123 @@ def _usage_clip(text, limit=160):
     return flat if len(flat) <= limit else flat[:limit - 3] + "..."
 
 
-def usage_reported_tokens(result, kind):
-    """Return the token count a ``client.call()`` result reported, or None.
+def usage_safe_error(error, api_key=""):
+    """Return report-safe text for a relay or transport error.
 
-    ``kind`` is ``"input"`` or ``"output"``. The client normalizes a missing
-    usage block to 0, so the raw response is read first: a reply without
-    usage counts as "not reported" instead of a zero reading. Results that
-    carry no ``raw`` dict fall back to the normalized field.
+    An HTTP error keeps only its status code, so no relay error body reaches
+    the report. Any other text is redacted with ``redact_sensitive_text``
+    first and clipped afterwards, so clipping cannot split a secret.
     """
+    text = str(error)
+    match = _USAGE_HTTP_STATUS.match(text)
+    if match:
+        return f"HTTP {match.group(1)}"
+    return _usage_clip(redact_sensitive_text(text, api_key))
+
+
+def _usage_raw_usage(result):
+    """Return the raw usage dict of a successful ``call()`` result, or None."""
     if not isinstance(result, dict) or result.get("error"):
         return None
+    raw = result.get("raw")
+    if isinstance(raw, dict) and isinstance(raw.get("usage"), dict):
+        return raw["usage"]
+    return None
+
+
+def usage_token_reading(result, kind, label, api_key=""):
+    """Return ``(value, reason)`` for a count a ``client.call()`` result reported.
+
+    ``kind`` is ``"input"`` or ``"output"``. ``value`` is the reported
+    integer, negative values included so the checks can call them
+    implausible, or None; ``reason`` then says why. The client normalizes a
+    missing usage block to 0, so the raw response is read first; results
+    that carry no ``raw`` dict fall back to the normalized field.
+    """
+    if not isinstance(result, dict):
+        return None, f"{label} returned no result"
+    if result.get("error"):
+        return None, f"{label} failed: {usage_safe_error(result['error'], api_key)}"
     keys = _USAGE_TOKEN_KEYS[kind]
     raw = result.get("raw")
     if isinstance(raw, dict):
         usage = raw.get("usage")
         if not isinstance(usage, dict):
-            return None
-        for key in keys:
-            value = _usage_int(usage.get(key))
-            if value is not None:
-                return value
+            return None, f"usage field missing from the {label} response"
+    else:
+        usage = {keys[0]: result.get(keys[0])}
+    for key in keys:
+        value = usage.get(key)
+        if value is None:
+            continue
+        if not _usage_is_int(value):
+            return None, f"{key} is not an integer in the {label} response"
+        return value, None
+    return None, f"{keys[0]} missing from the {label} response"
+
+
+def usage_cache_note(result, label):
+    """Return a note when prompt caching touched a reply, else None.
+
+    Anthropic's input_tokens excludes cached tokens, so a non-zero
+    ``cache_read_input_tokens`` or ``cache_creation_input_tokens`` makes
+    input comparisons unreliable.
+    """
+    usage = _usage_raw_usage(result)
+    if usage is None:
         return None
-    return _usage_int(result.get(keys[0]))
+    active = [f"{field}={usage[field]}" for field in USAGE_CACHE_FIELDS
+              if _usage_is_int(usage.get(field)) and usage[field] != 0]
+    if not active:
+        return None
+    return (f"prompt caching touched the {label} ({', '.join(active)}); "
+            "input_tokens excludes cached tokens")
 
 
-def _usage_missing_reason(result, label):
-    if not isinstance(result, dict):
-        return f"{label} returned no result"
-    if result.get("error"):
-        return f"{label} failed: {_usage_clip(result['error'])}"
-    return f"usage field missing from the {label} response"
+def usage_thinking_note(result, label):
+    """Return a note when a reply reports thinking / reasoning tokens, else None.
+
+    Looks for positive integer counts under usage keys that mention
+    reasoning, thinking or thought, one level deep (for example
+    ``completion_tokens_details.reasoning_tokens``). Some upstreams do not
+    cap thinking with max_tokens but still count it as output.
+    """
+    usage = _usage_raw_usage(result)
+    if usage is None:
+        return None
+    hits = []
+    for key, value in usage.items():
+        if isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                if (_USAGE_THINKING_KEY.search(str(sub_key))
+                        and _usage_is_int(sub_value) and sub_value > 0):
+                    hits.append(f"{key}.{sub_key}={sub_value}")
+        elif (_USAGE_THINKING_KEY.search(str(key))
+                and _usage_is_int(value) and value > 0):
+            hits.append(f"{key}={value}")
+    if not hits:
+        return None
+    return (f"the {label} reports thinking tokens ({', '.join(hits)}), which "
+            "some upstreams do not cap with max_tokens")
 
 
-def check_usage_input_delta(baseline_input, long_input, reason=None):
+def usage_stop_reason(result):
+    """Return the stop / finish reason of a successful ``call()`` result."""
+    if not isinstance(result, dict) or result.get("error"):
+        return None
+    raw = result.get("raw")
+    if not isinstance(raw, dict):
+        return None
+    reason = raw.get("stop_reason")
+    if reason is None:
+        choices = raw.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            reason = choices[0].get("finish_reason")
+    return reason if isinstance(reason, str) else None
+
+
+def check_usage_input_delta(baseline_input, long_input, reason=None,
+                            cache_note=None):
     """Check A: input_tokens increment after the fixed payload is appended."""
     check = {
         "check": "input_delta",
@@ -127,6 +232,14 @@ def check_usage_input_delta(baseline_input, long_input, reason=None):
     if baseline_input is None or long_input is None:
         if check["note"] is None:
             check["note"] = "input_tokens not reported for both requests"
+        return check
+    if baseline_input < 0 or long_input < 0:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (f"negative input_tokens reading (baseline "
+                         f"{baseline_input}, long prompt {long_input})")
+        return check
+    if cache_note:
+        check["note"] = cache_note
         return check
     delta = long_input - baseline_input
     check["delta"] = delta
@@ -142,7 +255,8 @@ def check_usage_input_delta(baseline_input, long_input, reason=None):
     return check
 
 
-def check_usage_output_cap(output_tokens, reason=None):
+def check_usage_output_cap(output_tokens, reason=None, stop_reason=None,
+                           thinking_note=None):
     """Check B: output_tokens of a max_tokens-capped reply stay under the cap."""
     limit = USAGE_OUTPUT_MAX_TOKENS + USAGE_OUTPUT_TOLERANCE
     check = {
@@ -150,12 +264,24 @@ def check_usage_output_cap(output_tokens, reason=None):
         "output_tokens": output_tokens,
         "max_tokens": USAGE_OUTPUT_MAX_TOKENS,
         "limit": limit,
+        "stop_reason": stop_reason,
         "verdict": USAGE_INCONCLUSIVE,
         "note": reason,
     }
     if output_tokens is None:
         if check["note"] is None:
             check["note"] = "output_tokens not reported"
+        return check
+    if output_tokens < 0:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = f"negative output_tokens reading ({output_tokens})"
+        return check
+    if thinking_note:
+        check["note"] = thinking_note
+        return check
+    if stop_reason is not None and stop_reason not in USAGE_EXPECTED_STOP_REASONS:
+        check["note"] = (f"stop reason {_usage_clip(stop_reason, 40)!r} is "
+                         "neither a natural stop nor the max_tokens cut")
         return check
     if output_tokens <= limit:
         check["verdict"] = USAGE_PLAUSIBLE
@@ -168,7 +294,7 @@ def check_usage_output_cap(output_tokens, reason=None):
     return check
 
 
-def check_usage_count_tokens(baseline_input, response, reason=None):
+def check_usage_count_tokens(baseline_input, response, reason=None, api_key=""):
     """Check C: count_tokens against the baseline's actual input_tokens.
 
     ``response`` is a ``client.raw_request()`` dict, or None when the request
@@ -194,26 +320,29 @@ def check_usage_count_tokens(baseline_input, response, reason=None):
         if status:
             check["note"] = f"count_tokens unavailable (HTTP {status})"
         else:
-            check["note"] = (
-                "count_tokens request failed: "
-                + _usage_clip(response.get("error") or "no HTTP status")
-            )
+            check["note"] = "count_tokens request failed: " + usage_safe_error(
+                response.get("error") or "no HTTP status", api_key)
         return check
     try:
         payload = json.loads(response.get("body") or "")
     except (TypeError, ValueError):
         payload = None
-    counted = None
-    if isinstance(payload, dict):
-        counted = _usage_int(payload.get("input_tokens"))
+    counted = payload.get("input_tokens") if isinstance(payload, dict) else None
     if counted is None:
-        check["note"] = ("count_tokens answered HTTP 200 without an integer "
-                         "input_tokens")
+        check["note"] = "count_tokens answered HTTP 200 without input_tokens"
+        return check
+    if not _usage_is_int(counted):
+        check["note"] = "count_tokens input_tokens is not an integer"
         return check
     check["count_tokens"] = counted
     if baseline_input is None:
         if check["note"] is None:
             check["note"] = "baseline input_tokens not reported"
+        return check
+    if baseline_input < 0 or counted < 0:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (f"negative input_tokens reading (actual "
+                         f"{baseline_input}, counted {counted})")
         return check
     difference = baseline_input - counted
     check["difference"] = difference
@@ -254,12 +383,13 @@ def _usage_all_inconclusive(reason, requests_sent=0):
     ], requests_sent)
 
 
-def _usage_run(client, baseline, sleep_fn, pause_seconds):
-    baseline_input = usage_reported_tokens(baseline, "input")
+def _usage_run(client, baseline, injection_size, sleep_fn, pause_seconds):
+    api_key = getattr(client, "api_key", "")
+    baseline_label = "'Say hi' baseline"
+    baseline_input, baseline_reason = usage_token_reading(
+        baseline, "input", baseline_label, api_key)
     if baseline_input is None:
-        return _usage_all_inconclusive(
-            "not sent; "
-            + _usage_missing_reason(baseline, "'Say hi' baseline"))
+        return _usage_all_inconclusive("not sent; " + baseline_reason)
 
     requests_sent = 0
     try:
@@ -270,26 +400,36 @@ def _usage_run(client, baseline, sleep_fn, pause_seconds):
     except Exception as exc:  # client.call should not raise; stay safe
         long_result = {"error": f"{type(exc).__name__}: {exc}"}
     requests_sent += 1
-    long_input = usage_reported_tokens(long_result, "input")
-    long_output = usage_reported_tokens(long_result, "output")
     long_label = "long-prompt request"
+    long_input, long_input_reason = usage_token_reading(
+        long_result, "input", long_label, api_key)
+    long_output, long_output_reason = usage_token_reading(
+        long_result, "output", long_label, api_key)
+    baseline_cache = usage_cache_note(baseline, baseline_label)
     checks = [
         check_usage_input_delta(
-            baseline_input, long_input,
-            None if long_input is not None
-            else _usage_missing_reason(long_result, long_label)),
+            baseline_input, long_input, long_input_reason,
+            cache_note=baseline_cache or usage_cache_note(long_result, long_label)),
         check_usage_output_cap(
-            long_output,
-            None if long_output is not None
-            else _usage_missing_reason(long_result, long_label)),
+            long_output, long_output_reason,
+            stop_reason=usage_stop_reason(long_result),
+            thinking_note=usage_thinking_note(long_result, long_label)),
     ]
 
     detected_format = getattr(client, "detected_format", None)
+    skip_reason = None
     if detected_format != "anthropic":
-        checks.append(check_usage_count_tokens(
-            baseline_input, None,
-            "not sent, because count_tokens is Anthropic-format only and the "
-            f"client format is {detected_format!r}"))
+        skip_reason = ("not sent, because count_tokens is Anthropic-format "
+                       f"only and the client format is {detected_format!r}")
+    elif (_usage_is_int(injection_size)
+            and injection_size > USAGE_STEP3_INJECTION_THRESHOLD):
+        skip_reason = ("not sent; count_tokens cannot see injected content, "
+                       "so the gap is already explained by Step 3's injection "
+                       f"finding (~{injection_size} tokens)")
+    elif baseline_cache:
+        skip_reason = "not sent; " + baseline_cache
+    if skip_reason:
+        checks.append(check_usage_count_tokens(baseline_input, None, skip_reason))
         return _usage_result(checks, requests_sent)
 
     sleep_fn(pause_seconds)
@@ -298,7 +438,7 @@ def _usage_run(client, baseline, sleep_fn, pause_seconds):
         "messages": [{"role": "user", "content": USAGE_BASELINE_PROMPT}],
     }
     headers = {
-        "x-api-key": getattr(client, "api_key", ""),
+        "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
     }
     try:
@@ -311,11 +451,13 @@ def _usage_run(client, baseline, sleep_fn, pause_seconds):
         response = {"status": 0, "headers": {}, "body": "",
                     "error": f"{type(exc).__name__}: {exc}"}
     requests_sent += 1
-    checks.append(check_usage_count_tokens(baseline_input, response))
+    checks.append(check_usage_count_tokens(baseline_input, response,
+                                           api_key=api_key))
     return _usage_result(checks, requests_sent)
 
 
-def run_usage_sanity(client, baseline, sleep_fn=time.sleep, pause_seconds=1.0):
+def run_usage_sanity(client, baseline, injection_size=None,
+                     sleep_fn=time.sleep, pause_seconds=1.0):
     """Run checks A-C and return the observation. Never raises.
 
     Args:
@@ -323,8 +465,10 @@ def run_usage_sanity(client, baseline, sleep_fn=time.sleep, pause_seconds=1.0):
             Step 3, so ``detected_format`` is settled.
         baseline: Step 3's ``client.call()`` result for
             ``USAGE_BASELINE_PROMPT`` without a system prompt, or None.
-            When it is missing or failed, nothing is sent and every check
+            When it is missing or unusable, nothing is sent and every check
             is inconclusive.
+        injection_size: Step 3's measured injection in tokens, or None.
+            Above ``USAGE_STEP3_INJECTION_THRESHOLD`` check C is not sent.
         sleep_fn: Pause function, injectable so tests do not sleep.
         pause_seconds: Pause before the count_tokens request.
 
@@ -334,7 +478,8 @@ def run_usage_sanity(client, baseline, sleep_fn=time.sleep, pause_seconds=1.0):
         and one count_tokens call for Anthropic-format clients.
     """
     try:
-        return _usage_run(client, baseline, sleep_fn, pause_seconds)
+        return _usage_run(client, baseline, injection_size, sleep_fn,
+                          pause_seconds)
     except Exception as exc:  # observation must never break Step 3
-        return _usage_all_inconclusive(
-            _usage_clip(f"usage sanity failed: {type(exc).__name__}: {exc}"))
+        return _usage_all_inconclusive("usage sanity failed: " + usage_safe_error(
+            f"{type(exc).__name__}: {exc}", getattr(client, "api_key", "")))

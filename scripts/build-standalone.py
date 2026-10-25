@@ -453,6 +453,7 @@ SECTIONS = (
     Section(
         "Token usage sanity observation",
         "api_relay_audit/usage_sanity.py",
+        drop_import_prefixes=("from api_relay_audit.error_leakage import ",),
     ),
     Section(
         "Audit orchestration",

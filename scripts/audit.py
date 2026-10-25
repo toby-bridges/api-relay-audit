@@ -590,7 +590,11 @@ def test_token_injection(client, report, usage_sanity=True):
                 "errored, so hidden prompt injection could not be measured.",
             )
         print("  Done: token injection (inconclusive, all probes errored)")
-        _report_usage_sanity(client, report, usage_baseline, usage_sanity)
+        try:
+            _report_usage_sanity(client, report, usage_baseline, usage_sanity)
+        except Exception as exc:  # the observation must never change Step 3
+            print(f"  [usage sanity] not rendered: {type(exc).__name__}",
+                  file=sys.stderr)
         return None
 
     if injection_size > 100:
@@ -601,17 +605,25 @@ def test_token_injection(client, report, usage_sanity=True):
         report.flag("green", "No token injection detected")
 
     print(f"  Done: token injection (delta: ~{injection_size} tokens)")
-    _report_usage_sanity(client, report, usage_baseline, usage_sanity)
+    try:
+        _report_usage_sanity(client, report, usage_baseline, usage_sanity,
+                             injection_size)
+    except Exception as exc:  # the observation must never change Step 3
+        print(f"  [usage sanity] not rendered: {type(exc).__name__}",
+              file=sys.stderr)
     return injection_size
 
 
-def _report_usage_sanity(client, report, baseline, enabled=True):
+def _report_usage_sanity(client, report, baseline, enabled=True,
+                         injection_size=None):
     """Append Step 3's informational token usage sanity subsection.
 
     Runs :func:`run_usage_sanity` on top of Step 3's "Say hi" baseline and
-    renders its three checks. The result is an observation only: it never
-    calls ``report.flag()``, never changes Step 3's return value and never
-    feeds the risk matrix.
+    renders its three checks. ``injection_size`` is Step 3's measured
+    injection: when Step 3 already reports injection, check C is not sent,
+    because count_tokens cannot see injected content. The result is an
+    observation only: it never calls ``report.flag()``, never changes Step
+    3's return value and never feeds the risk matrix.
 
     Must not raise: ``_run_step`` would turn an exception into a crashed,
     inconclusive Step 3, so every failure degrades to an inconclusive row.
@@ -633,15 +645,16 @@ def _report_usage_sanity(client, report, baseline, enabled=True):
         "requests and cancels out, so an increment outside the range points "
         "at how usage is counted rather than at injection. Check C is "
         "different: count_tokens does not see a prompt the relay injects "
-        "into Messages requests, so a gap in C can also come from the "
-        "hidden prompt the injection table measures. Stream / "
+        "into Messages requests, so when the injection table above "
+        "reports injection, C is not sent and stays inconclusive. Stream / "
         "non-stream usage parity is covered by the Step 10 parity section "
         "and is not repeated here. Informational only: it does not change "
         "the Step 3 verdict or the risk matrix, and its thresholds are "
         "provisional and uncalibrated.\n"
     )
     try:
-        result = run_usage_sanity(client, baseline, sleep_fn=time.sleep)
+        result = run_usage_sanity(client, baseline, injection_size,
+                                  sleep_fn=time.sleep)
         checks = {check["check"]: check for check in result["checks"]}
         delta = checks["input_delta"]
         cap = checks["output_cap"]
