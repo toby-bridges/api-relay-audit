@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: c9bfb2a88711f8d01aae857284d87917f1b045e25cccddcf808cc8c3a773744f
-# standalone_body_sha256: 1a096865cb89cf34ed475699ced70a21ef36f86a09c1848b2c3618204b5f52f9
+# source_sha256: c77185e54abaa2fe86fc33fa42bbbcc8d4c87fe02715cedfe2cea1a6722c527c
+# standalone_body_sha256: 10f3de75dafe7544f5efaed536c11bb2920239f09ee988cfad4e020b4b07fd3f
 # END GENERATED STANDALONE HEADER
 
 """
@@ -319,21 +319,6 @@ class StreamSignals:
             stream / non-stream parity check.
         stop_reason: The last non-empty ``delta.stop_reason`` seen in a
             ``message_delta`` event, or ``None``.
-        thinking_blocks: Every ``thinking`` and ``redacted_thinking`` content
-            block, in stream order, in the shape the Messages API accepts
-            back: ``{"type": "thinking", "thinking": <accumulated
-            thinking_delta text>, "signature": <signature_delta value>}`` or
-            ``{"type": "redacted_thinking", "data": ...}``. Read only by the
-            opt-in signature round-trip check; :func:`analyze_stream` ignores
-            it. Bounded by the client's ``MAX_STREAM_THINKING_CHARS`` and
-            ``MAX_STREAM_THINKING_BLOCKS``.
-        thinking_block_indexes: The content block ``index`` of each entry in
-            :attr:`thinking_blocks`, in the same order. Deltas are attributed
-            by this index, so interleaved blocks cannot leak into each other.
-        thinking_capture_issue: ``None`` while the capture is faithful;
-            otherwise why it stopped (a bound was hit, or a delta could not
-            be attributed to a started thinking block). :attr:`thinking_blocks`
-            must then not be replayed.
     """
 
     # Ordered event type sequence (for whitelist check)
@@ -370,11 +355,6 @@ class StreamSignals:
     # Content and terminal signals (stream / non-stream parity)
     text: str = ""
     stop_reason: Optional[str] = None
-
-    # Thinking blocks as streamed (opt-in signature round-trip replay)
-    thinking_blocks: List[dict] = field(default_factory=list)
-    thinking_block_indexes: List[int] = field(default_factory=list)
-    thinking_capture_issue: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -865,261 +845,6 @@ def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Thinking signature round-trip (opt-in, informational)
-# ---------------------------------------------------------------------------
-#
-# The Messages API checks a thinking block's signature when the block is
-# passed back: the block must come from the current model and nothing before
-# it (system, tools, earlier messages) may have changed. With
-# ``--verify-signature`` Step 10 passes its own streamed assistant turn back
-# twice, intact and with one signature character changed. Without a tool-use
-# turn the model may strip replayed thinking blocks before any check, so two
-# accepted replays carry no signal either way. Informational only: nothing
-# here feeds the Step 10 verdict or the risk matrix.
-
-# A tampered replay rejected with HTTP 400 counts as a signature rejection
-# only when its error text mentions this word (casefolded). "thinking" alone
-# is not enough: a 400 about the thinking configuration (budget_tokens, say)
-# says nothing about the signature. The keyword is presumed until a
-# direct-upstream baseline records the real error text.
-SIGNATURE_ERROR_KEYWORD = "signature"
-
-
-def has_replayable_signature(signals: "StreamSignals") -> bool:
-    """True iff at least one thinking block was captured and every captured
-    thinking block has a non-empty signature.
-
-    A thinking block without a signature cannot be passed back, so even the
-    intact replay would be rejected.
-    """
-    blocks = getattr(signals, "thinking_blocks", None)
-    if not isinstance(blocks, list):
-        return False
-    thinking = [b for b in blocks if isinstance(b, dict) and b.get("type") == "thinking"]
-    return bool(thinking) and all(
-        isinstance(b.get("signature"), str) and bool(b["signature"].strip())
-        for b in thinking
-    )
-
-
-def tamper_signature(signature: str) -> str:
-    """Return ``signature`` with only its middle character replaced.
-
-    The replacement stays in the base64 alphabet (``A``, or ``B`` when the
-    middle character already is ``A``), so the length and encoding do not
-    change and the value differs in exactly one character.
-    """
-    if not isinstance(signature, str) or not signature:
-        return signature
-    mid = len(signature) // 2
-    replacement = "B" if signature[mid] == "A" else "A"
-    return signature[:mid] + replacement + signature[mid + 1:]
-
-
-def build_replay_assistant_content(thinking_blocks, text, tamper=False) -> list:
-    """Rebuild the streamed assistant turn for the signature round-trip.
-
-    Returns every captured ``thinking`` / ``redacted_thinking`` block in
-    stream order, unchanged, followed by ``text`` as one text block when it is
-    not blank. With ``tamper=True`` the first thinking block with a non-empty
-    signature carries :func:`tamper_signature` instead, so the tampered turn
-    differs from the intact one in exactly one character.
-    """
-    content = []
-    tampered = False
-    for block in thinking_blocks if isinstance(thinking_blocks, list) else []:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") == "thinking":
-            thinking = block.get("thinking")
-            signature = block.get("signature")
-            item = {
-                "type": "thinking",
-                "thinking": thinking if isinstance(thinking, str) else "",
-                "signature": signature if isinstance(signature, str) else "",
-            }
-            if tamper and not tampered and item["signature"].strip():
-                item["signature"] = tamper_signature(item["signature"])
-                tampered = True
-            content.append(item)
-        elif block.get("type") == "redacted_thinking":
-            data = block.get("data")
-            content.append({
-                "type": "redacted_thinking",
-                "data": data if isinstance(data, str) else "",
-            })
-    if isinstance(text, str) and text.strip():
-        content.append({"type": "text", "text": text})
-    return content
-
-
-def replay_status(result) -> Optional[int]:
-    """Return the HTTP status of a replay result, or ``None``."""
-    if not isinstance(result, dict):
-        return None
-    status = result.get("status")
-    if isinstance(status, bool) or not isinstance(status, int):
-        return None
-    return status
-
-
-def replay_accepted(result) -> bool:
-    """True iff a replay result is a 2xx without an error.
-
-    :meth:`api_relay_audit.client.APIClient.replay_thinking` sets ``error``
-    on a 2xx whose body is an error or not a message, so such a reply never
-    counts as accepted.
-    """
-    status = replay_status(result)
-    return (status is not None and 200 <= status < 300
-            and not result.get("error"))
-
-
-def _replay_mentions_signature(result) -> bool:
-    error = result.get("error") if isinstance(result, dict) else None
-    if not isinstance(error, str):
-        return False
-    return SIGNATURE_ERROR_KEYWORD in error.casefold()
-
-
-def _replay_input_tokens(result) -> Optional[int]:
-    value = result.get("input_tokens") if isinstance(result, dict) else None
-    if isinstance(value, bool) or not isinstance(value, int):
-        return None
-    return value
-
-
-def analyze_signature_roundtrip(intact, tampered) -> dict:
-    """Judge the opt-in thinking signature round-trip.
-
-    ``intact`` is the :meth:`api_relay_audit.client.APIClient.replay_thinking`
-    result for the streamed assistant turn passed back unchanged; ``tampered``
-    is the result with one signature character changed, or ``None`` when it
-    was not sent. Each result carries ``status`` (HTTP status or ``None``),
-    ``error``, ``error_type`` and ``input_tokens``.
-
-    Returns a dict with ``verdict``, ``intact_status``, ``tampered_status``,
-    ``tampered_mentions_signature`` and ``notes``. Verdict, first match wins:
-
-    1. ``"inconclusive"``: the intact replay was not accepted (no 2xx
-       without an error, see :func:`replay_accepted`).
-    2. ``"upstream-verified"``: intact accepted, tampered HTTP 400 with an
-       error mentioning :data:`SIGNATURE_ERROR_KEYWORD`.
-    3. ``"no-signal"``: both replays 2xx. The model may strip non-tool-use
-       thinking blocks before checking them, so this shows neither that
-       nothing verifies signatures nor that the signature was forged.
-    4. ``"inconclusive"``: any other combination.
-
-    ``input_tokens`` never decides the verdict. When both replays are
-    accepted it is compared and noted as an inference: the docs say blocks
-    the model cannot read are dropped without billing, so if an invalid
-    block is handled the same way, a lower tampered count fits "dropped"
-    rather than "accepted"; equal counts are uninformative.
-
-    Informational only. Pure and deterministic, no I/O.
-    """
-    intact_status = replay_status(intact)
-    tampered_status = replay_status(tampered)
-    mentions = _replay_mentions_signature(tampered)
-    notes = []
-    result = {
-        "verdict": "inconclusive",
-        "intact_status": intact_status,
-        "tampered_status": tampered_status,
-        "tampered_mentions_signature": mentions,
-        "notes": notes,
-    }
-
-    if not replay_accepted(intact):
-        error_type = intact.get("error_type") if isinstance(intact, dict) else None
-        notes.append(
-            "Intact replay not accepted (HTTP "
-            + (str(intact_status) if intact_status is not None else "none")
-            + (f", error_type {error_type}" if error_type else "")
-            + "); the round-trip cannot be judged."
-        )
-        return result
-
-    if tampered is None:
-        notes.append("Tampered replay not sent; the round-trip cannot be judged.")
-        return result
-
-    if tampered_status == 400 and mentions:
-        result["verdict"] = "upstream-verified"
-        notes.append(
-            "Intact replay accepted and the one-character signature change "
-            "rejected with HTTP 400: something upstream checks thinking "
-            "signatures. A valid signature shows only that the block was "
-            "produced for this model; it says nothing about pricing tier or "
-            "text-only substitution."
-        )
-        return result
-
-    if replay_accepted(tampered):
-        result["verdict"] = "no-signal"
-        notes.append(
-            "Both replays accepted. The model may strip thinking blocks that "
-            "are not part of a tool-use turn before checking them, so this "
-            "shows neither that nothing upstream verifies signatures nor that "
-            "the signature was forged."
-        )
-        intact_tokens = _replay_input_tokens(intact)
-        tampered_tokens = _replay_input_tokens(tampered)
-        if intact_tokens is not None and tampered_tokens is not None:
-            if tampered_tokens < intact_tokens:
-                notes.append(
-                    f"Inference, not part of the verdict: the tampered replay "
-                    f"billed fewer input_tokens ({tampered_tokens} vs "
-                    f"{intact_tokens}). The docs say blocks the model cannot "
-                    "read are dropped without billing; if an invalid block is "
-                    "handled the same way, this fits the tampered block being "
-                    "dropped rather than accepted."
-                )
-            elif tampered_tokens > intact_tokens:
-                notes.append(
-                    f"Inference, not part of the verdict: the tampered replay "
-                    f"billed more input_tokens ({tampered_tokens} vs "
-                    f"{intact_tokens}); a dropped block does not explain that, "
-                    "so it is not interpreted."
-                )
-            else:
-                notes.append(
-                    f"input_tokens equal on both replays ({intact_tokens}): "
-                    "uninformative, both blocks may have been stripped or both "
-                    "accepted."
-                )
-        return result
-
-    error_type = tampered.get("error_type") if isinstance(tampered, dict) else None
-    type_text = f" ({error_type})" if error_type else ""
-    if tampered_status == 400:
-        error = tampered.get("error") if isinstance(tampered, dict) else None
-        only_thinking = isinstance(error, str) and "thinking" in error.casefold()
-        notes.append(
-            f"Tampered replay returned HTTP 400{type_text}, but its error does "
-            "not mention signature"
-            + (" (it mentions thinking only)" if only_thinking else "")
-            + ", so the rejection is not attributed to the signature. The "
-            "keyword rule is presumed until a direct-upstream baseline records "
-            "the real error text."
-        )
-    elif tampered_status is not None and 200 <= tampered_status < 300:
-        notes.append(
-            f"Tampered replay returned HTTP {tampered_status}{type_text} with "
-            "an error or non-message body; it counts neither as accepted nor "
-            "as a signature rejection."
-        )
-    else:
-        notes.append(
-            "Tampered replay returned HTTP "
-            + (str(tampered_status) if tampered_status is not None else "none")
-            + type_text
-            + "; only HTTP 400 counts as a signature rejection."
-        )
-    return result
-
-
 # ============================================================
 # Standalone curl transport facade
 # ============================================================
@@ -1499,8 +1224,6 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
                 signals.content_block_types.append(block_type)
             if block.get("type") == "thinking":
                 signals.thinking_start_seen = True
-            if block.get("type") in ("thinking", "redacted_thinking"):
-                _capture_thinking_block_start(event, block, signals)
 
     elif event_type == "content_block_delta":
         signals.has_content_block_delta = True
@@ -1517,12 +1240,10 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
                     signals.text = (signals.text + text)[:MAX_STREAM_TEXT_CHARS]
             elif delta_type == "thinking_delta":
                 signals.thinking_delta_seen = True
-                _capture_thinking_delta(event, signals, "thinking", delta.get("thinking"))
             elif delta_type == "signature_delta":
                 signature = delta.get("signature")
                 if isinstance(signature, str) and not signature.strip():
                     signals.empty_signature_delta_count += 1
-                _capture_thinking_delta(event, signals, "signature", signature)
 
     elif event_type == "message_delta":
         signals.has_message_delta = True
@@ -1544,98 +1265,6 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
         signals.has_message_stop = True
 
 
-def _thinking_capture_size(signals: StreamSignals) -> int:
-    """Characters held in ``signals.thinking_blocks`` payload fields."""
-    size = 0
-    for block in signals.thinking_blocks:
-        for key in ("thinking", "signature", "data"):
-            value = block.get(key)
-            if isinstance(value, str):
-                size += len(value)
-    return size
-
-
-def _content_block_index(event: dict):
-    """Return the event's content block ``index``, or ``None`` if missing."""
-    index = event.get("index")
-    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
-        return None
-    return index
-
-
-def _stop_thinking_capture(signals: StreamSignals, reason: str) -> None:
-    """Mark the thinking capture as not replayable; the first reason wins."""
-    if signals.thinking_capture_issue is None:
-        signals.thinking_capture_issue = reason
-
-
-def _capture_thinking_block_start(event: dict, block: dict,
-                                  signals: StreamSignals) -> None:
-    """Open one captured ``thinking`` / ``redacted_thinking`` block.
-
-    The block is kept in the shape the Messages API accepts back and keyed by
-    the event's content block ``index``. A missing or repeated index, or a
-    bound being hit, stops the capture for good with a reason, so an
-    uncertain or partial capture is never replayed.
-    """
-    if signals.thinking_capture_issue is not None:
-        return
-    index = _content_block_index(event)
-    if index is None:
-        _stop_thinking_capture(
-            signals, "a thinking block started without a content block index")
-        return
-    if index in signals.thinking_block_indexes:
-        _stop_thinking_capture(signals, f"content block {index} started twice")
-        return
-    if block.get("type") == "redacted_thinking":
-        data = block.get("data")
-        entry = {"type": "redacted_thinking",
-                 "data": data if isinstance(data, str) else ""}
-    else:
-        thinking = block.get("thinking")
-        signature = block.get("signature")
-        entry = {"type": "thinking",
-                 "thinking": thinking if isinstance(thinking, str) else "",
-                 "signature": signature if isinstance(signature, str) else ""}
-    added = sum(len(v) for k, v in entry.items() if k != "type")
-    if (len(signals.thinking_blocks) >= MAX_STREAM_THINKING_BLOCKS
-            or _thinking_capture_size(signals) + added > MAX_STREAM_THINKING_CHARS):
-        _stop_thinking_capture(signals, "the thinking capture bound was exceeded")
-        return
-    signals.thinking_blocks.append(entry)
-    signals.thinking_block_indexes.append(index)
-
-
-def _capture_thinking_delta(event: dict, signals: StreamSignals, key: str,
-                            value) -> None:
-    """Append a ``thinking_delta`` / ``signature_delta`` value to its block.
-
-    The block is found by the event's content block ``index``, so interleaved
-    blocks and a signature_delta that precedes the thinking text are still
-    attributed correctly. A delta whose index is not a started thinking block
-    stops the capture. A genuine stream sends one ``signature_delta`` per
-    block; values are appended (official SDKs assign), which is the same on a
-    genuine stream and keeps a relay that splits the signature replayable.
-    """
-    if signals.thinking_capture_issue is not None or not isinstance(value, str):
-        return
-    index = _content_block_index(event)
-    if index is None or index not in signals.thinking_block_indexes:
-        _stop_thinking_capture(
-            signals, f"a {key} delta arrived for content block {index}, which "
-                     "is not a started thinking block")
-        return
-    block = signals.thinking_blocks[signals.thinking_block_indexes.index(index)]
-    if block.get("type") != "thinking":
-        _stop_thinking_capture(
-            signals, f"a {key} delta arrived for redacted_thinking block {index}")
-        return
-    if _thinking_capture_size(signals) + len(value) > MAX_STREAM_THINKING_CHARS:
-        _stop_thinking_capture(signals, "the thinking capture bound was exceeded")
-        return
-    block[key] += value
-
 # v1.7.1 safety valve: cap the SSE parser buffer so a malformed/
 # malicious relay that sends a huge chunk without newlines cannot
 # grow memory unboundedly. 1 MB is comfortably above any real
@@ -1644,24 +1273,7 @@ MAX_STREAM_BUFFER_BYTES = 1024 * 1024
 # Same idea for StreamSignals.text: bound memory and CPU when a relay streams
 # far more text than requested. 64 KiB is far above Step 10's 100-token probe.
 MAX_STREAM_TEXT_CHARS = 64 * 1024
-# Same idea for StreamSignals.thinking_blocks (thinking text, signatures and
-# redacted data kept for the opt-in signature round-trip). Step 10's probe
-# thinks for under 100 tokens, so real streams stay far below both bounds.
-MAX_STREAM_THINKING_CHARS = 64 * 1024
-MAX_STREAM_THINKING_BLOCKS = 16
-# Error text kept from a signature replay, after redaction.
-REPLAY_ERROR_CHARS = 160
 CURL_STATUS_SENTINEL = "__CODEX_HTTP_STATUS__:"
-
-
-def _clip_replay_error(text, api_key: str) -> str:
-    """Redact, flatten and clip the error text of a signature replay.
-
-    Redaction runs on the full text before the cut, so a credential cannot
-    survive by being split at the boundary.
-    """
-    text = redact_sensitive_text(str(text), api_key)
-    return " ".join(text.split())[:REPLAY_ERROR_CHARS]
 
 
 def _process_sse_line(line: str, signals: StreamSignals) -> bool:
@@ -2532,93 +2144,6 @@ class APIClient:
                 signals.transport_error)
 
         return signals
-
-    def replay_thinking(self, messages_prefix, assistant_content,
-                        follow_up_text, max_tokens=32) -> dict:
-        """Pass a streamed assistant turn back once (opt-in signature round-trip).
-
-        Sends one non-stream Anthropic request whose ``messages`` are
-        ``messages_prefix`` (the original user turn, unchanged), an assistant
-        turn whose ``content`` is ``assistant_content`` exactly as given (the
-        streamed thinking blocks plus the reply text) and a new user turn with
-        ``follow_up_text``. ``thinking`` comes from the same builder as the
-        Step 10 stream. No system prompt, tools or sampling parameters are
-        sent: current API versions reject temperature / top_p / top_k.
-
-        Never raises. Returns a normalized dict:
-
-        - ``status``: HTTP status code, or ``None`` on a transport failure
-        - ``error``: ``None`` on a 2xx message reply; otherwise the message of
-          an error body, else ``"HTTP <status>"`` (a 2xx whose body is an
-          error or not a message is an error too) or the transport error,
-          redacted and clipped to :data:`REPLAY_ERROR_CHARS` characters. A
-          raw response body is never copied.
-        - ``error_type``: ``error.type`` of an Anthropic error body, or ``None``
-        - ``input_tokens``: ``usage.input_tokens`` of a 2xx message reply, or
-          ``None``
-        """
-        result = {"status": None, "error": None, "error_type": None,
-                  "input_tokens": None}
-        try:
-            body = {
-                "model": self.model,
-                "max_tokens": max_tokens,
-                "messages": list(messages_prefix) + [
-                    {"role": "assistant", "content": assistant_content},
-                    {"role": "user", "content": follow_up_text},
-                ],
-                "thinking": _thinking_config(max_tokens),
-            }
-            headers = {
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-            }
-            response = self.raw_request(
-                "POST", "/v1/messages", headers,
-                json.dumps(body).encode("utf-8"),
-                content_type="application/json", timeout=self.timeout,
-            )
-            if not isinstance(response, dict):
-                response = {"status": 0, "error": "unexpected raw_request result"}
-            status = response.get("status")
-            if isinstance(status, bool) or not isinstance(status, int) or status <= 0:
-                result["error"] = _clip_replay_error(
-                    response.get("error") or "no HTTP status", self.api_key)
-                return result
-            result["status"] = status
-            body_text = response.get("body")
-            body_text = body_text if isinstance(body_text, str) else ""
-            try:
-                payload = json.loads(body_text) if body_text.strip() else None
-            except ValueError:
-                payload = None
-            is_message = isinstance(payload, dict) and payload.get("type") == "message"
-            if 200 <= status < 300 and is_message:
-                usage = payload.get("usage")
-                input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
-                if isinstance(input_tokens, int) and not isinstance(input_tokens, bool):
-                    result["input_tokens"] = input_tokens
-                return result
-            # Not an accepted replay: a non-2xx status, or a 2xx whose body is
-            # an error or not a message. Only the error object's type and
-            # message are kept; a raw body (an HTML error page, say) is never
-            # copied into the result.
-            message = None
-            error_obj = payload.get("error") if isinstance(payload, dict) else None
-            if isinstance(error_obj, dict):
-                if payload.get("type") == "error" and isinstance(error_obj.get("type"), str):
-                    result["error_type"] = _clip_replay_error(
-                        error_obj["type"], self.api_key)
-                if isinstance(error_obj.get("message"), str) and error_obj["message"].strip():
-                    message = error_obj["message"]
-            if message is None:
-                message = (f"HTTP {status} without a message body"
-                           if 200 <= status < 300 else f"HTTP {status}")
-            result["error"] = _clip_replay_error(message, self.api_key)
-        except Exception as e:
-            result["error"] = _clip_replay_error(
-                f"{type(e).__name__}: {e}", self.api_key)
-        return result
 
     def _stream_via_httpx(self, url: str, headers: dict, body: dict,
                           timeout: int, signals: StreamSignals,
@@ -6473,6 +5998,507 @@ def run_openai_usage_probe(client):
 
 
 # ============================================================
+# Token usage sanity observation
+# ============================================================
+
+"""Token usage sanity observation for Step 3 (informational only).
+
+Concept inspired by canarybyte/veridrop token_usage.py (AGPL-3.0); reimplemented independently.
+
+A relay bills by the ``usage`` block it returns. This module asks a narrow
+question: do the reported counts hang together for a few controlled
+requests? It is a relative self-consistency check, not a billing audit, and
+it never counts tokens offline.
+
+Step 3's "Say hi" request without a system prompt is the short baseline.
+Three checks build on it:
+
+A. Input delta: the same user message with ``USAGE_PAYLOAD_REPEATS`` copies
+   of ``USAGE_PAYLOAD_WORD`` appended must raise input_tokens by an amount
+   inside ``[USAGE_DELTA_MIN, USAGE_DELTA_MAX]``.
+B. Output cap: that same long request is sent with
+   ``max_tokens=USAGE_OUTPUT_MAX_TOKENS``; the reported output_tokens must
+   not exceed the cap plus ``USAGE_OUTPUT_TOLERANCE``. Checks A and B share
+   one request because input_tokens does not depend on max_tokens.
+C. count_tokens reconciliation (Anthropic format only): POST
+   ``/v1/messages/count_tokens`` with the baseline's model and messages must
+   agree with the baseline's actual input_tokens within
+   ``USAGE_COUNT_TOKENS_TOLERANCE``. Any answer other than HTTP 200 with an
+   integer input_tokens (404, 400, unsupported route) is inconclusive.
+
+This is a counting signal, distinct from Step 3's injection signal. Step 3
+reads the idle level: a minimal prompt whose input_tokens sit well above the
+expected count suggests a hidden prompt. Check A reads the increment after a
+fixed payload is added; a hidden prefix adds the same tokens to both
+requests and cancels out of the difference. Check C does not cancel it:
+count_tokens does not see a prompt the relay injects into Messages requests,
+so when Step 3 already reports injection (above
+``USAGE_STEP3_INJECTION_THRESHOLD`` tokens) C is not sent and stays
+inconclusive instead of reporting the same cause twice.
+
+Readings that cannot be compared make a check inconclusive: a missing or
+non-integer count, prompt caching (``cache_read_input_tokens`` /
+``cache_creation_input_tokens``, which input_tokens excludes) for A and C,
+and reported thinking tokens or a missing or unexpected stop / finish
+reason for B.
+A negative count is impossible and makes the check implausible. Relay error
+text never reaches a note verbatim: HTTP errors keep only the status code
+and anything else is redacted, then clipped.
+
+Stream / non-stream usage parity lives in Step 10 and is not repeated here.
+No sampling parameters are sent: current Messages API versions reject
+temperature / top_p / top_k.
+
+Each check returns "plausible", "implausible" or "inconclusive". The
+combined verdict is "implausible" if any check is implausible, "plausible"
+if at least one check is plausible and none is implausible, and
+"inconclusive" otherwise. Nothing here is scored or fed to the risk matrix.
+"""
+
+import json
+import re
+import time
+
+
+USAGE_BASELINE_PROMPT = "Say hi"
+USAGE_PAYLOAD_WORD = " apple"
+USAGE_PAYLOAD_REPEATS = 80
+# Provisional, uncalibrated; calibrate against a direct-upstream baseline.
+USAGE_DELTA_MIN = 40
+USAGE_DELTA_MAX = 240
+USAGE_OUTPUT_MAX_TOKENS = 16
+USAGE_OUTPUT_TOLERANCE = 4
+USAGE_COUNT_TOKENS_TOLERANCE = 2
+USAGE_COUNT_TOKENS_PATH = "/v1/messages/count_tokens"
+# Step 3 reports injection above this many tokens (its yellow threshold).
+USAGE_STEP3_INJECTION_THRESHOLD = 20
+# Stop / finish reasons of a plain text reply that ended on its own or at
+# max_tokens (Anthropic, then OpenAI-compatible). A missing reason, or any
+# other value, leaves B inconclusive.
+USAGE_EXPECTED_STOP_REASONS = frozenset(
+    {"end_turn", "max_tokens", "stop_sequence", "stop", "length"})
+USAGE_CACHE_FIELDS = ("cache_read_input_tokens", "cache_creation_input_tokens")
+
+USAGE_PLAUSIBLE = "plausible"
+USAGE_IMPLAUSIBLE = "implausible"
+USAGE_INCONCLUSIVE = "inconclusive"
+
+_USAGE_TOKEN_KEYS = {
+    "input": ("input_tokens", "prompt_tokens"),
+    "output": ("output_tokens", "completion_tokens"),
+}
+_USAGE_HTTP_STATUS = re.compile(r"^\s*HTTP\s+(\d{3})\b")
+_USAGE_THINKING_KEY = re.compile(r"reasoning|thinking|thought", re.IGNORECASE)
+
+
+def usage_long_prompt(base_prompt=USAGE_BASELINE_PROMPT):
+    """Return ``base_prompt`` with the fixed check-A payload appended."""
+    return base_prompt + USAGE_PAYLOAD_WORD * USAGE_PAYLOAD_REPEATS
+
+
+def _usage_is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _usage_clip(text, limit=160):
+    """Collapse whitespace and pipes so a note stays on one Markdown line."""
+    flat = " ".join(str(text).split()).replace("|", "/")
+    return flat if len(flat) <= limit else flat[:limit - 3] + "..."
+
+
+def usage_safe_error(error, api_key=""):
+    """Return report-safe text for a relay or transport error.
+
+    An HTTP error keeps only its status code, so no relay error body reaches
+    the report. Any other text is redacted with ``redact_sensitive_text``
+    first and clipped afterwards, so clipping cannot split a secret.
+    """
+    text = str(error)
+    match = _USAGE_HTTP_STATUS.match(text)
+    if match:
+        return f"HTTP {match.group(1)}"
+    return _usage_clip(redact_sensitive_text(text, api_key))
+
+
+def _usage_raw_usage(result):
+    """Return the raw usage dict of a successful ``call()`` result, or None."""
+    if not isinstance(result, dict) or result.get("error"):
+        return None
+    raw = result.get("raw")
+    if isinstance(raw, dict) and isinstance(raw.get("usage"), dict):
+        return raw["usage"]
+    return None
+
+
+def usage_token_reading(result, kind, label, api_key=""):
+    """Return ``(value, reason)`` for a count a ``client.call()`` result reported.
+
+    ``kind`` is ``"input"`` or ``"output"``. ``value`` is the reported
+    integer, negative values included so the checks can call them
+    implausible, or None; ``reason`` then says why. The client normalizes a
+    missing usage block to 0, so the raw response is read first; results
+    that carry no ``raw`` dict fall back to the normalized field.
+    """
+    if not isinstance(result, dict):
+        return None, f"{label} returned no result"
+    if result.get("error"):
+        return None, f"{label} failed: {usage_safe_error(result['error'], api_key)}"
+    keys = _USAGE_TOKEN_KEYS[kind]
+    raw = result.get("raw")
+    if isinstance(raw, dict):
+        usage = raw.get("usage")
+        if not isinstance(usage, dict):
+            return None, f"usage field missing from the {label} response"
+    else:
+        usage = {keys[0]: result.get(keys[0])}
+    for key in keys:
+        value = usage.get(key)
+        if value is None:
+            continue
+        if not _usage_is_int(value):
+            return None, f"{key} is not an integer in the {label} response"
+        return value, None
+    return None, f"{keys[0]} missing from the {label} response"
+
+
+def usage_cache_note(result, label):
+    """Return a note when prompt caching touched a reply, else None.
+
+    Anthropic's input_tokens excludes cached tokens, so a non-zero
+    ``cache_read_input_tokens`` or ``cache_creation_input_tokens`` makes
+    input comparisons unreliable.
+    """
+    usage = _usage_raw_usage(result)
+    if usage is None:
+        return None
+    active = [f"{field}={usage[field]}" for field in USAGE_CACHE_FIELDS
+              if _usage_is_int(usage.get(field)) and usage[field] != 0]
+    if not active:
+        return None
+    return (f"prompt caching touched the {label} ({', '.join(active)}); "
+            "input_tokens excludes cached tokens")
+
+
+def usage_thinking_note(result, label):
+    """Return a note when a reply reports thinking / reasoning tokens, else None.
+
+    Looks for positive integer counts under usage keys that mention
+    reasoning, thinking or thought, one level deep (for example
+    ``completion_tokens_details.reasoning_tokens``). Some upstreams do not
+    cap thinking with max_tokens but still count it as output.
+    """
+    usage = _usage_raw_usage(result)
+    if usage is None:
+        return None
+    hits = []
+    for key, value in usage.items():
+        if isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                if (_USAGE_THINKING_KEY.search(str(sub_key))
+                        and _usage_is_int(sub_value) and sub_value > 0):
+                    hits.append(f"{_usage_clip(key, 40)}."
+                                f"{_usage_clip(sub_key, 40)}={sub_value}")
+        elif (_USAGE_THINKING_KEY.search(str(key))
+                and _usage_is_int(value) and value > 0):
+            hits.append(f"{_usage_clip(key, 40)}={value}")
+    if not hits:
+        return None
+    # Key names come from the relay: clip them so they cannot add Markdown lines.
+    return (f"the {label} reports thinking tokens "
+            f"({_usage_clip(', '.join(hits), 120)}), which "
+            "some upstreams do not cap with max_tokens")
+
+
+def usage_stop_reason(result):
+    """Return the stop / finish reason of a successful ``call()`` result."""
+    if not isinstance(result, dict) or result.get("error"):
+        return None
+    raw = result.get("raw")
+    if not isinstance(raw, dict):
+        return None
+    reason = raw.get("stop_reason")
+    if reason is None:
+        choices = raw.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            reason = choices[0].get("finish_reason")
+    return reason if isinstance(reason, str) else None
+
+
+def check_usage_input_delta(baseline_input, long_input, reason=None,
+                            cache_note=None):
+    """Check A: input_tokens increment after the fixed payload is appended."""
+    check = {
+        "check": "input_delta",
+        "baseline_input_tokens": baseline_input,
+        "long_input_tokens": long_input,
+        "delta": None,
+        "verdict": USAGE_INCONCLUSIVE,
+        "note": reason,
+    }
+    if baseline_input is None or long_input is None:
+        if check["note"] is None:
+            check["note"] = "input_tokens not reported for both requests"
+        return check
+    if baseline_input < 0 or long_input < 0:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (f"negative input_tokens reading (baseline "
+                         f"{baseline_input}, long prompt {long_input})")
+        return check
+    if cache_note:
+        check["note"] = cache_note
+        return check
+    delta = long_input - baseline_input
+    check["delta"] = delta
+    if USAGE_DELTA_MIN <= delta <= USAGE_DELTA_MAX:
+        check["verdict"] = USAGE_PLAUSIBLE
+    else:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (
+            f"appending {USAGE_PAYLOAD_REPEATS} x "
+            f"'{USAGE_PAYLOAD_WORD.strip()}' changed input_tokens by "
+            f"{delta:+d}, outside {USAGE_DELTA_MIN}..{USAGE_DELTA_MAX}"
+        )
+    return check
+
+
+def check_usage_output_cap(output_tokens, reason=None, stop_reason=None,
+                           thinking_note=None):
+    """Check B: output_tokens of a max_tokens-capped reply stay under the cap.
+
+    Reported thinking tokens, or a stop reason that is missing or outside
+    ``USAGE_EXPECTED_STOP_REASONS``, leave the check inconclusive.
+    """
+    limit = USAGE_OUTPUT_MAX_TOKENS + USAGE_OUTPUT_TOLERANCE
+    check = {
+        "check": "output_cap",
+        "output_tokens": output_tokens,
+        "max_tokens": USAGE_OUTPUT_MAX_TOKENS,
+        "limit": limit,
+        "stop_reason": stop_reason,
+        "verdict": USAGE_INCONCLUSIVE,
+        "note": reason,
+    }
+    if output_tokens is None:
+        if check["note"] is None:
+            check["note"] = "output_tokens not reported"
+        return check
+    if output_tokens < 0:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = f"negative output_tokens reading ({output_tokens})"
+        return check
+    if thinking_note:
+        check["note"] = thinking_note
+        return check
+    if stop_reason is None:
+        check["note"] = "stop reason missing"
+        return check
+    if stop_reason not in USAGE_EXPECTED_STOP_REASONS:
+        check["note"] = (f"stop reason {_usage_clip(stop_reason, 40)!r} is "
+                         "neither a natural stop nor the max_tokens cut")
+        return check
+    if output_tokens <= limit:
+        check["verdict"] = USAGE_PLAUSIBLE
+    else:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (
+            f"max_tokens={USAGE_OUTPUT_MAX_TOKENS} reply reported "
+            f"{output_tokens} output_tokens, above {limit}"
+        )
+    return check
+
+
+def check_usage_count_tokens(baseline_input, response, reason=None, api_key=""):
+    """Check C: count_tokens against the baseline's actual input_tokens.
+
+    ``response`` is a ``client.raw_request()`` dict, or None when the request
+    was not sent. ``difference`` is actual minus counted, so a positive value
+    means the Messages reply reported more tokens than count_tokens.
+    """
+    check = {
+        "check": "count_tokens",
+        "baseline_input_tokens": baseline_input,
+        "count_tokens": None,
+        "difference": None,
+        "status": None,
+        "verdict": USAGE_INCONCLUSIVE,
+        "note": reason,
+    }
+    if not isinstance(response, dict):
+        if check["note"] is None:
+            check["note"] = "count_tokens not sent"
+        return check
+    status = response.get("status")
+    check["status"] = status
+    if status != 200:
+        if status:
+            check["note"] = f"count_tokens unavailable (HTTP {status})"
+        else:
+            check["note"] = "count_tokens request failed: " + usage_safe_error(
+                response.get("error") or "no HTTP status", api_key)
+        return check
+    try:
+        payload = json.loads(response.get("body") or "")
+    except (TypeError, ValueError):
+        payload = None
+    counted = payload.get("input_tokens") if isinstance(payload, dict) else None
+    if counted is None:
+        check["note"] = "count_tokens answered HTTP 200 without input_tokens"
+        return check
+    if not _usage_is_int(counted):
+        check["note"] = "count_tokens input_tokens is not an integer"
+        return check
+    check["count_tokens"] = counted
+    if baseline_input is None:
+        if check["note"] is None:
+            check["note"] = "baseline input_tokens not reported"
+        return check
+    if baseline_input < 0 or counted < 0:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (f"negative input_tokens reading (actual "
+                         f"{baseline_input}, counted {counted})")
+        return check
+    difference = baseline_input - counted
+    check["difference"] = difference
+    if abs(difference) <= USAGE_COUNT_TOKENS_TOLERANCE:
+        check["verdict"] = USAGE_PLAUSIBLE
+    else:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (
+            f"count_tokens counted {counted} input_tokens, the "
+            f"'{USAGE_BASELINE_PROMPT}' request reported {baseline_input}"
+        )
+    return check
+
+
+def combine_usage_verdicts(verdicts):
+    """Combine per-check verdicts into the observed usage sanity verdict."""
+    verdicts = list(verdicts)
+    if USAGE_IMPLAUSIBLE in verdicts:
+        return USAGE_IMPLAUSIBLE
+    if USAGE_PLAUSIBLE in verdicts:
+        return USAGE_PLAUSIBLE
+    return USAGE_INCONCLUSIVE
+
+
+def _usage_result(checks, requests_sent):
+    return {
+        "verdict": combine_usage_verdicts(c["verdict"] for c in checks),
+        "checks": checks,
+        "requests_sent": requests_sent,
+    }
+
+
+def _usage_all_inconclusive(reason, requests_sent=0):
+    return _usage_result([
+        check_usage_input_delta(None, None, reason),
+        check_usage_output_cap(None, reason),
+        check_usage_count_tokens(None, None, reason),
+    ], requests_sent)
+
+
+def _usage_run(client, baseline, injection_size, sleep_fn, pause_seconds):
+    api_key = getattr(client, "api_key", "")
+    baseline_label = "'Say hi' baseline"
+    baseline_input, baseline_reason = usage_token_reading(
+        baseline, "input", baseline_label, api_key)
+    if baseline_input is None:
+        return _usage_all_inconclusive("not sent; " + baseline_reason)
+
+    requests_sent = 0
+    try:
+        long_result = client.call(
+            [{"role": "user", "content": usage_long_prompt()}],
+            max_tokens=USAGE_OUTPUT_MAX_TOKENS,
+        )
+    except Exception as exc:  # client.call should not raise; stay safe
+        long_result = {"error": f"{type(exc).__name__}: {exc}"}
+    requests_sent += 1
+    long_label = "long-prompt request"
+    long_input, long_input_reason = usage_token_reading(
+        long_result, "input", long_label, api_key)
+    long_output, long_output_reason = usage_token_reading(
+        long_result, "output", long_label, api_key)
+    baseline_cache = usage_cache_note(baseline, baseline_label)
+    checks = [
+        check_usage_input_delta(
+            baseline_input, long_input, long_input_reason,
+            cache_note=baseline_cache or usage_cache_note(long_result, long_label)),
+        check_usage_output_cap(
+            long_output, long_output_reason,
+            stop_reason=usage_stop_reason(long_result),
+            thinking_note=usage_thinking_note(long_result, long_label)),
+    ]
+
+    detected_format = getattr(client, "detected_format", None)
+    skip_reason = None
+    if detected_format != "anthropic":
+        skip_reason = ("not sent, because count_tokens is Anthropic-format "
+                       f"only and the client format is {detected_format!r}")
+    elif (_usage_is_int(injection_size)
+            and injection_size > USAGE_STEP3_INJECTION_THRESHOLD):
+        skip_reason = ("not sent; count_tokens cannot see injected content, "
+                       "so the gap is already explained by Step 3's injection "
+                       f"finding (~{injection_size} tokens)")
+    elif baseline_cache:
+        skip_reason = "not sent; " + baseline_cache
+    if skip_reason:
+        checks.append(check_usage_count_tokens(baseline_input, None, skip_reason))
+        return _usage_result(checks, requests_sent)
+
+    sleep_fn(pause_seconds)
+    body = {
+        "model": getattr(client, "model", ""),
+        "messages": [{"role": "user", "content": USAGE_BASELINE_PROMPT}],
+    }
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+    }
+    try:
+        response = client.raw_request(
+            "POST", USAGE_COUNT_TOKENS_PATH, headers,
+            json.dumps(body).encode("utf-8"),
+            content_type="application/json", timeout=30,
+        )
+    except Exception as exc:  # raw_request should not raise; stay safe
+        response = {"status": 0, "headers": {}, "body": "",
+                    "error": f"{type(exc).__name__}: {exc}"}
+    requests_sent += 1
+    checks.append(check_usage_count_tokens(baseline_input, response,
+                                           api_key=api_key))
+    return _usage_result(checks, requests_sent)
+
+
+def run_usage_sanity(client, baseline, injection_size=None,
+                     sleep_fn=time.sleep, pause_seconds=1.0):
+    """Run checks A-C and return the observation. Never raises.
+
+    Args:
+        client: An ``APIClient`` (or compatible double) already used by
+            Step 3, so ``detected_format`` is settled.
+        baseline: Step 3's ``client.call()`` result for
+            ``USAGE_BASELINE_PROMPT`` without a system prompt, or None.
+            When it is missing or unusable, nothing is sent and every check
+            is inconclusive.
+        injection_size: Step 3's measured injection in tokens, or None.
+            Above ``USAGE_STEP3_INJECTION_THRESHOLD`` check C is not sent.
+        sleep_fn: Pause function, injectable so tests do not sleep.
+        pause_seconds: Pause before the count_tokens request.
+
+    Returns:
+        ``{"verdict": str, "checks": [A, B, C], "requests_sent": int}``. At
+        most two requests are sent: the long prompt shared by checks A and B,
+        and one count_tokens call for Anthropic-format clients.
+    """
+    try:
+        return _usage_run(client, baseline, injection_size, sleep_fn,
+                          pause_seconds)
+    except Exception as exc:  # observation must never break Step 3
+        return _usage_all_inconclusive("usage sanity failed: " + usage_safe_error(
+            f"{type(exc).__name__}: {exc}", getattr(client, "api_key", "")))
+
+
+# ============================================================
 # Audit orchestration
 # ============================================================
 
@@ -6624,6 +6650,10 @@ def parse_args():
                    help="Run a quick Anthropic/OpenAI Chat connectivity check "
                         "and exit without running the full 14-step audit.")
     p.add_argument("--skip-infra", action="store_true", help="Skip infrastructure recon")
+    p.add_argument("--skip-usage-sanity", action="store_true",
+                   help="Skip the informational token usage sanity checks "
+                        "appended to Step 3 (up to 2 extra requests: one "
+                        "long prompt and one count_tokens call).")
     p.add_argument("--skip-context", action="store_true", help="Skip context length test")
     p.add_argument("--fast-context", action="store_true",
                    help="Use a reduced Step 7 context scan ladder "
@@ -6640,12 +6670,6 @@ def parse_args():
     p.add_argument("--skip-stream-integrity", action="store_true",
                    help="Skip stream integrity test (Step 10). Useful if the "
                         "relay does not support Anthropic streaming.")
-    p.add_argument("--verify-signature", action="store_true",
-                   help="Opt-in Step 10 check: pass the streamed thinking block "
-                        "back twice, intact and with one signature character "
-                        "changed, and record whether the upstream tells them "
-                        "apart. Sends up to 2 extra paid requests. "
-                        "Informational only, not scored. Default: off.")
     p.add_argument("--profile", choices=["general", "web3", "full"],
                    default="general",
                    help="Audit profile selector. 'general' (default) runs "
@@ -6950,7 +6974,7 @@ def test_models(client, report):
     print(f"  Done: model list ({len(models)} models)")
 
 
-def test_token_injection(client, report):
+def test_token_injection(client, report, usage_sanity=True):
     report.h2("3. Token Injection Detection")
     report.p("Send minimal messages, compare expected vs actual input_tokens. Delta = hidden injection.\n")
 
@@ -6967,9 +6991,12 @@ def test_token_injection(client, report):
     errors = []
     success_count = 0
     error_diagnostics = []
+    usage_baseline = None  # short baseline reused by the usage sanity block
     for name, sys_prompt, user_msg, expected in tests:
         r = client.call([{"role": "user", "content": user_msg}],
                         system=sys_prompt, max_tokens=100)
+        if sys_prompt is None and user_msg == USAGE_BASELINE_PROMPT:
+            usage_baseline = r
         if "error" in r:
             report.p(f"| {name} | ERROR | ~{expected} | - |")
             errors.append(r.get("error", ""))
@@ -7003,6 +7030,11 @@ def test_token_injection(client, report):
                 "errored, so hidden prompt injection could not be measured.",
             )
         print("  Done: token injection (inconclusive, all probes errored)")
+        try:
+            _report_usage_sanity(client, report, usage_baseline, usage_sanity)
+        except Exception as exc:  # the observation must never change Step 3
+            print(f"  [usage sanity] not rendered: {type(exc).__name__}",
+                  file=sys.stderr)
         return None
 
     if injection_size > 100:
@@ -7013,7 +7045,121 @@ def test_token_injection(client, report):
         report.flag("green", "No token injection detected")
 
     print(f"  Done: token injection (delta: ~{injection_size} tokens)")
+    try:
+        _report_usage_sanity(client, report, usage_baseline, usage_sanity,
+                             injection_size)
+    except Exception as exc:  # the observation must never change Step 3
+        print(f"  [usage sanity] not rendered: {type(exc).__name__}",
+              file=sys.stderr)
     return injection_size
+
+
+def _report_usage_sanity(client, report, baseline, enabled=True,
+                         injection_size=None):
+    """Append Step 3's informational token usage sanity subsection.
+
+    Runs :func:`run_usage_sanity` on top of Step 3's "Say hi" baseline and
+    renders its three checks. ``injection_size`` is Step 3's measured
+    injection: when Step 3 already reports injection, check C is not sent,
+    because count_tokens cannot see injected content. The result is an
+    observation only: it never calls ``report.flag()``, never changes Step
+    3's return value and never feeds the risk matrix.
+
+    Must not raise: ``_run_step`` would turn an exception into a crashed,
+    inconclusive Step 3, so every failure degrades to an inconclusive row.
+    """
+    report.h3("Token usage sanity (informational)")
+    if not enabled:
+        report.p("Skipped by `--skip-usage-sanity`; no extra requests were "
+                 "sent.")
+        print("  Done: token usage sanity (skipped)")
+        return
+    report.p(
+        "Counting signal, kept apart from the injection signal above. The "
+        "injection table reads the idle level: its Delta is the actual "
+        "input_tokens of a minimal prompt minus the expected count, so a "
+        "hidden prompt raises it directly. Check A reads the increment "
+        f"instead: the same '{USAGE_BASELINE_PROMPT}' message with "
+        f"{USAGE_PAYLOAD_REPEATS} x '{USAGE_PAYLOAD_WORD.strip()}' appended, "
+        "minus the baseline. A hidden prefix adds the same tokens to both "
+        "requests and cancels out, so an increment outside the range points "
+        "at how usage is counted rather than at injection. Check C is "
+        "different: count_tokens does not see a prompt the relay injects "
+        "into Messages requests, so when the injection table above "
+        "reports injection, C is not sent and stays inconclusive. Stream / "
+        "non-stream usage parity is covered by the Step 10 parity section "
+        "and is not repeated here. Informational only: it does not change "
+        "the Step 3 verdict or the risk matrix, and its thresholds are "
+        "provisional and uncalibrated.\n"
+    )
+    try:
+        result = run_usage_sanity(client, baseline, injection_size,
+                                  sleep_fn=time.sleep)
+        checks = {check["check"]: check for check in result["checks"]}
+        delta = checks["input_delta"]
+        cap = checks["output_cap"]
+        count = checks["count_tokens"]
+
+        if delta["delta"] is None:
+            delta_cell = "—"
+        else:
+            delta_cell = (
+                f"{delta['delta']:+d} ({delta['baseline_input_tokens']} "
+                f"→ {delta['long_input_tokens']})"
+            )
+        cap_cell = ("—" if cap["output_tokens"] is None
+                    else str(cap["output_tokens"]))
+        if count["difference"] is not None:
+            count_cell = (
+                f"actual {count['baseline_input_tokens']}, counted "
+                f"{count['count_tokens']} ({count['difference']:+d})"
+            )
+        elif count["status"]:
+            count_cell = f"HTTP {count['status']}"
+        else:
+            count_cell = "—"
+        cap_limit = USAGE_OUTPUT_MAX_TOKENS + USAGE_OUTPUT_TOLERANCE
+
+        report.p("| Check | Observed | Rule (provisional) | Result |")
+        report.p("|-------|----------|--------------------|--------|")
+        report.p(
+            f"| A. Input delta (long - short input_tokens) | {delta_cell} | "
+            f"{USAGE_DELTA_MIN} <= delta <= {USAGE_DELTA_MAX} | "
+            f"{delta['verdict']} |"
+        )
+        report.p(
+            f"| B. Output cap (max_tokens={USAGE_OUTPUT_MAX_TOKENS}) | "
+            f"{cap_cell} | output_tokens <= {cap_limit} | {cap['verdict']} |"
+        )
+        report.p(
+            f"| C. count_tokens vs actual input_tokens | {count_cell} | "
+            f"abs(actual - counted) <= {USAGE_COUNT_TOKENS_TOLERANCE}; "
+            f"Anthropic format only | {count['verdict']} |"
+        )
+        report.p(
+            f"| Observed usage sanity | {result['verdict']} | not scored | — |"
+        )
+        report.p(
+            "\nExtra requests sent by this subsection: "
+            f"{result['requests_sent']}."
+        )
+        notes = [
+            f"{label}: {check['note']}"
+            for label, check in (("A", delta), ("B", cap), ("C", count))
+            if check["note"]
+        ]
+        if notes:
+            report.p("\n**Usage sanity notes (observed)**:")
+            for note in notes:
+                report.p(f"- {note}")
+        verdict = result["verdict"]
+    except Exception as exc:  # informational block must never fail Step 3
+        report.p(
+            f"Usage sanity could not be evaluated ({type(exc).__name__}); "
+            "observed verdict: inconclusive."
+        )
+        verdict = "inconclusive"
+    print(f"  Done: token usage sanity ({verdict})")
 
 
 def test_prompt_extraction(client, report):
@@ -7602,16 +7748,13 @@ def test_error_leakage(client, args, report):
     return severity, inconclusive
 
 
-def test_stream_integrity(client, report, verify_signature=False):
+def test_stream_integrity(client, report):
     """Step 10: Stream Integrity (SSE whitelist + usage monotonicity +
     thinking signature + stream model identity).
 
     Opens an Anthropic-format streaming request with ``thinking`` enabled
     and captures every SSE event into a :class:`StreamSignals`. Then
     runs :func:`analyze_stream` for a tri-state verdict.
-
-    With ``verify_signature`` (``--verify-signature``) it also appends the
-    opt-in thinking signature round-trip, which is informational only.
 
     Returns ``(verdict, inconclusive)`` where ``verdict`` is one of
     ``"clean"`` / ``"anomaly"`` / ``"inconclusive"`` and
@@ -7703,12 +7846,6 @@ def test_stream_integrity(client, report, verify_signature=False):
         client, report, signals,
         probe_messages, probe_max_tokens, probe_with_thinking,
     )
-
-    # Opt-in (--verify-signature) and informational, same contract as the
-    # parity section. A default run sends nothing extra.
-    if verify_signature:
-        _report_signature_roundtrip(client, report, signals, probe_messages,
-                                    probe_max_tokens)
 
     print(f"  Done: stream integrity ({verdict})")
     return verdict, verdict == "inconclusive"
@@ -7817,164 +7954,6 @@ def _report_stream_parity(client, report, signals, messages, max_tokens,
         for note in parity["notes"]:
             report.p(f"- {note}")
 
-
-SIGNATURE_REPLAY_FOLLOW_UP = "Reply with the single word: done"
-
-
-def _redacted_excerpt(client, text, limit=160):
-    """Redact, flatten and clip text before it reaches the report."""
-    text = redact_sensitive_text(str(text), getattr(client, "api_key", "") or "")
-    return " ".join(text.split())[:limit]
-
-
-def _roundtrip_verdict_line(report, verdict):
-    report.p(f"\nObserved round-trip result: **{verdict}** "
-             "(informational, not scored)")
-
-
-def _signature_roundtrip_skip_reason(client, signals):
-    """Return why the signature round-trip cannot run, or ``None``."""
-    detected_format = getattr(client, "detected_format", None)
-    if detected_format != "anthropic":
-        return (f"the client format is {detected_format!r} rather than "
-                "'anthropic'")
-    if signals.transport_error:
-        return "the Step 10 stream had a transport error"
-    issue = getattr(signals, "thinking_capture_issue", None)
-    if issue:
-        return f"the thinking capture cannot be replayed byte for byte ({issue})"
-    if not has_replayable_signature(signals):
-        blocks = signals.thinking_blocks if isinstance(signals.thinking_blocks, list) else []
-        types = {b.get("type") for b in blocks if isinstance(b, dict)}
-        if "thinking" in types:
-            return ("a thinking block carried no signature, so even the intact "
-                    "replay could not be accepted")
-        if "redacted_thinking" in types:
-            return ("the stream carried only redacted_thinking blocks, with no "
-                    "thinking block signature to change")
-        return "the stream carried no thinking block with a non-empty signature"
-    text = signals.text if isinstance(signals.text, str) else ""
-    if not text.strip():
-        return "the stream carried no reply text to pass back"
-    return None
-
-
-def _report_signature_roundtrip(client, report, signals, messages, max_tokens):
-    """Append Step 10's opt-in thinking signature round-trip section.
-
-    Runs only under ``--verify-signature``. Passes the streamed assistant
-    turn (thinking blocks plus reply text) back to the same model with the
-    stream's user message, ``max_tokens`` and thinking setting, once
-    unchanged and then, only if that replay was accepted, with one signature
-    character changed. The pair is judged by
-    :func:`analyze_signature_roundtrip`; a skipped check is recorded as
-    inconclusive. Observation only: it never changes the Step 10 verdict,
-    never calls ``report.flag()`` and never feeds the risk matrix.
-
-    Must not raise: every failure degrades to an inconclusive result, and
-    every error excerpt goes through redaction and clipping.
-    """
-    report.h3("Thinking signature round-trip (opt-in, informational)")
-    report.p(
-        "Passes the Step 10 thinking block back to the same model twice: once "
-        "unchanged, then with one character in the middle of its signature "
-        "changed. Both requests reuse the stream's user message, reply text, "
-        "max_tokens and thinking setting, with no system prompt, tools or "
-        "sampling parameters, so they differ only in that character. An "
-        "upstream that checks signatures accepts the intact replay and "
-        "rejects the tampered one with an HTTP 400 that names the signature "
-        "(upstream-verified). Without a tool-use turn the model may strip "
-        "replayed thinking blocks before checking them, so two accepted "
-        "replays are no-signal: they show neither that nothing upstream "
-        "verifies signatures nor that the signature was forged. A stronger "
-        "probe would replay a tool-use turn; this check does not. Sonnet 5.5 "
-        "and Haiku 5.5 thinking blocks are bound to the account that produced "
-        "them, so a relay that rotates one conversation across several "
-        "upstream accounts may fail the intact replay; that is an untested "
-        "hypothesis, only recorded here. Informational only: it does not "
-        "change the Step 10 verdict or the risk matrix.\n"
-    )
-
-    intact = None
-    tampered = None
-    try:
-        skip = _signature_roundtrip_skip_reason(client, signals)
-        if skip:
-            report.p(f"Skipped: {skip}. No replay request sent.")
-            _roundtrip_verdict_line(report, "inconclusive")
-            return
-        intact = client.replay_thinking(
-            messages,
-            build_replay_assistant_content(signals.thinking_blocks, signals.text),
-            SIGNATURE_REPLAY_FOLLOW_UP, max_tokens=max_tokens,
-        )
-        if replay_accepted(intact):
-            tampered = client.replay_thinking(
-                messages,
-                build_replay_assistant_content(
-                    signals.thinking_blocks, signals.text, tamper=True),
-                SIGNATURE_REPLAY_FOLLOW_UP, max_tokens=max_tokens,
-            )
-        roundtrip = analyze_signature_roundtrip(intact, tampered)
-    except Exception as exc:  # informational block must never fail Step 10
-        roundtrip = {
-            "verdict": "inconclusive",
-            "notes": ["Signature round-trip failed: "
-                      + _redacted_excerpt(client, f"{type(exc).__name__}: {exc}")],
-        }
-
-    try:
-        _render_signature_roundtrip(client, report, intact, tampered, roundtrip)
-    except Exception as exc:  # rendering must not fail Step 10 either
-        _roundtrip_verdict_line(report, "inconclusive")
-        report.p("- Signature round-trip report failed: "
-                 + _redacted_excerpt(client, f"{type(exc).__name__}: {exc}"))
-
-
-def _render_signature_roundtrip(client, report, intact, tampered, roundtrip):
-    """Render the round-trip table, verdict and notes. Sends no request."""
-    def _cell(value):
-        if value is None:
-            return "—"
-        return _redacted_excerpt(client, value, 60).replace("|", "\\|")
-
-    def _observation(res):
-        if res is None:
-            return "not sent"
-        status = res.get("status") if isinstance(res, dict) else None
-        if status is None:
-            return "no HTTP response"
-        if replay_accepted(res):
-            return "accepted"
-        if isinstance(status, int) and 200 <= status < 300:
-            return "error body"
-        return "rejected"
-
-    rows = (
-        ("intact (signature unchanged)", intact),
-        ("tampered (1 signature character changed)", tampered),
-    )
-    report.p("| Replay | HTTP status | error_type | input_tokens | Observation |")
-    report.p("|--------|-------------|------------|--------------|-------------|")
-    for label, res in rows:
-        res_dict = res if isinstance(res, dict) else {}
-        report.p(
-            f"| {label} | {_cell(res_dict.get('status'))} | "
-            f"{_cell(res_dict.get('error_type'))} | "
-            f"{_cell(res_dict.get('input_tokens'))} | {_observation(res)} |"
-        )
-    _roundtrip_verdict_line(report, roundtrip["verdict"])
-    notes = list(roundtrip.get("notes") or [])
-    for label, res in rows:
-        error = res.get("error") if isinstance(res, dict) else None
-        if error:
-            notes.append(f"{label.split(' ', 1)[0]} replay error (redacted): "
-                         + _redacted_excerpt(client, error))
-    if notes:
-        report.p("\n**Round-trip notes (observed)**:")
-        for note in notes:
-            safe = str(note)[:400].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
-            report.p(f"- {safe}")
 
 def test_web3_injection(client, report):
     """Step 11: Web3 Prompt Injection (SlowMist signature isolation).
@@ -8710,6 +8689,7 @@ def _run_audit(args, report_stdout):
     print("[3/14] Token injection detection...")
     injection = _run_step("Step 3 token injection", report,
                           test_token_injection, client, report,
+                          not args.skip_usage_sanity,
                           default=None, crashes=step_crashes)
 
     # 4. Prompt extraction
@@ -8772,7 +8752,6 @@ def _run_audit(args, report_stdout):
         stream_verdict, stream_inconclusive = _run_step(
             "Step 10 stream integrity", report,
             test_stream_integrity, client, report,
-            getattr(args, "verify_signature", False),
             default=("clean", True), crashes=step_crashes,
         )
     else:

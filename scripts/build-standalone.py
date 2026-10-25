@@ -49,6 +49,7 @@ SOURCE_PATHS = (
     "api_relay_audit/tool_call_integrity.py",
     "api_relay_audit/tool_substitution.py",
     "api_relay_audit/transparent_log.py",
+    "api_relay_audit/usage_sanity.py",
     "api_relay_audit/web3/injection_probes.py",
 )
 
@@ -449,6 +450,11 @@ SECTIONS = (
     Section(
         "Upstream channel classifier",
         "api_relay_audit/channel_classifier.py",
+    ),
+    Section(
+        "Token usage sanity observation",
+        "api_relay_audit/usage_sanity.py",
+        drop_import_prefixes=("from api_relay_audit.error_leakage import ",),
     ),
     Section(
         "Audit orchestration",

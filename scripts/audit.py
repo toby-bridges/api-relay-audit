@@ -90,6 +90,17 @@ from api_relay_audit.tool_call_integrity import (
     run_tool_call_integrity_test,
 )
 from api_relay_audit.tool_substitution import run_tool_substitution_test
+from api_relay_audit.usage_sanity import (
+    USAGE_BASELINE_PROMPT,
+    USAGE_COUNT_TOKENS_TOLERANCE,
+    USAGE_DELTA_MAX,
+    USAGE_DELTA_MIN,
+    USAGE_OUTPUT_MAX_TOKENS,
+    USAGE_OUTPUT_TOLERANCE,
+    USAGE_PAYLOAD_REPEATS,
+    USAGE_PAYLOAD_WORD,
+    run_usage_sanity,
+)
 from api_relay_audit.web3.injection_probes import run_web3_injection_probes
 
 TOOL_VERSION_FALLBACK = "2.5.0"
@@ -203,6 +214,10 @@ def parse_args():
                    help="Run a quick Anthropic/OpenAI Chat connectivity check "
                         "and exit without running the full 14-step audit.")
     p.add_argument("--skip-infra", action="store_true", help="Skip infrastructure recon")
+    p.add_argument("--skip-usage-sanity", action="store_true",
+                   help="Skip the informational token usage sanity checks "
+                        "appended to Step 3 (up to 2 extra requests: one "
+                        "long prompt and one count_tokens call).")
     p.add_argument("--skip-context", action="store_true", help="Skip context length test")
     p.add_argument("--fast-context", action="store_true",
                    help="Use a reduced Step 7 context scan ladder "
@@ -529,7 +544,7 @@ def test_models(client, report):
     print(f"  Done: model list ({len(models)} models)")
 
 
-def test_token_injection(client, report):
+def test_token_injection(client, report, usage_sanity=True):
     report.h2("3. Token Injection Detection")
     report.p("Send minimal messages, compare expected vs actual input_tokens. Delta = hidden injection.\n")
 
@@ -546,9 +561,12 @@ def test_token_injection(client, report):
     errors = []
     success_count = 0
     error_diagnostics = []
+    usage_baseline = None  # short baseline reused by the usage sanity block
     for name, sys_prompt, user_msg, expected in tests:
         r = client.call([{"role": "user", "content": user_msg}],
                         system=sys_prompt, max_tokens=100)
+        if sys_prompt is None and user_msg == USAGE_BASELINE_PROMPT:
+            usage_baseline = r
         if "error" in r:
             report.p(f"| {name} | ERROR | ~{expected} | - |")
             errors.append(r.get("error", ""))
@@ -582,6 +600,11 @@ def test_token_injection(client, report):
                 "errored, so hidden prompt injection could not be measured.",
             )
         print("  Done: token injection (inconclusive, all probes errored)")
+        try:
+            _report_usage_sanity(client, report, usage_baseline, usage_sanity)
+        except Exception as exc:  # the observation must never change Step 3
+            print(f"  [usage sanity] not rendered: {type(exc).__name__}",
+                  file=sys.stderr)
         return None
 
     if injection_size > 100:
@@ -592,7 +615,121 @@ def test_token_injection(client, report):
         report.flag("green", "No token injection detected")
 
     print(f"  Done: token injection (delta: ~{injection_size} tokens)")
+    try:
+        _report_usage_sanity(client, report, usage_baseline, usage_sanity,
+                             injection_size)
+    except Exception as exc:  # the observation must never change Step 3
+        print(f"  [usage sanity] not rendered: {type(exc).__name__}",
+              file=sys.stderr)
     return injection_size
+
+
+def _report_usage_sanity(client, report, baseline, enabled=True,
+                         injection_size=None):
+    """Append Step 3's informational token usage sanity subsection.
+
+    Runs :func:`run_usage_sanity` on top of Step 3's "Say hi" baseline and
+    renders its three checks. ``injection_size`` is Step 3's measured
+    injection: when Step 3 already reports injection, check C is not sent,
+    because count_tokens cannot see injected content. The result is an
+    observation only: it never calls ``report.flag()``, never changes Step
+    3's return value and never feeds the risk matrix.
+
+    Must not raise: ``_run_step`` would turn an exception into a crashed,
+    inconclusive Step 3, so every failure degrades to an inconclusive row.
+    """
+    report.h3("Token usage sanity (informational)")
+    if not enabled:
+        report.p("Skipped by `--skip-usage-sanity`; no extra requests were "
+                 "sent.")
+        print("  Done: token usage sanity (skipped)")
+        return
+    report.p(
+        "Counting signal, kept apart from the injection signal above. The "
+        "injection table reads the idle level: its Delta is the actual "
+        "input_tokens of a minimal prompt minus the expected count, so a "
+        "hidden prompt raises it directly. Check A reads the increment "
+        f"instead: the same '{USAGE_BASELINE_PROMPT}' message with "
+        f"{USAGE_PAYLOAD_REPEATS} x '{USAGE_PAYLOAD_WORD.strip()}' appended, "
+        "minus the baseline. A hidden prefix adds the same tokens to both "
+        "requests and cancels out, so an increment outside the range points "
+        "at how usage is counted rather than at injection. Check C is "
+        "different: count_tokens does not see a prompt the relay injects "
+        "into Messages requests, so when the injection table above "
+        "reports injection, C is not sent and stays inconclusive. Stream / "
+        "non-stream usage parity is covered by the Step 10 parity section "
+        "and is not repeated here. Informational only: it does not change "
+        "the Step 3 verdict or the risk matrix, and its thresholds are "
+        "provisional and uncalibrated.\n"
+    )
+    try:
+        result = run_usage_sanity(client, baseline, injection_size,
+                                  sleep_fn=time.sleep)
+        checks = {check["check"]: check for check in result["checks"]}
+        delta = checks["input_delta"]
+        cap = checks["output_cap"]
+        count = checks["count_tokens"]
+
+        if delta["delta"] is None:
+            delta_cell = "—"
+        else:
+            delta_cell = (
+                f"{delta['delta']:+d} ({delta['baseline_input_tokens']} "
+                f"→ {delta['long_input_tokens']})"
+            )
+        cap_cell = ("—" if cap["output_tokens"] is None
+                    else str(cap["output_tokens"]))
+        if count["difference"] is not None:
+            count_cell = (
+                f"actual {count['baseline_input_tokens']}, counted "
+                f"{count['count_tokens']} ({count['difference']:+d})"
+            )
+        elif count["status"]:
+            count_cell = f"HTTP {count['status']}"
+        else:
+            count_cell = "—"
+        cap_limit = USAGE_OUTPUT_MAX_TOKENS + USAGE_OUTPUT_TOLERANCE
+
+        report.p("| Check | Observed | Rule (provisional) | Result |")
+        report.p("|-------|----------|--------------------|--------|")
+        report.p(
+            f"| A. Input delta (long - short input_tokens) | {delta_cell} | "
+            f"{USAGE_DELTA_MIN} <= delta <= {USAGE_DELTA_MAX} | "
+            f"{delta['verdict']} |"
+        )
+        report.p(
+            f"| B. Output cap (max_tokens={USAGE_OUTPUT_MAX_TOKENS}) | "
+            f"{cap_cell} | output_tokens <= {cap_limit} | {cap['verdict']} |"
+        )
+        report.p(
+            f"| C. count_tokens vs actual input_tokens | {count_cell} | "
+            f"abs(actual - counted) <= {USAGE_COUNT_TOKENS_TOLERANCE}; "
+            f"Anthropic format only | {count['verdict']} |"
+        )
+        report.p(
+            f"| Observed usage sanity | {result['verdict']} | not scored | — |"
+        )
+        report.p(
+            "\nExtra requests sent by this subsection: "
+            f"{result['requests_sent']}."
+        )
+        notes = [
+            f"{label}: {check['note']}"
+            for label, check in (("A", delta), ("B", cap), ("C", count))
+            if check["note"]
+        ]
+        if notes:
+            report.p("\n**Usage sanity notes (observed)**:")
+            for note in notes:
+                report.p(f"- {note}")
+        verdict = result["verdict"]
+    except Exception as exc:  # informational block must never fail Step 3
+        report.p(
+            f"Usage sanity could not be evaluated ({type(exc).__name__}); "
+            "observed verdict: inconclusive."
+        )
+        verdict = "inconclusive"
+    print(f"  Done: token usage sanity ({verdict})")
 
 
 def test_prompt_extraction(client, report):
@@ -2290,6 +2427,7 @@ def _run_audit(args, report_stdout):
     print("[3/14] Token injection detection...")
     injection = _run_step("Step 3 token injection", report,
                           test_token_injection, client, report,
+                          not args.skip_usage_sanity,
                           default=None, crashes=step_crashes)
 
     # 4. Prompt extraction
