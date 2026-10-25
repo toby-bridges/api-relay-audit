@@ -807,19 +807,19 @@ relay 可硬编码"May 2025"在 system prompt 里轻松绕过。**不重新评�
 **评审**：每条分支两轮独立评审（Opus 5.5，不同上下文），MUST 项修完再合入集成分支；本机无 codex CLI，未走 Codex 轮。
 
 #### 2.8.0 PR #95 补缺（P0）✅ 分支 feat/v26-p0-tool-call-gaps
-Final test count: 1071/1071 passing (pytest full run on v26-integration d2a2c08; collect-only under tests/: 1063)
+Final test count: 1063/1063 passing (collect-only under tests/ on v26-integration d2a2c08; full pytest run incl. scripts/: 1071)
 归一化响应加 protocol 标记；Anthropic 格式下 tool_use id 非 toolu_ 只记 protocol_notes；调用存在但 stop_reason 不是 tool_use（含缺失）判 anomaly 进 D3；OpenAI 格式 finish_reason 为 stop / tool_calls 正常，其余只记 note；无调用时记录脱敏、限长的 text_excerpt。
 #### 2.8.1 Step 10 跨模式对照（P1）✅ 分支 feat/v26-p1-stream-parity
-Final test count: 1071/1071 passing (pytest full run on v26-integration d2a2c08; collect-only under tests/: 1063)
+Final test count: 1063/1063 passing (collect-only under tests/ on v26-integration d2a2c08; full pytest run incl. scripts/: 1071)
 同题非流式请求与流对照；divergent 只由 input_tokens 差与流侧 stop_reason 决定，相似度与 output_tokens 只记 note（默认温度下文本会变，output 含 thinking）；信息性，不进 D5；阈值 provisional，待直连基线校准。temperature 参数不提供（官方文档：新 API 版本下带该参数即 400）。
 #### 2.8.2 Step 14 OpenAI 格式 usage 异源字段（P2b）✅ 分支 feat/v26-p2b-openai-usage-source
-Final test count: 1071/1071 passing (pytest full run on v26-integration d2a2c08; collect-only under tests/: 1063)
+Final test count: 1063/1063 passing (collect-only under tests/ on v26-integration d2a2c08; full pytest run incl. scripts/: 1071)
 Tier 1 信息性规则：claude_cache_creation* 键 → anthropic-translated；input_tokens+output_tokens 成对且无 *_details、且缺 OpenAI 命名或带 Anthropic cache 键 → anthropic-translated；usage_source 为非空且非 openai 的字符串 → foreign-usage-source；键名净化限长，错误行不带响应体。
 #### 2.8.3 Step 3 用量合理性（P2）✅ 分支 feat/v26-p2-usage-sanity
-Final test count: 1208/1208 passing (pytest full run on v26-integration after wave 2; collect-only under tests/: 1200)
+Final test count: 1200/1200 passing (collect-only under tests/ on v26-integration after wave 2; full pytest run incl. scripts/: 1208)
 增量区间、输出上限、跨模式 usage（复用 P1 请求对）、count_tokens 对账；信息性；与"明确不做"表的精确计数不冲突；阈值需直连基线。
 #### 2.8.4 思维签名回传验签（P3）✅ 分支 feat/v26-p3-signature-roundtrip，可选 flag `--verify-signature`
-Final test count: 1208/1208 passing (same run as 2.8.3)
+Final test count: 1200/1200 passing (same run as 2.8.3)
 --verify-signature 默认关；原样回传期望 200、改一位期望 400；同模型回传；Sonnet 5.5 / Haiku 5.5 的 thinking 块绑定账号，号池信号待验证。
 #### 2.8.5 不做
 行为指纹正则版（见 §10、§11a）、知识截止（见"明确不做"表）、PDF 能力（另见 §2.6.2）。
