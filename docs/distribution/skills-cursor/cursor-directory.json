@@ -2,7 +2,7 @@
   "name": "API Relay Audit",
   "description": "Run local, evidence-based security audits of AI API relays and LLM proxies. Check prompt/context signals and response integrity without treating results as safety certification.",
   "repository": "https://github.com/toby-bridges/api-relay-audit",
-  "homepage": "https://toby-bridges.github.io/api-relay-audit/",
+  "homepage": "https://apirelayaudit.com/",
   "keywords": [
     "api-relay",
     "llm-proxy",

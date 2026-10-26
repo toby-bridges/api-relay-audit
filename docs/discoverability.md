@@ -39,7 +39,7 @@ Observed at: 2026-06-01T06:27:04Z
 
 - Repository: `toby-bridges/api-relay-audit`
 - Description: Local security audit for AI API relays and LLM proxies: detects prompt injection, model substitution, tool-call rewriting, SSE anomalies, error leakage, and Web3 wallet risks.
-- Homepage: <https://toby-bridges.github.io/api-relay-audit/>
+- Homepage: <https://apirelayaudit.com/>
 - Topics: `ai-agents`, `ai-security`, `anthropic`, `api-gateway`, `claude`, `cli`, `llm-proxy`, `llm-security`, `openai-api`, `prompt-injection`, `python`, `security-audit`, `security-scanner`, `supply-chain-security`, `web3-security`, `ai-audit`, `llm-audit`, `model-substitution`, `web3-wallet`, `tool-call-rewriting`
 - Custom GitHub social preview: enabled (`usesCustomOpenGraphImage:true`)
 

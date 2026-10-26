@@ -42,6 +42,7 @@
     "type": "git",
     "url": "git+https://github.com/toby-bridges/api-relay-audit.git"
   },
+  "homepage": "https://apirelayaudit.com/",
   "license": "AGPL-3.0-only",
   "dsh": {
     "bundle": {

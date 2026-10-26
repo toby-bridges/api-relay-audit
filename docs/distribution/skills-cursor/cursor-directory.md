@@ -12,7 +12,7 @@ public default branch; review the detected component against the draft.
 
 - Name: API Relay Audit
 - Repository: https://github.com/toby-bridges/api-relay-audit
-- Homepage: https://toby-bridges.github.io/api-relay-audit/
+- Homepage: https://apirelayaudit.com/
 - Logo: optional; no new logo or upload is required for this draft.
 - Component: exactly one Skill, `api-relay-audit`; no MCP claim.
 

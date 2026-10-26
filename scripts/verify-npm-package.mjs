@@ -94,7 +94,7 @@ export function readPackageArchive(bytes) {
 }
 
 function validateMetadata(manifest, version) {
-  const expectedFields = ['name', 'version', 'description', 'type', 'main', 'exports', 'files', 'scripts', 'publishConfig', 'engines', 'peerDependencies', 'repository', 'license', 'dsh']
+  const expectedFields = ['name', 'version', 'description', 'type', 'main', 'exports', 'files', 'scripts', 'publishConfig', 'engines', 'peerDependencies', 'repository', 'homepage', 'license', 'dsh']
   requireCheck(manifest !== null && typeof manifest === 'object' && !Array.isArray(manifest), 'METADATA_INVALID', 'package metadata must be a JSON object')
   requireCheck(Object.keys(manifest).length === expectedFields.length && Object.keys(manifest).every(key => expectedFields.includes(key)), 'METADATA_INVALID', 'package metadata contains missing or unexpected fields')
   requireCheck(manifest.name === 'dsh-api-relay-audit' && manifest.version === version && /^\d+\.\d+\.\d+$/u.test(version), 'METADATA_INVALID', 'package name/version must match VERSION')
@@ -106,6 +106,7 @@ function validateMetadata(manifest, version) {
   requireCheck(JSON.stringify(manifest.dsh) === JSON.stringify({ bundle: { patch: './dsh/cordis.patch.yml' } }), 'METADATA_INVALID', 'DSH bundle patch entry point is incorrect')
   requireCheck(manifest.license === 'AGPL-3.0-only' && manifest.repository?.url === 'git+https://github.com/toby-bridges/api-relay-audit.git', 'METADATA_INVALID', 'license/repository metadata does not identify this project')
   requireCheck(manifest.engines?.node === '^22.19.0 || >=24.0.0', 'METADATA_INVALID', 'supported Node runtime range is missing')
+  requireCheck(manifest.homepage === 'https://apirelayaudit.com/', 'METADATA_INVALID', 'homepage must point to the project website')
   const expectedPeers = ['@deepseek-ai/cordis', ...['commands', 'credentials', 'llm', 'settings', 'subprocess'].map(name => `@deepseek-ai/dsh-${name}`)].sort()
   requireCheck(manifest.peerDependencies && JSON.stringify(Object.keys(manifest.peerDependencies).sort()) === JSON.stringify(expectedPeers), 'METADATA_INVALID', 'DSH host peer dependencies are incomplete')
   for (const [name, range] of Object.entries(manifest.peerDependencies)) {

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://toby-bridges.github.io/api-relay-audit/"><img alt="GitHub Pages" src="https://img.shields.io/badge/GitHub%20Pages-Live%20Site-0a7f5a?style=for-the-badge"></a>
+  <a href="https://apirelayaudit.com/"><img alt="Website" src="https://img.shields.io/badge/Website-Live%20Site-0a7f5a?style=for-the-badge"></a>
   <a href="#chinese-readme"><img alt="README 中文" src="https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-111111?style=for-the-badge"></a>
   <a href="https://x.com/li9292"><img alt="X @li9292" src="https://img.shields.io/badge/X-%40li9292-111111?style=for-the-badge"></a>
   <a href="https://github.com/toby-bridges"><img alt="GitHub toby-bridges" src="https://img.shields.io/badge/GitHub-toby--bridges-24292f?style=for-the-badge"></a>
@@ -227,16 +227,16 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 
 ## Example Report And Live Page
 
-- GitHub Pages: [toby-bridges.github.io/api-relay-audit](https://toby-bridges.github.io/api-relay-audit/)
-- Chinese landing page: [toby-bridges.github.io/api-relay-audit/zh/](https://toby-bridges.github.io/api-relay-audit/zh/)
+- Website: [apirelayaudit.com](https://apirelayaudit.com/)
+- Chinese landing page: [apirelayaudit.com/zh/](https://apirelayaudit.com/zh/)
 - Example report: [sanitized fixture report](./docs/examples/sanitized-audit-report.md)
 - Guides:
-  [AI API relay / LLM proxy](https://toby-bridges.github.io/api-relay-audit/guides/what-is-ai-api-relay-proxy.html),
-  [Claude relay audit](https://toby-bridges.github.io/api-relay-audit/guides/audit-claude-api-relay-safely.html),
-  [tool comparison](https://toby-bridges.github.io/api-relay-audit/guides/compare-api-relay-audit-hvoy-cctest.html),
-  [prompt injection in proxies](https://toby-bridges.github.io/api-relay-audit/guides/detect-prompt-injection-llm-api-proxies.html),
-  [Web3 wallet prompt injection](https://toby-bridges.github.io/api-relay-audit/guides/web3-wallet-prompt-injection-ai-agents.html),
-  [DeepSeek Harness plugin](https://toby-bridges.github.io/api-relay-audit/guides/deepseek-harness-plugin-api-relay-audit.html)
+  [AI API relay / LLM proxy](https://apirelayaudit.com/guides/what-is-ai-api-relay-proxy.html),
+  [Claude relay audit](https://apirelayaudit.com/guides/audit-claude-api-relay-safely.html),
+  [tool comparison](https://apirelayaudit.com/guides/compare-api-relay-audit-hvoy-cctest.html),
+  [prompt injection in proxies](https://apirelayaudit.com/guides/detect-prompt-injection-llm-api-proxies.html),
+  [Web3 wallet prompt injection](https://apirelayaudit.com/guides/web3-wallet-prompt-injection-ai-agents.html),
+  [DeepSeek Harness plugin](https://apirelayaudit.com/guides/deepseek-harness-plugin-api-relay-audit.html)
 - Contributors / Credits: [CONTRIBUTORS.md](./CONTRIBUTORS.md)
 - Security policy: [SECURITY.md](./SECURITY.md)
 - Contributing guide: [CONTRIBUTING.md](./CONTRIBUTING.md)
@@ -467,8 +467,8 @@ registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 
 ## 主要入口
 
-- 在线页 / GitHub Pages: [toby-bridges.github.io/api-relay-audit](https://toby-bridges.github.io/api-relay-audit/)
-- 中文独立页: [toby-bridges.github.io/api-relay-audit/zh/](https://toby-bridges.github.io/api-relay-audit/zh/)
+- 在线页: [apirelayaudit.com](https://apirelayaudit.com/)
+- 中文独立页: [apirelayaudit.com/zh/](https://apirelayaudit.com/zh/)
 - 贡献者 / Credits: [CONTRIBUTORS.md](./CONTRIBUTORS.md)
 - 安全政策: [SECURITY.md](./SECURITY.md)
 - 贡献指南: [CONTRIBUTING.md](./CONTRIBUTING.md)
