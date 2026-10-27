@@ -12,6 +12,12 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def test_tool_workflows_reference_existing_test_files():
+    for workflow in (ROOT / ".github/workflows").glob("*.yml"):
+        for relative in re.findall(r"tests/[A-Za-z0-9_/.-]+\.py", workflow.read_text()):
+            assert (ROOT / relative).is_file(), (workflow.name, relative)
+
+
 def _builder():
     spec = importlib.util.spec_from_file_location("legacy_pages", ROOT / "scripts/build-legacy-pages.py")
     module = importlib.util.module_from_spec(spec)

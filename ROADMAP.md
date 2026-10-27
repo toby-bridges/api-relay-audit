@@ -8,7 +8,7 @@ on the list.
 
 **Last updated**: 2026-10-28 (standalone website migration; tool behavior unchanged)
 
-**Final test count for website separation**: 893/893 passing locally using
+**Final test count for website separation**: 894/894 passing locally using
 synthetic and loopback fixtures. Website checks now run in the dedicated website
 repository.
 
