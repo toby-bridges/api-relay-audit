@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "canonical_origin": "https://apirelayaudit.com",
+  "legacy_path_prefix": "/api-relay-audit/",
+  "pages": [
+    "index.html",
+    "zh/index.html",
+    "guides/audit-claude-api-relay-safely.html",
+    "guides/compare-api-relay-audit-hvoy-cctest.html",
+    "guides/deepseek-harness-plugin-api-relay-audit.html",
+    "guides/detect-prompt-injection-llm-api-proxies.html",
+    "guides/openclaw-hermes-skill-api-relay-audit.html",
+    "guides/web3-wallet-prompt-injection-ai-agents.html",
+    "guides/what-is-ai-api-relay-proxy.html",
+    "zh/compare-relay-tools.html",
+    "zh/guides/audit-claude-api-relay-safely.html"
+  ],
+  "public_files": [
+    "assets/content.css",
+    "assets/social-preview.png",
+    "data-example.json"
+  ]
+}

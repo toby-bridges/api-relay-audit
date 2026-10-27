@@ -51,13 +51,6 @@ STEP_PATTERNS = [
     (r'覆盖 (\d+) 个审计步骤', "覆盖 N 个审计步骤"),
 ]
 
-TEST_COUNT_PATTERNS = [
-    (
-        r'<div class="stat-num">(\d+)</div><div class="stat-label" '
-        r'data-i18n="stat_tests">',
-        "web Unit Tests stat",
-    ),
-]
 
 
 def read(path):
@@ -388,33 +381,14 @@ def _check_numeric_mentions(path, patterns, expected, metric_name):
 def check_public_doc_drift(metrics):
     failures = []
 
-    public_docs = [
-        REPO_ROOT / "README.md",
-        REPO_ROOT / "web" / "index.html",
-    ]
-    for path in public_docs:
-        if not path.exists():
-            continue
-        failures.extend(
-            _check_numeric_mentions(
-                path,
-                STEP_PATTERNS,
-                metrics["step_count_modular"],
-                "step count",
-            )
+    # Website claims are checked in the standalone website repository against
+    # its pinned public release source; this collector owns tool documentation.
+    readme = REPO_ROOT / "README.md"
+    failures.extend(
+        _check_numeric_mentions(
+            readme, STEP_PATTERNS, metrics["step_count_modular"], "step count"
         )
-
-    web_index = REPO_ROOT / "web" / "index.html"
-    if web_index.exists():
-        failures.extend(
-            _check_numeric_mentions(
-                web_index,
-                TEST_COUNT_PATTERNS,
-                metrics["test_count_pytest"],
-                "pytest test count",
-            )
-        )
-
+    )
     return failures
 
 
@@ -444,8 +418,8 @@ def parse_args(argv=None):
         "--check",
         action="store_true",
         help=(
-            "Do not write files. Fail if docs/_metrics.md, README.md, or "
-            "web/index.html have stale step/test/version/HEAD-derived metrics."
+            "Do not write files. Fail if docs/_metrics.md or README.md "
+            "has stale step/test/version/HEAD-derived metrics."
         ),
     )
     return parser.parse_args(argv)

@@ -36,5 +36,6 @@ jobs:
           python3 -m pytest \
             tests/test_dual_distribution_parity.py \
             tests/test_skill_distribution.py \
-            tests/test_static_site.py \
+            tests/test_legacy_pages.py \
+            tests/test_public_copy.py \
             -q

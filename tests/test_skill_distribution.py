@@ -9,7 +9,6 @@ ROOT_SKILL = REPO_ROOT / "SKILL.md"
 HERMES_SKILL = REPO_ROOT / "skills" / "api-relay-audit" / "SKILL.md"
 SKILL_DISTRIBUTION_DOC = REPO_ROOT / "docs" / "skill-distribution.md"
 QUERY_FAMILY_DOC = REPO_ROOT / "docs" / "query-families.md"
-HOMEPAGE = REPO_ROOT / "web" / "index.html"
 
 
 def _read(path):
@@ -98,9 +97,6 @@ def test_skill_surfaces_do_not_regress_to_13_step_copy():
         HERMES_SKILL,
         SKILL_DISTRIBUTION_DOC,
         RELEASE_DRAFT,
-        REPO_ROOT / "web" / "guides" / "deepseek-harness-plugin-api-relay-audit.html",
-        HOMEPAGE,
-        REPO_ROOT / "web" / "zh" / "index.html",
     ]
     forbidden = ["13-step", "13 steps", "13 步", "Steps 1-10"]
     for path in surfaces:
@@ -109,32 +105,9 @@ def test_skill_surfaces_do_not_regress_to_13_step_copy():
             assert phrase not in text, f"{path} contains stale phrase {phrase!r}"
 
 
-def test_homepage_agent_tab_matches_dsh_contract():
-    text = _read(HOMEPAGE)
-    assert "DeepSeek Harness plugin" in text
-    assert f'dsh plugin --profile web add "github:toby-bridges/api-relay-audit#{VERSION_TAG}"' in text
-    assert "/relay-audit --connectivity" in text
-    assert "API_RELAY_AUDIT_KEY" in text
-    assert "after ClawHub publication" not in text
-    assert "Claude Code Skill" not in text
-    assert "~/.claude/commands" not in text
-    assert "my key is sk-xxx" not in text
-
-
-def test_homepage_channel_classifier_is_not_marked_future():
-    text = _read(HOMEPAGE)
-    assert "Upstream Channel Classifier" in text
-    assert "cmp_channel:\"Upstream Channel Classifier\"" in text
-    assert "cmp_channel:\"上游通道分类\"" in text
-    assert "Channel Fingerprint" not in text
-    assert '<td class="soon">Soon</td>' not in text
-
-
 def test_growth_surfaces_keep_query_families_separate():
     surfaces = [
         REPO_ROOT / "README.md",
-        HOMEPAGE,
-        REPO_ROOT / "web" / "zh" / "index.html",
         ROOT_SKILL,
         HERMES_SKILL,
         SKILL_DISTRIBUTION_DOC,
@@ -153,7 +126,7 @@ def test_growth_surfaces_keep_query_families_separate():
 
 
 def test_growth_surfaces_preserve_current_audit_contract():
-    surfaces = [REPO_ROOT / "README.md", HOMEPAGE, ROOT_SKILL, HERMES_SKILL]
+    surfaces = [REPO_ROOT / "README.md", ROOT_SKILL, HERMES_SKILL]
     for path in surfaces:
         text = _read(path)
         assert "API Relay Audit" in text
@@ -163,7 +136,7 @@ def test_growth_surfaces_preserve_current_audit_contract():
 
 
 def test_web3_relay_audit_is_profile_gated():
-    surfaces = [REPO_ROOT / "README.md", HOMEPAGE, QUERY_FAMILY_DOC, ROOT_SKILL, HERMES_SKILL]
+    surfaces = [REPO_ROOT / "README.md", QUERY_FAMILY_DOC, ROOT_SKILL, HERMES_SKILL]
     for path in surfaces:
         text = _read(path)
         assert "Web3 relay audit" in text
@@ -173,7 +146,7 @@ def test_web3_relay_audit_is_profile_gated():
 
 
 def test_model_substitution_copy_requires_corroboration():
-    surfaces = [REPO_ROOT / "README.md", HOMEPAGE, QUERY_FAMILY_DOC, ROOT_SKILL, HERMES_SKILL]
+    surfaces = [REPO_ROOT / "README.md", QUERY_FAMILY_DOC, ROOT_SKILL, HERMES_SKILL]
     for path in surfaces:
         text = _read(path)
         assert "model substitution" in text.lower()

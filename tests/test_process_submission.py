@@ -666,7 +666,7 @@ def test_main_creates_evidence_json(tmp_path, monkeypatch):
     """If evidence.json does not exist yet, the script should create it."""
     import process_submission as mod
 
-    fake_evidence = tmp_path / "web" / "data" / "evidence.json"
+    fake_evidence = tmp_path / "evidence" / "registry.json"
     output_file = tmp_path / "github-output.txt"
     assert not fake_evidence.exists()
     monkeypatch.setattr(mod, "EVIDENCE_JSON", fake_evidence)
@@ -698,7 +698,7 @@ def test_main_creates_evidence_json(tmp_path, monkeypatch):
 def test_main_rerun_updates_existing_evidence_without_duplicate(tmp_path, monkeypatch):
     import process_submission as mod
 
-    fake_evidence = tmp_path / "web" / "data" / "evidence.json"
+    fake_evidence = tmp_path / "evidence" / "registry.json"
     output_file = tmp_path / "github-output.txt"
     monkeypatch.setattr(mod, "EVIDENCE_JSON", fake_evidence)
 
@@ -734,7 +734,7 @@ def test_main_rerun_updates_existing_evidence_without_duplicate(tmp_path, monkey
 def test_main_routes_stale_evidence_to_review_without_writing(tmp_path, monkeypatch):
     import process_submission as mod
 
-    fake_evidence = tmp_path / "web" / "data" / "evidence.json"
+    fake_evidence = tmp_path / "evidence" / "registry.json"
     output_file = tmp_path / "github-output.txt"
     monkeypatch.setattr(mod, "EVIDENCE_JSON", fake_evidence)
     monkeypatch.setenv("ISSUE_BODY", _make_body(tested_at="2000-01-01T00:00:00Z"))
@@ -770,7 +770,8 @@ def test_workflow_uses_draft_evidence_pr_contract():
     assert "contains(github.event.issue.labels.*.name, 'audit-submission')" in workflow
     assert 'git ls-remote --heads origin "${BRANCH}"' in workflow
     assert '--force-with-lease="refs/heads/${BRANCH}:${REMOTE_SHA}"' in workflow
-    assert "web/data/evidence.json" in workflow
+    assert "evidence/registry.json" in workflow
+    assert "web/data/evidence.json" not in workflow
     assert "web/data/relays.json" not in workflow
     for forbidden in [
         "leaderboard",

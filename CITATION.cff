@@ -9,7 +9,7 @@ authors:
 abstract: "API Relay Audit is a local security audit tool for third-party AI API relays and LLM proxies. It detects prompt injection, model substitution, tool-call rewriting, error leakage, SSE stream anomalies, Web3 wallet risks, infrastructure fingerprints, latency variance, and upstream channel mismatches while sending the API key only to the relay URL chosen by the user."
 license: "AGPL-3.0-only"
 repository-code: "https://github.com/toby-bridges/api-relay-audit"
-url: "https://toby-bridges.github.io/api-relay-audit/"
+url: "https://apirelayaudit.com/"
 keywords:
   - "AI API relay"
   - "LLM proxy"
