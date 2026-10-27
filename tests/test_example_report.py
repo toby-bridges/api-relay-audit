@@ -8,7 +8,6 @@ SCHEMA_DOC = REPO_ROOT / "docs" / "report-artifact-schema.md"
 FIXTURE_JSON = REPO_ROOT / "docs" / "examples" / "sanitized-audit-report.fixture.json"
 FIXTURE_MD = REPO_ROOT / "docs" / "examples" / "sanitized-audit-report.md"
 README = REPO_ROOT / "README.md"
-GUIDE = REPO_ROOT / "web" / "guides" / "audit-claude-api-relay-safely.html"
 
 
 REQUIRED_FIELDS = {
@@ -171,7 +170,7 @@ def test_markdown_does_not_duplicate_numbered_step_headings():
 
 
 def test_public_links_point_to_schema_backed_example():
-    for path in [README, GUIDE]:
+    for path in [README]:
         text = path.read_text(encoding="utf-8")
         assert "docs/examples/sanitized-audit-report.md" in text
         assert "docs/example-audit-report.md" not in text

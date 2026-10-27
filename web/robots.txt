@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://toby-bridges.github.io/api-relay-audit/sitemap.xml

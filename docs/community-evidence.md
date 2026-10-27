@@ -54,3 +54,12 @@ Relay operators can use the
 [Operator Response](https://github.com/toby-bridges/api-relay-audit/issues/new?template=operator-response.yml)
 template to respond to submitted evidence. Operator responses are linked to a
 domain only after the requested domain-control proof is supplied.
+
+## Public record source
+
+The canonical reviewed registry is [`evidence/registry.json`](../evidence/registry.json)
+in this tool repository. Submission processing proposes changes in a draft PR;
+a shape-valid submission is not published until that PR is reviewed and merged.
+The separate [website repository](https://github.com/toby-bridges/apirelayaudit-site)
+consumes a fixed public snapshot. Private reports and internal operations are not
+website source or registry input.

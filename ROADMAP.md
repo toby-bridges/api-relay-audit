@@ -6,7 +6,11 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-10-09 (JSON reports merged; v2.5.0 release preparation)
+**Last updated**: 2026-10-28 (standalone website migration; tool behavior unchanged)
+
+**Final test count for website separation**: 893/893 passing locally using
+synthetic and loopback fixtures. Website checks now run in the dedicated website
+repository.
 
 **Threat model anchor**: Liu et al., *Your Agent Is Mine: Measuring
 Malicious Intermediary Attacks on the LLM Supply Chain*, arXiv:2604.08407.
@@ -455,41 +459,20 @@ decouplings, not the low-blast work that already landed.
    parity test's slice markers redesigned.
    **Time estimate**: 3-4 hours.
 
-4. **Extract `web/` dashboard to a separate repo**
-   `api-relay-audit-dashboard`.
+4. **Standalone website repository** — implementation prepared on 2026-10-28.
 
-   **Codex review follow-up (2026-04-20)**: my "1h mechanical"
-   estimate was wrong — `web/` has live wiring into the rest of
-   the repo that must be re-established after extraction:
+   Website source moves to
+   [`toby-bridges/apirelayaudit-site`](https://github.com/toby-bridges/apirelayaudit-site).
+   Tool releases, report fixtures, and reviewed public evidence remain here.
+   The canonical registry is `evidence/registry.json`; its draft-PR review gate
+   is unchanged. Website tests and release-claim checks run in the site repo.
 
-   - `.github/workflows/pages.yml` deploys `web/**` to GitHub
-     Pages; triggered by `paths: [web/**]`. Either (a) remove
-     this workflow when extracting and rewire inside the new
-     repo, or (b) keep a thin `web/` symlink/submodule in this
-     repo that still satisfies the paths filter.
-   - `scripts/extract-data.py` has `--output` as a **required
-     flag with no default** (`scripts/extract-data.py:197`);
-     the CLAUDE.md + docstring example just happens to pass
-     `--output ./web/data.json`. After extraction, either the
-     script gains a default pointing at the new repo path or
-     every caller/doc/CI invocation is updated to the new
-     location.
-   - `web/index.html` is 75 KB with inline JS/CSS; splitting
-     into HTML + CSS + JS is a separate frontend task that
-     probably wants to happen IN the new repo rather than this
-     one.
-
-   **Blast radius**: LOW on the Python backend (nothing under
-   `api_relay_audit/*` or `scripts/audit.py` imports the
-   dashboard), but MEDIUM on CI/deployment because the
-   GitHub Pages workflow currently depends on `web/` living
-   in-tree.
-   **Why not now**: defer to the front-end colleague's first-
-   day discussion. They may prefer to keep it in-tree for one
-   more iteration OR prefer a clean extract where they own
-   the new repo from day one. Either answer is reasonable.
-   **Time estimate**: 2-3 hours (extraction + CI rewire +
-   README cross-links), NOT 1 hour.
+   Existing `apirelayaudit.com` paths remain unchanged. Generated compatibility
+   Pages preserve historical GitHub Pages links and public assets. The old
+   repository must release its custom domain before that redirect artifact can
+   deploy. The workflow fetches a fixed public website commit; it does not own
+   authored website source or configure a custom domain. The migration receipt
+   records external deployment verification separately from this source change.
 
 **Cost of deferring further**: moderate. The former #1 and the Phase-2a
 slice of #2 are shipped, and Phase 3 generation removed the old
