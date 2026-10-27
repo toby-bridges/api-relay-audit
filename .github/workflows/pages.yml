@@ -1,9 +1,13 @@
-name: Deploy to GitHub Pages
+name: Preserve legacy website links
 
 on:
   push:
     branches: [master]
-    paths: [web/**]
+    paths:
+      - scripts/build-legacy-pages.py
+      - docs/site-migration/legacy-paths.json
+      - evidence/registry.json
+      - .github/workflows/pages.yml
   workflow_dispatch:
 
 permissions:
@@ -23,11 +27,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
         with:
-          enablement: true
+          path: tool
+      - uses: actions/checkout@v4
+        with:
+          repository: toby-bridges/apirelayaudit-site
+          ref: a9518b254532c641bb39cfc8e4f4d85e6e8cc9a1
+          path: website
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build compatibility redirects and public assets
+        run: >-
+          python3 tool/scripts/build-legacy-pages.py
+          --manifest tool/docs/site-migration/legacy-paths.json
+          --website-root website/web
+          --evidence tool/evidence/registry.json
+          --output legacy-pages
+      - name: Require custom domain to be moved before legacy deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DOMAIN="$(gh api repos/${{ github.repository }}/pages --jq '.cname // empty')"
+          if [ -n "$DOMAIN" ]; then
+            echo "Move the custom domain to the standalone website before deploying compatibility pages." >&2
+            exit 1
+          fi
+      - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: web
+          path: legacy-pages
       - id: deployment
         uses: actions/deploy-pages@v4

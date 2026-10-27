@@ -142,3 +142,13 @@
 - Keep the independent mechanism probe after the real consumer in CI, with both failures still failing the job. This preserves host observations when a probe has a defect.
 - The owner separately approved the required `release:minor` PR label after automatic approval rejected it. The label was applied; no release workflow or publication was triggered.
 - Hosted acceptance at PR head `6346378` passed on Windows and Ubuntu: 19 expected stages and 12 synthetic API requests per platform. Downloaded summaries confirmed cancelled process-tree exit, profile-byte preservation, old-command behavior before retry and successful cleanup. All 12 current CI checks passed. Permanent sanitized receipt: `docs/distribution/dsh-npm-acceptance-2026-10-24.json`. The receipt records the tested head/integration commit explicitly; later documentation commits do not replace that source identity.
+
+
+## Standalone website migration — 2026-10-28
+
+- Tool and community evidence remain public in this repository; authored website source moves to `toby-bridges/apirelayaudit-site`.
+- Canonical reviewed registry moves from `web/data/evidence.json` to `evidence/registry.json` without changing evidence semantics or the draft-PR review gate.
+- Legacy Pages publishes generated redirects and copied public assets from a fixed website commit. Static hosting provides client redirects, not HTTP 301; query strings and fragments are preserved by the redirect script. The workflow refuses deployment while the original repository still owns a custom domain, and the script redirects only on the legacy GitHub hostname.
+- Website tests and claims belong to the website repository; tool README, fixture, skill and metrics checks remain here.
+- Private operations and raw reports are excluded from both public migration payloads.
+- External cutover and exact website commit pin are owned and verified by the parent migration task.

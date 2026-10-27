@@ -83,3 +83,10 @@ Observed at: 2026-06-01T06:27:04Z
 - Keep `good first issue` and `help wanted` on genuinely scoped contributor
   tasks.
 - Verify that the GitHub custom social preview still renders after asset changes.
+
+## Current website source
+
+The canonical homepage is <https://apirelayaudit.com/>. Website source is maintained
+in [apirelayaudit-site](https://github.com/toby-bridges/apirelayaudit-site). Earlier
+observations above retain their original URLs; legacy Pages paths redirect to the
+canonical domain.

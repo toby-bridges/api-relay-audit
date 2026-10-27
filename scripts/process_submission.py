@@ -4,7 +4,7 @@ Process a community audit-evidence GitHub Issue.
 
 Called by the process-submission.yml GitHub Action. Reads issue metadata from
 environment variables, validates the submitted shape, and writes a candidate
-evidence record to web/data/evidence.json. The workflow must put that JSON diff
+evidence record to evidence/registry.json. The workflow must put that JSON diff
 behind a maintainer-reviewed PR; community issues never publish directly to
 master.
 
@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-EVIDENCE_JSON = Path(__file__).resolve().parent.parent / "web" / "data" / "evidence.json"
+EVIDENCE_JSON = Path(__file__).resolve().parent.parent / "evidence" / "registry.json"
 ACCOUNT_AGE_WARN_DAYS = 30
 MAX_SUBMISSIONS_PER_RELAY_24H = 10
 MAX_RED_FLAGS = 10

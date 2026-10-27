@@ -181,7 +181,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git switch -c "${BRANCH}"
-          git add web/data/evidence.json
+          git add evidence/registry.json
           if git diff --cached --quiet; then
             echo "No evidence data changes to publish for review."
             echo "pr_url=" >> "$GITHUB_OUTPUT"

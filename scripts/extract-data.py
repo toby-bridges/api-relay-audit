@@ -3,7 +3,7 @@
 Extract structured test data from audit report markdown files and update data.json.
 
 Usage:
-  python scripts/extract-data.py --reports-dir ./reports --output ./web/data.json
+  python scripts/extract-data.py --reports-dir ./reports --output ./reports/dashboard-data.json
 """
 
 import argparse
