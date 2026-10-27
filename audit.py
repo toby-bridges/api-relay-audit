@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 8011cb00a19f633718a179655d9b1f8ba2d7b19b900c12b7e1e77572c87108e6
-# standalone_body_sha256: 25ca81a111261f35589993d3a48e560dcbd76adf459f9c0ba49cc81d9c50eef1
+# source_sha256: 4ccf1681b15bb36033f74c92756298c8fab2aff43c389260e312168b671cc79a
+# standalone_body_sha256: 0f2618498f02ac51eeed56130bc55c01cefd3c7f11feda1ace5082fd1febb3cd
 # END GENERATED STANDALONE HEADER
 
 """
@@ -185,6 +185,14 @@ text the user sees looks correct:
    Trailing ``ping`` keepalives are allowed. A graceful HTTP close or a
    generic ``[DONE]`` sentinel does not replace this protocol terminator.
 
+Step 10 also records an informational **stream / non-stream parity**
+observation (:func:`compare_stream_nonstream`): the same request is sent
+once more without streaming. The parity verdict uses ``input_tokens`` and
+the streamed ``stop_reason``; ``output_tokens`` and text similarity are
+recorded as notes only. It never changes the Step 10 verdict or the risk
+matrix; its thresholds are provisional until calibrated against
+direct-upstream baselines.
+
 ## Attribution
 
 The threat model and the specific list of observable signals is
@@ -214,6 +222,9 @@ arXiv:2604.08407, section 4.2. SSE whitelist / usage monotonicity
 layer.
 """
 
+import difflib
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -303,6 +314,27 @@ class StreamSignals:
         raw_event_count: Total number of events parsed from the
             stream, including unknown types. Zero means no data was
             received at all — another inconclusive signal.
+        text: Concatenation of every ``text_delta`` ``text`` value, in
+            arrival order (capped by the client's
+            ``MAX_STREAM_TEXT_CHARS``). Used by the informational
+            stream / non-stream parity check.
+        stop_reason: The last non-empty ``delta.stop_reason`` seen in a
+            ``message_delta`` event, or ``None``.
+        thinking_blocks: Every ``thinking`` and ``redacted_thinking`` content
+            block, in stream order, in the shape the Messages API accepts
+            back: ``{"type": "thinking", "thinking": <accumulated
+            thinking_delta text>, "signature": <signature_delta value>}`` or
+            ``{"type": "redacted_thinking", "data": ...}``. Read only by the
+            opt-in signature round-trip check; :func:`analyze_stream` ignores
+            it. Bounded by the client's ``MAX_STREAM_THINKING_CHARS`` and
+            ``MAX_STREAM_THINKING_BLOCKS``.
+        thinking_block_indexes: The content block ``index`` of each entry in
+            :attr:`thinking_blocks`, in the same order. Deltas are attributed
+            by this index, so interleaved blocks cannot leak into each other.
+        thinking_capture_issue: ``None`` while the capture is faithful;
+            otherwise why it stopped (a bound was hit, or a delta could not
+            be attributed to a started thinking block). :attr:`thinking_blocks`
+            must then not be replayed.
     """
 
     # Ordered event type sequence (for whitelist check)
@@ -335,6 +367,15 @@ class StreamSignals:
     transport_error: Optional[str] = None
     total_duration_seconds: Optional[float] = None
     raw_event_count: int = 0
+
+    # Content and terminal signals (stream / non-stream parity)
+    text: str = ""
+    stop_reason: Optional[str] = None
+
+    # Thinking blocks as streamed (opt-in signature round-trip replay)
+    thinking_blocks: List[dict] = field(default_factory=list)
+    thinking_block_indexes: List[int] = field(default_factory=list)
+    thinking_capture_issue: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +632,514 @@ def analyze_stream(signals: "StreamSignals") -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Stream / non-stream parity (informational, v2.6 P1)
+# ---------------------------------------------------------------------------
+
+# All parity thresholds below are provisional, uncalibrated defaults. They
+# need at least five relay dogfood runs plus one direct-upstream baseline with
+# zero false positives before the parity result may feed any scored dimension.
+#
+# Only two checks decide the parity verdict, because neither depends on
+# sampling: input_tokens across modes and the streamed stop_reason. Text
+# similarity and output_tokens are recorded as notes only: no sampling
+# parameters are sent, so the reply text varies between samples, and with
+# thinking enabled output_tokens include thinking tokens that differ from run
+# to run.
+
+# Verdict: max absolute input_tokens difference between the stream and the
+# non-stream reply to the same request (provisional, uncalibrated).
+PARITY_INPUT_TOKEN_TOLERANCE = 3
+# Verdict: stop_reason values the streamed message_delta may legitimately
+# carry.
+PARITY_VALID_STOP_REASONS = frozenset({
+    "end_turn",
+    "max_tokens",
+    "stop_sequence",
+    "tool_use",
+    "pause_turn",
+    "refusal",
+})
+# Note only: min difflib.SequenceMatcher ratio between the two normalized
+# reply texts (provisional, uncalibrated).
+PARITY_SIMILARITY_MIN = 0.85
+# Note only: output_tokens may differ by at most this fraction of the larger
+# of the two counts, but never less than the floor (provisional,
+# uncalibrated).
+PARITY_OUTPUT_TOKEN_FRAC = 0.5
+PARITY_OUTPUT_TOKEN_FLOOR = 3
+# Only this many leading characters of each normalized text are compared,
+# which bounds the difflib cost on a relay that returns far more text than
+# requested.
+PARITY_MAX_COMPARE_CHARS = 4000
+
+
+def _parity_positive_int(value) -> Optional[int]:
+    """Return ``value`` if it is a positive int, else ``None``.
+
+    The client reports a missing usage block as ``0``, so zero means
+    "not reported" here rather than a real count.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def _parity_last_int(samples) -> Optional[int]:
+    """Return the last sample if it is a positive int, else ``None``."""
+    if not isinstance(samples, list) or not samples:
+        return None
+    return _parity_positive_int(samples[-1])
+
+
+def _parity_normalize_text(text) -> str:
+    """Casefold, drop punctuation and collapse whitespace before comparing.
+
+    Non-string input normalizes to ``""``.
+    """
+    if not isinstance(text, str):
+        return ""
+    kept = "".join(
+        ch for ch in text.casefold()
+        if not unicodedata.category(ch).startswith("P")
+    )
+    return " ".join(kept.split())
+
+
+_PARITY_HTTP_STATUS = re.compile(r"^\s*HTTP\s+(\d{3})")
+
+
+def _parity_error_summary(text) -> str:
+    """Reduce a relay-controlled error string to a status-only summary.
+
+    The transport layer keeps the response body in its error string, and a
+    relay can echo credentials there. Parity notes therefore keep only the
+    HTTP status code, or the words ``transport error``; the body never
+    reaches the report.
+    """
+    text = str(text or "")
+    if text.startswith("not sent"):
+        # Produced by the audit itself, never by the relay: keep the reason.
+        return " ".join(text.split())[:200]
+    match = _PARITY_HTTP_STATUS.match(text)
+    return f"HTTP {match.group(1)}" if match else "transport error"
+
+
+def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
+    """Compare a Step 10 stream with a non-stream reply to the same request.
+
+    Concept inspired by canarybyte/veridrop integrity.py (AGPL-3.0);
+    reimplemented with stdlib.
+
+    ``signals`` is the populated :class:`StreamSignals`; ``nonstream`` is the
+    dict returned by :meth:`api_relay_audit.client.APIClient.call` (``text``,
+    ``input_tokens``, ``output_tokens``, or ``error`` on failure).
+
+    Returns a dict with these keys:
+
+    - ``verdict``: ``"consistent"`` / ``"divergent"`` / ``"inconclusive"``
+    - ``input_tokens_delta``: stream minus non-stream ``input_tokens``, or
+      ``None`` when either side did not report it
+    - ``output_tokens_delta``: final streamed ``output_tokens`` (read from
+      ``message_delta`` events only) minus non-stream ``output_tokens``, or
+      ``None``
+    - ``output_tokens_tolerance``: the note-only output tolerance for this
+      pair, or ``None``
+    - ``similarity``: ``difflib.SequenceMatcher`` ratio of the two texts after
+      casefolding, dropping punctuation and collapsing whitespace (0.0 to
+      1.0, rounded to 3 places), or ``None`` when either text is missing
+    - ``stop_reason``: the streamed ``stop_reason`` or ``None``
+    - ``stop_reason_valid``: bool, streamed ``stop_reason`` is in
+      :data:`PARITY_VALID_STOP_REASONS`
+    - ``notes``: list of human-readable observations
+
+    Verdict priority (first match wins):
+
+    1. **inconclusive**: the non-stream request failed, the stream had a
+       transport error, or input_tokens is missing on both sides.
+    2. **divergent**: input_tokens differ by more than
+       :data:`PARITY_INPUT_TOKEN_TOLERANCE`, or the streamed ``stop_reason``
+       is missing or not a known value. An input_tokens count missing on
+       only one side skips that check with a note.
+    3. **consistent**: neither of the above.
+
+    Text similarity and output_tokens never decide the verdict; they are
+    returned and, when outside their provisional bounds, noted. An empty
+    reply text on either side only skips the similarity, with a note. Both
+    requests run without sampling parameters, so the text varies between
+    samples, and output_tokens include thinking tokens.
+
+    Informational only: callers must not feed the verdict into Step 10's
+    verdict or the risk matrix. Pure and deterministic, no I/O.
+    """
+    if not isinstance(nonstream, dict):
+        nonstream = {"error": f"unexpected non-stream result type {type(nonstream).__name__}"}
+    failed = "error" in nonstream
+    notes = []
+
+    stream_text = signals.text.strip() if isinstance(signals.text, str) else ""
+    nonstream_text = nonstream.get("text")
+    nonstream_text = nonstream_text.strip() if isinstance(nonstream_text, str) else ""
+
+    # input_tokens (verdict): message_start first, message_delta as fallback.
+    stream_input = _parity_positive_int(signals.input_tokens)
+    if stream_input is None:
+        stream_input = _parity_last_int(signals.message_delta_input_tokens_samples)
+    nonstream_input = _parity_positive_int(nonstream.get("input_tokens"))
+    input_delta = None
+    input_ok = True
+    if stream_input is not None and nonstream_input is not None:
+        input_delta = stream_input - nonstream_input
+        input_ok = abs(input_delta) <= PARITY_INPUT_TOKEN_TOLERANCE
+        if not input_ok:
+            notes.append(
+                f"input_tokens differ across modes: stream {stream_input}, "
+                f"non-stream {nonstream_input} (tolerance "
+                f"{PARITY_INPUT_TOKEN_TOLERANCE})"
+            )
+    elif (stream_input is None) != (nonstream_input is None) and not failed:
+        notes.append("input_tokens missing on one side; check skipped")
+
+    # output_tokens (note only): the final cumulative value, and only when a
+    # message_delta event carried it.
+    stream_output = None
+    if signals.has_message_delta:
+        stream_output = _parity_last_int(signals.output_tokens_samples)
+    nonstream_output = _parity_positive_int(nonstream.get("output_tokens"))
+    output_delta = None
+    output_tolerance = None
+    if stream_output is not None and nonstream_output is not None:
+        output_delta = stream_output - nonstream_output
+        output_tolerance = max(
+            PARITY_OUTPUT_TOKEN_FLOOR,
+            int(PARITY_OUTPUT_TOKEN_FRAC * max(stream_output, nonstream_output)),
+        )
+        if abs(output_delta) > output_tolerance:
+            notes.append(
+                f"output_tokens differ across modes: stream {stream_output}, "
+                f"non-stream {nonstream_output} (note only, tolerance "
+                f"{output_tolerance}; thinking tokens vary between runs)"
+            )
+    elif not failed:
+        notes.append(
+            "output_tokens not reported by both a stream message_delta and "
+            "the non-stream reply; not compared"
+        )
+
+    # Text similarity (note only), on normalized text.
+    similarity = None
+    if stream_text and nonstream_text:
+        a_full = _parity_normalize_text(stream_text)
+        b_full = _parity_normalize_text(nonstream_text)
+        a = a_full[:PARITY_MAX_COMPARE_CHARS]
+        b = b_full[:PARITY_MAX_COMPARE_CHARS]
+        if len(a_full) > len(a) or len(b_full) > len(b):
+            notes.append(
+                f"texts compared on their first {PARITY_MAX_COMPARE_CHARS} "
+                "normalized characters"
+            )
+        # autojunk=False: the default heuristic drops frequent characters
+        # from texts of 200+ characters and can deflate the ratio. For
+        # shorter texts the result is identical to the default.
+        similarity = difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+    stop_reason = signals.stop_reason if isinstance(signals.stop_reason, str) else None
+    stop_reason_valid = stop_reason in PARITY_VALID_STOP_REASONS
+
+    result = {
+        "verdict": "inconclusive",
+        "input_tokens_delta": input_delta,
+        "output_tokens_delta": output_delta,
+        "output_tokens_tolerance": output_tolerance,
+        "similarity": round(similarity, 3) if similarity is not None else None,
+        "stop_reason": stop_reason,
+        "stop_reason_valid": stop_reason_valid,
+        "notes": notes,
+    }
+
+    if failed:
+        notes.insert(0, f"Non-stream request unavailable: {_parity_error_summary(nonstream['error'])}")
+        return result
+    if signals.transport_error:
+        notes.insert(0, f"Stream transport error: {_parity_error_summary(signals.transport_error)}")
+        return result
+    if stream_input is None and nonstream_input is None:
+        notes.insert(0, "input_tokens missing on both sides; parity not decided")
+        return result
+
+    if not stream_text or not nonstream_text:
+        side = "one side" if (stream_text or nonstream_text) else "both sides"
+        notes.append(f"text missing on {side}; similarity not computed")
+    elif similarity < PARITY_SIMILARITY_MIN:
+        notes.append(
+            f"normalized text similarity {similarity:.3f} is below "
+            f"{PARITY_SIMILARITY_MIN} (note only; replies vary between samples)"
+        )
+    if not stop_reason_valid:
+        notes.append(
+            f"streamed stop_reason {stop_reason!r} is not one of "
+            f"{sorted(PARITY_VALID_STOP_REASONS)}"
+        )
+
+    result["verdict"] = "consistent" if (input_ok and stop_reason_valid) else "divergent"
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Thinking signature round-trip (opt-in, informational)
+# ---------------------------------------------------------------------------
+#
+# The Messages API checks a thinking block's signature when the block is
+# passed back: the block must come from the current model and nothing before
+# it (system, tools, earlier messages) may have changed. With
+# ``--verify-signature`` Step 10 passes its own streamed assistant turn back
+# twice, intact and with one signature character changed. Without a tool-use
+# turn the model may strip replayed thinking blocks before any check, so two
+# accepted replays carry no signal either way. Informational only: nothing
+# here feeds the Step 10 verdict or the risk matrix.
+
+# A tampered replay rejected with HTTP 400 counts as a signature rejection
+# only when its error text mentions this word (casefolded). "thinking" alone
+# is not enough: a 400 about the thinking configuration (budget_tokens, say)
+# says nothing about the signature. The keyword is presumed until a
+# direct-upstream baseline records the real error text.
+SIGNATURE_ERROR_KEYWORD = "signature"
+
+
+def has_replayable_signature(signals: "StreamSignals") -> bool:
+    """True iff at least one thinking block was captured and every captured
+    thinking block has a non-empty signature.
+
+    A thinking block without a signature cannot be passed back, so even the
+    intact replay would be rejected.
+    """
+    blocks = getattr(signals, "thinking_blocks", None)
+    if not isinstance(blocks, list):
+        return False
+    thinking = [b for b in blocks if isinstance(b, dict) and b.get("type") == "thinking"]
+    return bool(thinking) and all(
+        isinstance(b.get("signature"), str) and bool(b["signature"].strip())
+        for b in thinking
+    )
+
+
+def tamper_signature(signature: str) -> str:
+    """Return ``signature`` with only its middle character replaced.
+
+    The replacement stays in the base64 alphabet (``A``, or ``B`` when the
+    middle character already is ``A``), so the length and encoding do not
+    change and the value differs in exactly one character.
+    """
+    if not isinstance(signature, str) or not signature:
+        return signature
+    mid = len(signature) // 2
+    replacement = "B" if signature[mid] == "A" else "A"
+    return signature[:mid] + replacement + signature[mid + 1:]
+
+
+def build_replay_assistant_content(thinking_blocks, text, tamper=False) -> list:
+    """Rebuild the streamed assistant turn for the signature round-trip.
+
+    Returns every captured ``thinking`` / ``redacted_thinking`` block in
+    stream order, unchanged, followed by ``text`` as one text block when it is
+    not blank. With ``tamper=True`` the first thinking block with a non-empty
+    signature carries :func:`tamper_signature` instead, so the tampered turn
+    differs from the intact one in exactly one character.
+    """
+    content = []
+    tampered = False
+    for block in thinking_blocks if isinstance(thinking_blocks, list) else []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "thinking":
+            thinking = block.get("thinking")
+            signature = block.get("signature")
+            item = {
+                "type": "thinking",
+                "thinking": thinking if isinstance(thinking, str) else "",
+                "signature": signature if isinstance(signature, str) else "",
+            }
+            if tamper and not tampered and item["signature"].strip():
+                item["signature"] = tamper_signature(item["signature"])
+                tampered = True
+            content.append(item)
+        elif block.get("type") == "redacted_thinking":
+            data = block.get("data")
+            content.append({
+                "type": "redacted_thinking",
+                "data": data if isinstance(data, str) else "",
+            })
+    if isinstance(text, str) and text.strip():
+        content.append({"type": "text", "text": text})
+    return content
+
+
+def replay_status(result) -> Optional[int]:
+    """Return the HTTP status of a replay result, or ``None``."""
+    if not isinstance(result, dict):
+        return None
+    status = result.get("status")
+    if isinstance(status, bool) or not isinstance(status, int):
+        return None
+    return status
+
+
+def replay_accepted(result) -> bool:
+    """True iff a replay result is a 2xx without an error.
+
+    :meth:`api_relay_audit.client.APIClient.replay_thinking` sets ``error``
+    on a 2xx whose body is an error or not a message, so such a reply never
+    counts as accepted.
+    """
+    status = replay_status(result)
+    return (status is not None and 200 <= status < 300
+            and not result.get("error"))
+
+
+def _replay_mentions_signature(result) -> bool:
+    error = result.get("error") if isinstance(result, dict) else None
+    if not isinstance(error, str):
+        return False
+    return SIGNATURE_ERROR_KEYWORD in error.casefold()
+
+
+def _replay_input_tokens(result) -> Optional[int]:
+    value = result.get("input_tokens") if isinstance(result, dict) else None
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def analyze_signature_roundtrip(intact, tampered) -> dict:
+    """Judge the opt-in thinking signature round-trip.
+
+    ``intact`` is the :meth:`api_relay_audit.client.APIClient.replay_thinking`
+    result for the streamed assistant turn passed back unchanged; ``tampered``
+    is the result with one signature character changed, or ``None`` when it
+    was not sent. Each result carries ``status`` (HTTP status or ``None``),
+    ``error``, ``error_type`` and ``input_tokens``.
+
+    Returns a dict with ``verdict``, ``intact_status``, ``tampered_status``,
+    ``tampered_mentions_signature`` and ``notes``. Verdict, first match wins:
+
+    1. ``"inconclusive"``: the intact replay was not accepted (no 2xx
+       without an error, see :func:`replay_accepted`).
+    2. ``"upstream-verified"``: intact accepted, tampered HTTP 400 with an
+       error mentioning :data:`SIGNATURE_ERROR_KEYWORD`.
+    3. ``"no-signal"``: both replays 2xx. The model may strip non-tool-use
+       thinking blocks before checking them, so this shows neither that
+       nothing verifies signatures nor that the signature was forged.
+    4. ``"inconclusive"``: any other combination.
+
+    ``input_tokens`` never decides the verdict. When both replays are
+    accepted it is compared and noted as an inference: the docs say blocks
+    the model cannot read are dropped without billing, so if an invalid
+    block is handled the same way, a lower tampered count fits "dropped"
+    rather than "accepted"; equal counts are uninformative.
+
+    Informational only. Pure and deterministic, no I/O.
+    """
+    intact_status = replay_status(intact)
+    tampered_status = replay_status(tampered)
+    mentions = _replay_mentions_signature(tampered)
+    notes = []
+    result = {
+        "verdict": "inconclusive",
+        "intact_status": intact_status,
+        "tampered_status": tampered_status,
+        "tampered_mentions_signature": mentions,
+        "notes": notes,
+    }
+
+    if not replay_accepted(intact):
+        error_type = intact.get("error_type") if isinstance(intact, dict) else None
+        notes.append(
+            "Intact replay not accepted (HTTP "
+            + (str(intact_status) if intact_status is not None else "none")
+            + (f", error_type {error_type}" if error_type else "")
+            + "); the round-trip cannot be judged."
+        )
+        return result
+
+    if tampered is None:
+        notes.append("Tampered replay not sent; the round-trip cannot be judged.")
+        return result
+
+    if tampered_status == 400 and mentions:
+        result["verdict"] = "upstream-verified"
+        notes.append(
+            "Intact replay accepted and the one-character signature change "
+            "rejected with HTTP 400: something upstream checks thinking "
+            "signatures. A valid signature shows only that the block was "
+            "produced for this model; it says nothing about pricing tier or "
+            "text-only substitution."
+        )
+        return result
+
+    if replay_accepted(tampered):
+        result["verdict"] = "no-signal"
+        notes.append(
+            "Both replays accepted. The model may strip thinking blocks that "
+            "are not part of a tool-use turn before checking them, so this "
+            "shows neither that nothing upstream verifies signatures nor that "
+            "the signature was forged."
+        )
+        intact_tokens = _replay_input_tokens(intact)
+        tampered_tokens = _replay_input_tokens(tampered)
+        if intact_tokens is not None and tampered_tokens is not None:
+            if tampered_tokens < intact_tokens:
+                notes.append(
+                    f"Inference, not part of the verdict: the tampered replay "
+                    f"billed fewer input_tokens ({tampered_tokens} vs "
+                    f"{intact_tokens}). The docs say blocks the model cannot "
+                    "read are dropped without billing; if an invalid block is "
+                    "handled the same way, this fits the tampered block being "
+                    "dropped rather than accepted."
+                )
+            elif tampered_tokens > intact_tokens:
+                notes.append(
+                    f"Inference, not part of the verdict: the tampered replay "
+                    f"billed more input_tokens ({tampered_tokens} vs "
+                    f"{intact_tokens}); a dropped block does not explain that, "
+                    "so it is not interpreted."
+                )
+            else:
+                notes.append(
+                    f"input_tokens equal on both replays ({intact_tokens}): "
+                    "uninformative, both blocks may have been stripped or both "
+                    "accepted."
+                )
+        return result
+
+    error_type = tampered.get("error_type") if isinstance(tampered, dict) else None
+    type_text = f" ({error_type})" if error_type else ""
+    if tampered_status == 400:
+        error = tampered.get("error") if isinstance(tampered, dict) else None
+        only_thinking = isinstance(error, str) and "thinking" in error.casefold()
+        notes.append(
+            f"Tampered replay returned HTTP 400{type_text}, but its error does "
+            "not mention signature"
+            + (" (it mentions thinking only)" if only_thinking else "")
+            + ", so the rejection is not attributed to the signature. The "
+            "keyword rule is presumed until a direct-upstream baseline records "
+            "the real error text."
+        )
+    elif tampered_status is not None and 200 <= tampered_status < 300:
+        notes.append(
+            f"Tampered replay returned HTTP {tampered_status}{type_text} with "
+            "an error or non-message body; it counts neither as accepted nor "
+            "as a signature rejection."
+        )
+    else:
+        notes.append(
+            "Tampered replay returned HTTP "
+            + (str(tampered_status) if tampered_status is not None else "none")
+            + type_text
+            + "; only HTTP 400 counts as a signature rejection."
+        )
+    return result
+
+
 # ============================================================
 # Standalone curl transport facade
 # ============================================================
@@ -831,6 +1380,49 @@ def _extract_anthropic_text(content) -> str:
     return "".join(parts)
 
 
+TOOL_PROBE_TEXT_LIMIT = 200
+
+
+def _is_token_char(char) -> bool:
+    return (char.isascii() and char.isalnum()) or char in "-_.~+/="
+
+
+def _clip_probe_text(text, limit=TOOL_PROBE_TEXT_LIMIT) -> str:
+    """Bound the text a no-call Tool Call probe returned.
+
+    When the cut lands inside a token, the partial token is dropped so a
+    truncated credential cannot fall below the redaction patterns' minimum
+    length before the report layer redacts the excerpt.
+    """
+    if not isinstance(text, str):
+        return ""
+    if len(text) <= limit:
+        return text
+    end = limit
+    if _is_token_char(text[limit]):
+        while end and _is_token_char(text[end - 1]):
+            end -= 1
+    return text[:end]
+
+
+def _thinking_config(max_tokens: int) -> dict:
+    """Return the ``thinking`` request field shared by :meth:`APIClient.call`
+    and :meth:`APIClient.stream_call`.
+
+    ``thinking.budget_tokens`` must be strictly less than ``max_tokens``.
+    Keeping one builder means a stream / non-stream request pair always
+    asks for the same thinking configuration.
+    """
+    return {"type": "enabled", "budget_tokens": max(1, max_tokens - 1)}
+
+
+def _optional_call_kwargs(with_thinking=False) -> dict:
+    """Return ``with_thinking`` as a keyword argument only when set, so a
+    default call keeps its original ``(messages, system, max_tokens)`` shape
+    all the way down to the format-specific helpers."""
+    return {"with_thinking": True} if with_thinking else {}
+
+
 def _parse_curl_i_output(output: str) -> dict:
     """Parse ``curl -i`` (or ``curl -sk -i``) stdout into a response dict.
 
@@ -927,6 +1519,8 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
                 signals.content_block_types.append(block_type)
             if block.get("type") == "thinking":
                 signals.thinking_start_seen = True
+            if block.get("type") in ("thinking", "redacted_thinking"):
+                _capture_thinking_block_start(event, block, signals)
 
     elif event_type == "content_block_delta":
         signals.has_content_block_delta = True
@@ -938,15 +1532,25 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 
             if delta_type == "text_delta":
                 signals.has_text_delta = True
+                text = delta.get("text")
+                if isinstance(text, str) and len(signals.text) < MAX_STREAM_TEXT_CHARS:
+                    signals.text = (signals.text + text)[:MAX_STREAM_TEXT_CHARS]
             elif delta_type == "thinking_delta":
                 signals.thinking_delta_seen = True
+                _capture_thinking_delta(event, signals, "thinking", delta.get("thinking"))
             elif delta_type == "signature_delta":
                 signature = delta.get("signature")
                 if isinstance(signature, str) and not signature.strip():
                     signals.empty_signature_delta_count += 1
+                _capture_thinking_delta(event, signals, "signature", signature)
 
     elif event_type == "message_delta":
         signals.has_message_delta = True
+        message_delta = event.get("delta", {})
+        if isinstance(message_delta, dict):
+            stop_reason = message_delta.get("stop_reason")
+            if isinstance(stop_reason, str) and stop_reason:
+                signals.stop_reason = stop_reason
         usage = event.get("usage", {})
         if isinstance(usage, dict):
             input_tokens = usage.get("input_tokens")
@@ -960,12 +1564,124 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
         signals.has_message_stop = True
 
 
+def _thinking_capture_size(signals: StreamSignals) -> int:
+    """Characters held in ``signals.thinking_blocks`` payload fields."""
+    size = 0
+    for block in signals.thinking_blocks:
+        for key in ("thinking", "signature", "data"):
+            value = block.get(key)
+            if isinstance(value, str):
+                size += len(value)
+    return size
+
+
+def _content_block_index(event: dict):
+    """Return the event's content block ``index``, or ``None`` if missing."""
+    index = event.get("index")
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        return None
+    return index
+
+
+def _stop_thinking_capture(signals: StreamSignals, reason: str) -> None:
+    """Mark the thinking capture as not replayable; the first reason wins."""
+    if signals.thinking_capture_issue is None:
+        signals.thinking_capture_issue = reason
+
+
+def _capture_thinking_block_start(event: dict, block: dict,
+                                  signals: StreamSignals) -> None:
+    """Open one captured ``thinking`` / ``redacted_thinking`` block.
+
+    The block is kept in the shape the Messages API accepts back and keyed by
+    the event's content block ``index``. A missing or repeated index, or a
+    bound being hit, stops the capture for good with a reason, so an
+    uncertain or partial capture is never replayed.
+    """
+    if signals.thinking_capture_issue is not None:
+        return
+    index = _content_block_index(event)
+    if index is None:
+        _stop_thinking_capture(
+            signals, "a thinking block started without a content block index")
+        return
+    if index in signals.thinking_block_indexes:
+        _stop_thinking_capture(signals, f"content block {index} started twice")
+        return
+    if block.get("type") == "redacted_thinking":
+        data = block.get("data")
+        entry = {"type": "redacted_thinking",
+                 "data": data if isinstance(data, str) else ""}
+    else:
+        thinking = block.get("thinking")
+        signature = block.get("signature")
+        entry = {"type": "thinking",
+                 "thinking": thinking if isinstance(thinking, str) else "",
+                 "signature": signature if isinstance(signature, str) else ""}
+    added = sum(len(v) for k, v in entry.items() if k != "type")
+    if (len(signals.thinking_blocks) >= MAX_STREAM_THINKING_BLOCKS
+            or _thinking_capture_size(signals) + added > MAX_STREAM_THINKING_CHARS):
+        _stop_thinking_capture(signals, "the thinking capture bound was exceeded")
+        return
+    signals.thinking_blocks.append(entry)
+    signals.thinking_block_indexes.append(index)
+
+
+def _capture_thinking_delta(event: dict, signals: StreamSignals, key: str,
+                            value) -> None:
+    """Append a ``thinking_delta`` / ``signature_delta`` value to its block.
+
+    The block is found by the event's content block ``index``, so interleaved
+    blocks and a signature_delta that precedes the thinking text are still
+    attributed correctly. A delta whose index is not a started thinking block
+    stops the capture. A genuine stream sends one ``signature_delta`` per
+    block; values are appended (official SDKs assign), which is the same on a
+    genuine stream and keeps a relay that splits the signature replayable.
+    """
+    if signals.thinking_capture_issue is not None or not isinstance(value, str):
+        return
+    index = _content_block_index(event)
+    if index is None or index not in signals.thinking_block_indexes:
+        _stop_thinking_capture(
+            signals, f"a {key} delta arrived for content block {index}, which "
+                     "is not a started thinking block")
+        return
+    block = signals.thinking_blocks[signals.thinking_block_indexes.index(index)]
+    if block.get("type") != "thinking":
+        _stop_thinking_capture(
+            signals, f"a {key} delta arrived for redacted_thinking block {index}")
+        return
+    if _thinking_capture_size(signals) + len(value) > MAX_STREAM_THINKING_CHARS:
+        _stop_thinking_capture(signals, "the thinking capture bound was exceeded")
+        return
+    block[key] += value
+
 # v1.7.1 safety valve: cap the SSE parser buffer so a malformed/
 # malicious relay that sends a huge chunk without newlines cannot
 # grow memory unboundedly. 1 MB is comfortably above any real
 # Anthropic event size (biggest thinking blocks are ~100 KB).
 MAX_STREAM_BUFFER_BYTES = 1024 * 1024
+# Same idea for StreamSignals.text: bound memory and CPU when a relay streams
+# far more text than requested. 64 KiB is far above Step 10's 100-token probe.
+MAX_STREAM_TEXT_CHARS = 64 * 1024
+# Same idea for StreamSignals.thinking_blocks (thinking text, signatures and
+# redacted data kept for the opt-in signature round-trip). Step 10's probe
+# thinks for under 100 tokens, so real streams stay far below both bounds.
+MAX_STREAM_THINKING_CHARS = 64 * 1024
+MAX_STREAM_THINKING_BLOCKS = 16
+# Error text kept from a signature replay, after redaction.
+REPLAY_ERROR_CHARS = 160
 CURL_STATUS_SENTINEL = "__CODEX_HTTP_STATUS__:"
+
+
+def _clip_replay_error(text, api_key: str) -> str:
+    """Redact, flatten and clip the error text of a signature replay.
+
+    Redaction runs on the full text before the cut, so a credential cannot
+    survive by being split at the boundary.
+    """
+    text = redact_sensitive_text(str(text), api_key)
+    return " ".join(text.split())[:REPLAY_ERROR_CHARS]
 
 
 def _process_sse_line(line: str, signals: StreamSignals) -> bool:
@@ -1134,7 +1850,8 @@ class APIClient:
 
     # -- Anthropic native format ----------------------------------------------
 
-    def _call_anthropic(self, messages, system=None, max_tokens=512):
+    def _call_anthropic(self, messages, system=None, max_tokens=512,
+                        with_thinking=False):
         url = self.base_url
         if url.endswith("/v1"):
             url = url[:-3]
@@ -1143,6 +1860,8 @@ class APIClient:
         body = {"model": self.model, "max_tokens": max_tokens, "messages": messages}
         if system:
             body["system"] = system
+        if with_thinking:
+            body["thinking"] = _thinking_config(max_tokens)
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
@@ -1163,7 +1882,11 @@ class APIClient:
 
     # -- OpenAI compatible format ---------------------------------------------
 
-    def _call_openai(self, messages, system=None, max_tokens=512):
+    def _call_openai(self, messages, system=None, max_tokens=512,
+                     with_thinking=False):
+        # ``with_thinking`` is accepted for signature parity with
+        # ``_call_anthropic`` but ignored: Chat Completions has no standard
+        # ``thinking`` field, and strict endpoints reject unknown fields.
         url = self.base_url
         if not url.endswith("/v1"):
             url += "/v1"
@@ -1192,6 +1915,185 @@ class APIClient:
             "raw": data,
         }
 
+    def _prepare_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256):
+        url = self.base_url
+        if url.endswith("/v1"):
+            url = url[:-3]
+        url += "/v1/messages"
+
+        body = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+            "tools": [{**tool_spec, "strict": True}],
+            "tool_choice": {
+                "type": "tool",
+                "name": tool_spec["name"],
+                "disable_parallel_tool_use": True,
+            },
+        }
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        return url, headers, body
+
+    def _call_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256,
+                                   prepared=None):
+        url, headers, body = prepared or self._prepare_tool_probe_anthropic(
+            messages, tool_spec, max_tokens=max_tokens)
+        data = self._post(url, headers, body)
+        if "_http_error" in data:
+            return self._error_result(data["_http_error"])
+
+        tool_calls = []
+        content = data.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    # Keep malformed entries so the integrity analysis can
+                    # report the response shape as invalid instead of clean.
+                    tool_calls.append(block)
+                    continue
+                block_type = block.get("type")
+                tool_like = block_type == "tool_use" or any(
+                    key in block for key in ("id", "name", "input")
+                )
+                if not tool_like:
+                    continue
+                arguments = block.get("input")
+                arguments_error = None
+                if not isinstance(arguments, dict):
+                    arguments_error = "Anthropic tool input was not a JSON object"
+                    arguments = None
+                tool_calls.append({
+                    "type": "function" if block_type == "tool_use" else block_type,
+                    "id": block.get("id"),
+                    "name": block.get("name"),
+                    "arguments": arguments,
+                    "arguments_error": arguments_error,
+                })
+
+        usage = data.get("usage", {})
+        result = {
+            "protocol": "anthropic",
+            "tool_calls": tool_calls,
+            "stop_reason": data.get("stop_reason"),
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "raw": data,
+        }
+        if not tool_calls:
+            result["text"] = _clip_probe_text(_extract_anthropic_text(content))
+        return result
+
+    def _prepare_tool_probe_openai(self, messages, tool_spec, max_tokens=256):
+        url = self.base_url
+        if not url.endswith("/v1"):
+            url += "/v1"
+        url += "/chat/completions"
+
+        body = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": tool_spec["name"],
+                    "description": tool_spec["description"],
+                    "parameters": tool_spec["input_schema"],
+                    "strict": True,
+                },
+            }],
+            "tool_choice": {
+                "type": "function",
+                "function": {"name": tool_spec["name"]},
+            },
+            "parallel_tool_calls": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "content-type": "application/json",
+        }
+        return url, headers, body
+
+    def _call_tool_probe_openai(self, messages, tool_spec, max_tokens=256,
+                                prepared=None):
+        url, headers, body = prepared or self._prepare_tool_probe_openai(
+            messages, tool_spec, max_tokens=max_tokens)
+        data = self._post(url, headers, body)
+        if "_http_error" in data:
+            return self._error_result(data["_http_error"])
+
+        choices = data.get("choices", [])
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        if not isinstance(choice, dict):
+            choice = {}
+        message = choice.get("message", {})
+        if not isinstance(message, dict):
+            message = {}
+        raw_calls = message.get("tool_calls", [])
+        if not isinstance(raw_calls, list):
+            raw_calls = []
+
+        tool_calls = []
+        for raw_call in raw_calls:
+            if not isinstance(raw_call, dict):
+                # Keep malformed entries so the integrity analysis can
+                # report the response shape as invalid instead of clean.
+                tool_calls.append(raw_call)
+                continue
+            call_type = raw_call.get("type")
+            if call_type == "function":
+                function = raw_call.get("function", {})
+                if not isinstance(function, dict):
+                    function = {}
+                raw_arguments = function.get("arguments")
+                arguments = None
+                arguments_error = None
+                if not isinstance(raw_arguments, str):
+                    arguments_error = "OpenAI tool arguments were not a JSON string"
+                else:
+                    try:
+                        arguments = json.loads(raw_arguments)
+                    except (TypeError, ValueError):
+                        arguments_error = "invalid JSON arguments"
+                    if arguments_error is None and not isinstance(arguments, dict):
+                        arguments_error = "OpenAI tool arguments were not a JSON object"
+                        arguments = None
+                name = function.get("name")
+            else:
+                custom = raw_call.get("custom", {})
+                if not isinstance(custom, dict):
+                    custom = {}
+                name = custom.get("name")
+                arguments = None
+                arguments_error = "Unexpected non-function Tool Call type"
+            tool_calls.append({
+                "type": call_type,
+                "id": raw_call.get("id"),
+                "name": name,
+                "arguments": arguments,
+                "arguments_error": arguments_error,
+            })
+
+        usage = data.get("usage", {})
+        result = {
+            "protocol": "openai",
+            "tool_calls": tool_calls,
+            "stop_reason": choice.get("finish_reason"),
+            "input_tokens": usage.get("prompt_tokens", 0),
+            "output_tokens": usage.get("completion_tokens", 0),
+            "raw": data,
+        }
+        if not tool_calls:
+            content = message.get("content")
+            text = content if isinstance(content, str) else _extract_anthropic_text(content)
+            result["text"] = _clip_probe_text(text)
+        return result
+
     # -- Public API -----------------------------------------------------------
 
     def ensure_format(self):
@@ -1219,7 +2121,7 @@ class APIClient:
         except Exception:
             pass
 
-    def call(self, messages, system=None, max_tokens=512):
+    def call(self, messages, system=None, max_tokens=512, with_thinking=False):
         """Send a chat completion request, auto-detecting format on first call.
 
         The method records wall-clock elapsed time and attaches it as the
@@ -1232,6 +2134,9 @@ class APIClient:
                 ``"system"`` field (Anthropic) or as a system-role message
                 (OpenAI).
             max_tokens: Maximum tokens to generate. Defaults to 512.
+            with_thinking: If True, send the same ``thinking`` block that
+                :meth:`stream_call` sends. Anthropic format only; the
+                OpenAI-compatible body ignores it. Defaults to False.
 
         Returns:
             A dict with the following keys on success:
@@ -1251,10 +2156,15 @@ class APIClient:
             ...     print(result["text"])
         """
         start = time.time()
-        request_body = json.dumps({"model": self.model, "max_tokens": max_tokens,
-                                   "messages": messages, "system": system or ""})
+        logged_request = {"model": self.model, "max_tokens": max_tokens,
+                          "messages": messages, "system": system or ""}
+        if with_thinking:
+            logged_request["thinking"] = _thinking_config(max_tokens)
+        request_body = json.dumps(logged_request)
         try:
-            result = self._call_with_detection(messages, system, max_tokens)
+            result = self._call_with_detection(
+                messages, system, max_tokens,
+                **_optional_call_kwargs(with_thinking))
             result["time"] = time.time() - start
             # v1.7.7 transparent-log
             self._log_transparent(
@@ -1270,6 +2180,54 @@ class APIClient:
                 request_body, None, 0, None, elapsed, str(e))
             return self._error_result(e, time=elapsed)
 
+    def call_tool_probe(self, messages, tool_spec, max_tokens=256):
+        """Request one inert client Tool Call without ever executing it.
+
+        ``tool_spec`` uses the protocol-neutral Anthropic shape (``name``,
+        ``description``, ``input_schema``). The client forces that tool,
+        disables parallel calls, and normalizes Anthropic/OpenAI responses
+        into a shared ``tool_calls`` list. No executor callback exists and no
+        ``tool_result`` follow-up request is sent.
+        """
+        start = time.time()
+        request_url = self._resolve_call_url()
+        request_body = json.dumps({})
+        try:
+            if self._format is None:
+                self.ensure_format()
+            if self._format == "anthropic":
+                prepared = self._prepare_tool_probe_anthropic(
+                    messages, tool_spec, max_tokens=max_tokens)
+                request_url, _, wire_body = prepared
+                request_body = json.dumps(wire_body)
+                result = self._call_tool_probe_anthropic(
+                    messages, tool_spec, max_tokens=max_tokens,
+                    prepared=prepared)
+            elif self._format == "openai":
+                prepared = self._prepare_tool_probe_openai(
+                    messages, tool_spec, max_tokens=max_tokens)
+                request_url, _, wire_body = prepared
+                request_body = json.dumps(wire_body)
+                result = self._call_tool_probe_openai(
+                    messages, tool_spec, max_tokens=max_tokens,
+                    prepared=prepared)
+            else:
+                result = self._error_result(
+                    "Could not detect API format for structured Tool Call probe")
+            result["time"] = time.time() - start
+            self._log_transparent(
+                "tool_call_probe", request_url, "POST",
+                request_body, json.dumps(result.get("raw", {})),
+                200 if "error" not in result else 0,
+                None, result["time"], result.get("error"))
+            return result
+        except Exception as e:
+            elapsed = time.time() - start
+            self._log_transparent(
+                "tool_call_probe", request_url, "POST",
+                request_body, None, 0, None, elapsed, str(e))
+            return self._error_result(e, time=elapsed)
+
     def _resolve_call_url(self) -> str:
         """Reconstruct the URL used by the last ``call()`` based on detected format."""
         base = self.base_url
@@ -1282,17 +2240,19 @@ class APIClient:
             base = base[:-3]
         return base + "/v1/messages"
 
-    def _call_with_detection(self, messages, system, max_tokens):
+    def _call_with_detection(self, messages, system, max_tokens,
+                             with_thinking=False):
+        extra = _optional_call_kwargs(with_thinking)
         # Already detected — use that format
         if self._format == "openai":
-            return self._call_openai(messages, system, max_tokens)
+            return self._call_openai(messages, system, max_tokens, **extra)
         if self._format == "anthropic":
-            return self._call_anthropic(messages, system, max_tokens)
+            return self._call_anthropic(messages, system, max_tokens, **extra)
 
         # Auto-detect: try Anthropic first
         anthropic_result = None
         try:
-            anthropic_result = self._call_anthropic(messages, system, max_tokens)
+            anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
             if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                 self._format = "anthropic"
                 self._log("  [format] -> Anthropic native")
@@ -1301,7 +2261,7 @@ class APIClient:
             if self._handle_ssl_error(e):
                 # Retry Anthropic with curl before falling through to OpenAI
                 try:
-                    anthropic_result = self._call_anthropic(messages, system, max_tokens)
+                    anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
                     if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                         self._format = "anthropic"
                         self._log("  [format] -> Anthropic native (curl)")
@@ -1313,7 +2273,7 @@ class APIClient:
         self._log("  [format] Anthropic failed/empty, trying OpenAI...")
         openai_result = None
         try:
-            openai_result = self._call_openai(messages, system, max_tokens)
+            openai_result = self._call_openai(messages, system, max_tokens, **extra)
             if "error" not in openai_result and openai_result.get("text", "").strip():
                 self._format = "openai"
                 suffix = " (curl)" if self._use_curl else ""
@@ -1321,7 +2281,7 @@ class APIClient:
                 return openai_result
         except Exception as e:
             if self._handle_ssl_error(e):
-                return self._call_with_detection(messages, system, max_tokens)
+                return self._call_with_detection(messages, system, max_tokens, **extra)
 
         # Both failed — return whichever has more info
         if anthropic_result and "error" not in anthropic_result:
@@ -1566,10 +2526,7 @@ class APIClient:
             body["system"] = system
         if with_thinking:
             # thinking.budget_tokens must be strictly less than max_tokens
-            body["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": max(1, max_tokens - 1),
-            }
+            body["thinking"] = _thinking_config(max_tokens)
 
         headers = {
             "x-api-key": self.api_key,
@@ -1601,6 +2558,93 @@ class APIClient:
                 signals.transport_error)
 
         return signals
+
+    def replay_thinking(self, messages_prefix, assistant_content,
+                        follow_up_text, max_tokens=32) -> dict:
+        """Pass a streamed assistant turn back once (opt-in signature round-trip).
+
+        Sends one non-stream Anthropic request whose ``messages`` are
+        ``messages_prefix`` (the original user turn, unchanged), an assistant
+        turn whose ``content`` is ``assistant_content`` exactly as given (the
+        streamed thinking blocks plus the reply text) and a new user turn with
+        ``follow_up_text``. ``thinking`` comes from the same builder as the
+        Step 10 stream. No system prompt, tools or sampling parameters are
+        sent: current API versions reject temperature / top_p / top_k.
+
+        Never raises. Returns a normalized dict:
+
+        - ``status``: HTTP status code, or ``None`` on a transport failure
+        - ``error``: ``None`` on a 2xx message reply; otherwise the message of
+          an error body, else ``"HTTP <status>"`` (a 2xx whose body is an
+          error or not a message is an error too) or the transport error,
+          redacted and clipped to :data:`REPLAY_ERROR_CHARS` characters. A
+          raw response body is never copied.
+        - ``error_type``: ``error.type`` of an Anthropic error body, or ``None``
+        - ``input_tokens``: ``usage.input_tokens`` of a 2xx message reply, or
+          ``None``
+        """
+        result = {"status": None, "error": None, "error_type": None,
+                  "input_tokens": None}
+        try:
+            body = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "messages": list(messages_prefix) + [
+                    {"role": "assistant", "content": assistant_content},
+                    {"role": "user", "content": follow_up_text},
+                ],
+                "thinking": _thinking_config(max_tokens),
+            }
+            headers = {
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+            }
+            response = self.raw_request(
+                "POST", "/v1/messages", headers,
+                json.dumps(body).encode("utf-8"),
+                content_type="application/json", timeout=self.timeout,
+            )
+            if not isinstance(response, dict):
+                response = {"status": 0, "error": "unexpected raw_request result"}
+            status = response.get("status")
+            if isinstance(status, bool) or not isinstance(status, int) or status <= 0:
+                result["error"] = _clip_replay_error(
+                    response.get("error") or "no HTTP status", self.api_key)
+                return result
+            result["status"] = status
+            body_text = response.get("body")
+            body_text = body_text if isinstance(body_text, str) else ""
+            try:
+                payload = json.loads(body_text) if body_text.strip() else None
+            except ValueError:
+                payload = None
+            is_message = isinstance(payload, dict) and payload.get("type") == "message"
+            if 200 <= status < 300 and is_message:
+                usage = payload.get("usage")
+                input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
+                if isinstance(input_tokens, int) and not isinstance(input_tokens, bool):
+                    result["input_tokens"] = input_tokens
+                return result
+            # Not an accepted replay: a non-2xx status, or a 2xx whose body is
+            # an error or not a message. Only the error object's type and
+            # message are kept; a raw body (an HTML error page, say) is never
+            # copied into the result.
+            message = None
+            error_obj = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(error_obj, dict):
+                if payload.get("type") == "error" and isinstance(error_obj.get("type"), str):
+                    result["error_type"] = _clip_replay_error(
+                        error_obj["type"], self.api_key)
+                if isinstance(error_obj.get("message"), str) and error_obj["message"].strip():
+                    message = error_obj["message"]
+            if message is None:
+                message = (f"HTTP {status} without a message body"
+                           if 200 <= status < 300 else f"HTTP {status}")
+            result["error"] = _clip_replay_error(message, self.api_key)
+        except Exception as e:
+            result["error"] = _clip_replay_error(
+                f"{type(e).__name__}: {e}", self.api_key)
+        return result
 
     def _stream_via_httpx(self, url: str, headers: dict, body: dict,
                           timeout: int, signals: StreamSignals,
@@ -2320,6 +3364,302 @@ def run_context_scan(client, coarse_steps=None, sleep_between=2):
 
 
 # ============================================================
+# Structured Tool Call integrity detector
+# ============================================================
+
+"""Structured Tool Call integrity analysis for Step 8.
+
+The detector inspects inert client-tool requests only.  It never executes a
+returned tool call and never sends a ``tool_result`` follow-up request.
+"""
+
+import json
+import re
+import unicodedata
+import uuid
+
+
+
+PROBE_PROMPT = (
+    "Call the provided record tool exactly once with the exact arguments "
+    "encoded in its schema. Do not answer in text."
+)
+PROBE_DESCRIPTION = (
+    "Record an inert relay-audit canary. This tool performs no I/O, "
+    "has no side effects, and will not be executed. Call it exactly once."
+)
+TEXT_EXCERPT_LIMIT = 200
+_BACKTICK_STAND_IN = "\u2019"
+_CONTROL_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
+
+
+def _json_deep_equal(left, right):
+    """Compare parsed JSON values without Python's bool/int coercion."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return (
+            left.keys() == right.keys()
+            and all(_json_deep_equal(left[key], right[key]) for key in left)
+        )
+    if isinstance(left, list):
+        return (
+            len(left) == len(right)
+            and all(_json_deep_equal(a, b) for a, b in zip(left, right))
+        )
+    return left == right
+
+
+def _fold_controls(text):
+    """Replace line breaks and other control characters with spaces."""
+    return "".join(
+        " " if unicodedata.category(char) in _CONTROL_CATEGORIES else char
+        for char in text
+    )
+
+
+def _markdown_safe(text, max_chars, api_key=""):
+    """Redact secrets and make text safe inside a Markdown code span.
+
+    A backslash does not escape anything inside a code span, so a relay
+    backtick could close the span and inject links or HTML; backticks become
+    U+2019 instead. Line breaks and other control characters fold to spaces,
+    and pipes stay escaped for GFM table cells.
+    """
+    text = redact_sensitive_text(text, api_key)
+    text = _fold_controls(text)
+    text = text.replace("`", _BACKTICK_STAND_IN).replace("|", "\\|")
+    limit = max(3, int(max_chars))
+    if len(text) > limit:
+        cut = limit - 3
+        if text[cut - 1:cut + 1] == "\\|":
+            cut -= 1
+        return text[:cut] + "..."
+    return text
+
+
+def format_tool_calls_preview(calls, max_chars=240, api_key=""):
+    """Return a redacted, Markdown-safe, bounded preview of arguments only."""
+    arguments = [
+        call.get("arguments") if isinstance(call, dict) else None
+        for call in calls
+    ]
+    text = json.dumps(
+        arguments,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    )
+    return _markdown_safe(text, max_chars, api_key)
+
+
+def format_text_excerpt(text, max_chars=TEXT_EXCERPT_LIMIT, api_key=""):
+    """Return a redacted, Markdown-safe, single-line excerpt of returned text."""
+    flattened = " ".join(_fold_controls(str(text)).split())
+    return _markdown_safe(flattened, max_chars, api_key)
+
+
+def _id_prefix(value):
+    if not isinstance(value, str) or not value:
+        return "missing"
+    match = re.match(r"[A-Za-z]{1,16}_", value)
+    return match.group(0) if match else "none"
+
+
+def _describe_stop_reason(value):
+    if value is None:
+        return "missing"
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z][A-Za-z_]{0,31}", value):
+        return f"'{value}'"
+    return "a non-standard value"
+
+
+def analyze_tool_call_integrity(response, expected_name, expected_arguments,
+                                api_key=""):
+    """Compare a normalized Tool Call response with the forced expectation.
+
+    When the client marks ``protocol`` as ``anthropic``, two protocol checks
+    apply. A ``tool_use`` id without the ``toolu_`` prefix is recorded in
+    ``protocol_notes`` only: a non-standard id alone is not rewriting
+    evidence. A returned call whose stop reason is not ``tool_use`` is an
+    anomaly, because agent loops key on that field and may ignore the call.
+    OpenAI-format forced calls may finish with ``stop`` or ``tool_calls``, so
+    neither value is flagged; any other finish reason is recorded in
+    ``protocol_notes`` only. A response without ``protocol`` keeps the
+    protocol-neutral checks only. When no call is returned, a redacted,
+    bounded ``text_excerpt`` records what the relay said instead.
+
+    Concept inspired by canarybyte/veridrop structured_output.py (AGPL-3.0); reimplemented independently.
+    """
+    if not isinstance(response, dict):
+        response = {}
+    if "error" in response:
+        return {
+            "verdict": "inconclusive",
+            "expected_count": 1,
+            "received_count": 0,
+            "name_match": None,
+            "arguments_match": None,
+            "findings": [
+                "Structured Tool Call probe failed; support could not be verified"
+            ],
+            "protocol_notes": [],
+        }
+    calls = response.get("tool_calls", [])
+    if not isinstance(calls, list) or any(not isinstance(call, dict) for call in calls):
+        return {
+            "verdict": "inconclusive",
+            "expected_count": 1,
+            "received_count": 0,
+            "name_match": None,
+            "arguments_match": None,
+            "findings": ["Structured Tool Call response format was invalid"],
+            "protocol_notes": [],
+        }
+    if not calls:
+        stop_reason = response.get("stop_reason")
+        claimed_tool_stop = (
+            isinstance(stop_reason, str)
+            and stop_reason in {"tool_use", "tool_calls"}
+        )
+        result = {
+            "verdict": "anomaly" if claimed_tool_stop else "inconclusive",
+            "expected_count": 1,
+            "received_count": 0,
+            "name_match": None,
+            "arguments_match": None,
+            "findings": ([
+                "Response claimed a Tool Call stop reason but contained zero Tool Calls"
+            ] if claimed_tool_stop else [
+                "Forced tool request returned no structured Tool Call; "
+                "support could not be verified"
+            ]),
+            "protocol_notes": [],
+        }
+        text = response.get("text")
+        if isinstance(text, str) and text.strip():
+            result["text_excerpt"] = format_text_excerpt(text, api_key=api_key)
+        return result
+    call = calls[0]
+    count_match = len(calls) == 1
+    type_match = call.get("type") == "function"
+    name_match = call.get("name") == expected_name
+    arguments_match = (
+        call.get("arguments_error") is None
+        and _json_deep_equal(call.get("arguments"), expected_arguments)
+    )
+    findings = []
+    if not count_match:
+        findings.append(
+            f"Tool call count changed: expected 1, received {len(calls)}"
+        )
+    if not type_match:
+        findings.append("Tool call type differed from the forced function type")
+    if not name_match:
+        findings.append("Tool name differed from the forced canary name")
+    if call.get("arguments_error"):
+        findings.append(
+            f"Tool arguments could not be parsed: {call['arguments_error']}"
+        )
+    elif not arguments_match:
+        findings.append("Tool arguments differed from the forced canary payload")
+    protocol_notes = []
+    stop_reason_match = True
+    if response.get("protocol") == "anthropic":
+        unprefixed = [
+            item.get("id") for item in calls
+            if not (isinstance(item.get("id"), str) and item["id"].startswith("toolu_"))
+        ]
+        if unprefixed:
+            protocol_notes.append(
+                f"{len(unprefixed)} of {len(calls)} Anthropic tool_use id(s) lacked "
+                "the standard toolu_ prefix (first observed prefix: "
+                f"{_id_prefix(unprefixed[0])}); recorded for context, not counted "
+                "as rewriting"
+            )
+        stop_reason = response.get("stop_reason")
+        if stop_reason != "tool_use":
+            stop_reason_match = False
+            findings.append(
+                f"Anthropic stop reason was {_describe_stop_reason(stop_reason)}, "
+                "not 'tool_use', although a Tool Call was returned; agent loops "
+                "keyed on stop_reason may ignore the call"
+            )
+    elif response.get("protocol") == "openai":
+        finish_reason = response.get("stop_reason")
+        if finish_reason not in ("stop", "tool_calls"):
+            protocol_notes.append(
+                f"OpenAI finish_reason was {_describe_stop_reason(finish_reason)}, "
+                "not 'stop' or 'tool_calls'; recorded for context, verdict unchanged"
+            )
+    return {
+        "verdict": (
+            "clean"
+            if (count_match and type_match and name_match and arguments_match
+                and stop_reason_match)
+            else "anomaly"
+        ),
+        "expected_count": 1,
+        "received_count": len(calls),
+        "name_match": name_match,
+        "arguments_match": arguments_match,
+        "findings": findings,
+        "protocol_notes": protocol_notes,
+    }
+
+
+def run_tool_call_integrity_test(client, nonce_factory=None):
+    """Send one inert structured probe and return its tri-state analysis.
+
+    The returned Tool Call is inspected only.  This function intentionally has
+    no executor callback and never sends a follow-up tool result.
+    """
+    if nonce_factory is None:
+        nonce_factory = lambda: uuid.uuid4().hex
+    nonce = str(nonce_factory())
+    tool_name = f"record_probe_{nonce[:12]}"
+    expected_arguments = {
+        "probe_token": f"TC_{nonce}",
+        "sequence": 1,
+        "mode": "observe_only",
+    }
+    tool_spec = {
+        "name": tool_name,
+        "description": PROBE_DESCRIPTION,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "probe_token": {
+                    "type": "string",
+                    "enum": [expected_arguments["probe_token"]],
+                },
+                "sequence": {"type": "integer", "enum": [1]},
+                "mode": {"type": "string", "enum": ["observe_only"]},
+            },
+            "required": ["probe_token", "sequence", "mode"],
+            "additionalProperties": False,
+        },
+    }
+    response = client.call_tool_probe(
+        [{"role": "user", "content": PROBE_PROMPT}],
+        tool_spec,
+        max_tokens=256,
+    )
+    result = analyze_tool_call_integrity(
+        response,
+        expected_name=tool_name,
+        expected_arguments=expected_arguments,
+        api_key=getattr(client, "api_key", ""),
+    )
+    result["expected_name"] = tool_name
+    result["expected_arguments"] = expected_arguments
+    result["received_calls"] = (
+        response.get("tool_calls", []) if isinstance(response, dict) else []
+    )
+    return result
+
+
+# ============================================================
 # Tool-call substitution detector
 # ============================================================
 
@@ -2331,12 +3671,10 @@ return path, e.g. ``pip install requests`` -> ``pip install reqeusts``
 command and comparing the returned text character-by-character against the
 expected string.
 
-This is a text-echo surrogate for the paper's AC-1.a attack: a content-based
-substitution rule in a malicious router will fire on any response body
-containing a package-install pattern, regardless of whether it arrives via a
-tool_call JSON payload or plain text. It does NOT catch AC-1 rewrites that
-target only structured tool_call payloads while leaving plaintext alone --
-that is deferred to a future step that needs APIClient tool-calling support.
+This module implements Step 8's complementary text path. Content-based
+package substitution rules often fire on plain text, while
+``tool_call_integrity.py`` independently covers non-streaming structured
+Anthropic/OpenAI Tool Calls that leave plaintext untouched.
 
 Reference: Liu, Shou, Wen, Chen, Fang, Feng,
 "Your Agent Is Mine: Measuring Malicious Intermediary Attacks on the
@@ -3479,6 +4817,18 @@ def _redact_api_key(text: str, api_key: str) -> str:
             "<REDACTED_PREFIX>",
             text,
         )
+    return text
+
+
+def redact_sensitive_text(text: str, api_key: str = "") -> str:
+    """Redact the caller credential and known secret shapes from report text."""
+    if not isinstance(text, str):
+        text = str(text)
+    if not isinstance(api_key, str):
+        api_key = ""
+    text = _redact_api_key(text, api_key)
+    for pattern, _kind in SECRET_REGEX_PATTERNS:
+        text = pattern.sub("<REDACTED_SECRET>", text)
     return text
 
 
@@ -4631,6 +5981,12 @@ AGPL-3.0; algorithm reproduced from observed behavior, not source code):
              a native Anthropic message id with no other signal implies a
              transparent relay (returns 0.5 confidence)
 
+OpenAI-format usage fingerprint (v2.6): when the client already detected
+OpenAI-compatible format, Step 14 also sends one minimal chat-completions
+call and checks the key names of its `usage` object for foreign-upstream
+residue (``classify_openai_usage``, Tier 1, labels ``anthropic-translated``
+and ``foreign-usage-source``).
+
 Informational only: result does NOT feed the 6D risk matrix. Channel labels
 like aws-bedrock or anthropic-official are legitimate serving paths; they
 become a fraud signal only when combined with Step 5 identity substitution
@@ -4840,6 +6196,145 @@ def classify_channel(headers, message_id, raw_body):
 
 
 # ----------------------------------------------------------------------
+# OpenAI-format usage fingerprint (Tier 1, informational, v2.6)
+# ----------------------------------------------------------------------
+#
+# Official Chat Completions usage is {prompt_tokens, completion_tokens,
+# total_tokens} plus optional *_details objects. Anthropic-shaped keys in
+# that object are residue left by a relay that translates an Anthropic
+# upstream response into OpenAI format. A declared non-openai
+# ``usage_source`` is a self-reported marker, surfaced only sanitized.
+OPENAI_USAGE_TRANSLATED_LABEL = "anthropic-translated"
+OPENAI_USAGE_FOREIGN_SOURCE_LABEL = "foreign-usage-source"
+OPENAI_USAGE_CLAUDE_CACHE_PREFIX = "claude_cache_creation"
+OPENAI_USAGE_ANTHROPIC_PAIR = ("input_tokens", "output_tokens")
+OPENAI_USAGE_OPENAI_PAIR = ("prompt_tokens", "completion_tokens")
+OPENAI_USAGE_ANTHROPIC_ONLY_KEYS = (
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "cache_creation",
+)
+OPENAI_USAGE_WEAK_PAIR_EVIDENCE = "usage_keys:input_output_pair"
+# usage_source is the only usage value ever surfaced. It and every key name
+# shown in a report are reduced to this character set and length first.
+OPENAI_USAGE_SOURCE_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
+OPENAI_USAGE_SOURCE_MAX_LEN = 32
+OPENAI_USAGE_REPORT_KEY_LIMIT = 8
+
+
+def _sanitize_usage_text(value):
+    """Reduce a usage key name or ``usage_source`` value to a safe token."""
+    return OPENAI_USAGE_SOURCE_UNSAFE.sub("", str(value))[:OPENAI_USAGE_SOURCE_MAX_LEN]
+
+
+def format_usage_key_list(keys):
+    """Render usage key names for a report cell or flag message.
+
+    Each name is reduced to ``[A-Za-z0-9_.-]`` and cut to 32 characters
+    (``?`` if nothing is left); at most 8 names are listed and the rest
+    are summarized as ``+N more``.
+    """
+    names = [_sanitize_usage_text(k) or "?" for k in keys]
+    text = ", ".join(f"`{k}`" for k in names[:OPENAI_USAGE_REPORT_KEY_LIMIT])
+    if len(names) > OPENAI_USAGE_REPORT_KEY_LIMIT:
+        text += f" +{len(names) - OPENAI_USAGE_REPORT_KEY_LIMIT} more"
+    return text
+
+
+def classify_openai_usage(usage):
+    """Flag foreign-upstream residue in an OpenAI-format ``usage`` object.
+
+    Concept inspired by canarybyte/veridrop protocol_templates.py (AGPL-3.0); reimplemented independently.
+
+    Tier 1, deterministic, confidence 1.0 when any rule fires:
+
+      1. Any key starts with ``claude_cache_creation``
+         -> ``anthropic-translated``.
+      2. ``input_tokens`` and ``output_tokens`` are both present, no
+         ``*_details`` key is present, and either ``prompt_tokens`` /
+         ``completion_tokens`` are absent or an Anthropic-only cache key
+         (``cache_creation_input_tokens``, ``cache_read_input_tokens``,
+         ``cache_creation``) is present -> ``anthropic-translated``.
+         A pair that misses these conditions (zero-padded next to the
+         OpenAI names, or the Responses shape with ``*_details``) only adds
+         the weak evidence ``usage_keys:input_output_pair`` and leaves
+         the channel ``unknown``.
+      3. ``usage_source`` is a string whose sanitized form is not empty and,
+         after strip + lowercase, is not ``openai`` (so ``open ai`` and
+         `` OpenAI `` do not fire) -> ``foreign-usage-source``. The value
+         compared is the value displayed. Non-string values never fire.
+
+    When rule 3 fires together with rule 1 or 2, ``anthropic-translated``
+    is the channel and rule 3 stays in ``evidence``.
+
+    No usage value is returned except ``usage_source_value``: the declared
+    ``usage_source`` reduced to ``[A-Za-z0-9_.-]`` and cut to 32 characters
+    (``None`` when rule 3 did not fire). Key names are returned raw; report
+    code renders them through ``format_usage_key_list``. Non-dict input
+    returns the no-match result instead of raising.
+
+    Returns:
+        dict with keys ``channel`` (``anthropic-translated``,
+        ``foreign-usage-source`` or ``unknown``), ``confidence`` (1.0 or
+        0.0), ``tier`` (1 or None), ``matched_keys`` (key names of fired
+        Tier 1 rules, rule order), ``evidence`` (fixed strings, one per
+        fired rule or weak hint, never values) and ``usage_source_value``.
+    """
+    matched_keys = []
+    evidence = []
+    source_value = None
+    translated = False
+    if isinstance(usage, dict):
+        cache_keys = sorted(
+            k for k in usage
+            if isinstance(k, str) and k.startswith(OPENAI_USAGE_CLAUDE_CACHE_PREFIX)
+        )
+        if cache_keys:
+            translated = True
+            matched_keys.extend(cache_keys)
+            evidence.append(f"usage_key_prefix:{OPENAI_USAGE_CLAUDE_CACHE_PREFIX}")
+        if all(k in usage for k in OPENAI_USAGE_ANTHROPIC_PAIR):
+            has_details = any(
+                isinstance(k, str) and k.endswith("_details") for k in usage
+            )
+            openai_named = any(k in usage for k in OPENAI_USAGE_OPENAI_PAIR)
+            anthropic_only = any(k in usage for k in OPENAI_USAGE_ANTHROPIC_ONLY_KEYS)
+            if not has_details and (not openai_named or anthropic_only):
+                translated = True
+                matched_keys.extend(OPENAI_USAGE_ANTHROPIC_PAIR)
+                evidence.append("usage_keys:input_tokens+output_tokens")
+            else:
+                evidence.append(OPENAI_USAGE_WEAK_PAIR_EVIDENCE)
+        source = usage.get("usage_source")
+        if isinstance(source, str):
+            sanitized = _sanitize_usage_text(source)
+            if sanitized and sanitized.strip().lower() != "openai":
+                matched_keys.append("usage_source")
+                evidence.append("usage_source:non-openai")
+                source_value = sanitized
+    if translated:
+        channel = OPENAI_USAGE_TRANSLATED_LABEL
+    elif source_value is not None:
+        channel = OPENAI_USAGE_FOREIGN_SOURCE_LABEL
+    else:
+        return {
+            "channel": "unknown",
+            "confidence": 0.0,
+            "tier": None,
+            "matched_keys": [],
+            "evidence": evidence,
+            "usage_source_value": None,
+        }
+    return {
+        "channel": channel,
+        "confidence": 1.0,
+        "tier": 1,
+        "matched_keys": matched_keys,
+        "evidence": evidence,
+        "usage_source_value": source_value,
+    }
+
+# ----------------------------------------------------------------------
 # Probe runner
 # ----------------------------------------------------------------------
 #
@@ -4954,6 +6449,556 @@ def run_channel_classifier(client):
     return classification
 
 
+def _coarse_probe_error(error):
+    """Reduce a ``call()`` error to ``HTTP <status>`` or ``transport error``.
+
+    ``call()`` errors embed up to 200 characters of the response body
+    (``HTTP 401: {...}``); nothing of the body may reach the report.
+    """
+    match = re.match(r"\s*HTTP\s+(\d{3})\b", str(error))
+    if match:
+        return f"HTTP {match.group(1)}"
+    return "transport error"
+
+
+def run_openai_usage_probe(client):
+    """Fingerprint the ``usage`` object of one minimal OpenAI-format call.
+
+    Uses the client's normal ``call()`` path with ``max_tokens=4``; Step 14
+    only invokes this when the client already detected OpenAI format, so the
+    request goes to ``/v1/chat/completions``. Never raises.
+
+    Returns the ``classify_openai_usage`` dict plus:
+        usage_keys -- sorted top-level key names of ``usage`` (raw, no values;
+                      render through ``format_usage_key_list``)
+        error      -- ``HTTP <status>`` / ``transport error`` (response body
+                      dropped), or None
+        verdict    -- "classified" (a Tier 1 rule fired), "no-signal" (usage
+                      present, no Tier 1 rule fired) or "inconclusive" (call
+                      failed or the response had no usage object)
+    """
+    try:
+        res = client.call([{"role": "user", "content": "ping"}], max_tokens=4)
+    except Exception:  # call() catches internally; stay defensive
+        res = {"error": "probe-exception"}
+    if not isinstance(res, dict):
+        res = {"error": "probe returned no result"}
+    error = res.get("error")
+    raw = res.get("raw")
+    usage = raw.get("usage") if isinstance(raw, dict) and not error else None
+    result = classify_openai_usage(usage)
+    result["usage_keys"] = sorted(str(k) for k in usage) if isinstance(usage, dict) else []
+    result["error"] = _coarse_probe_error(error) if error else None
+    if error or not isinstance(usage, dict):
+        result["verdict"] = "inconclusive"
+    elif result["matched_keys"]:
+        result["verdict"] = "classified"
+    else:
+        result["verdict"] = "no-signal"
+    return result
+
+
+# ============================================================
+# Token usage sanity observation
+# ============================================================
+
+"""Token usage sanity observation for Step 3 (informational only).
+
+Concept inspired by canarybyte/veridrop token_usage.py (AGPL-3.0); reimplemented independently.
+
+A relay bills by the ``usage`` block it returns. This module asks a narrow
+question: do the reported counts hang together for a few controlled
+requests? It is a relative self-consistency check, not a billing audit, and
+it never counts tokens offline.
+
+Step 3's "Say hi" request without a system prompt is the short baseline.
+Three checks build on it:
+
+A. Input delta: the same user message with ``USAGE_PAYLOAD_REPEATS`` copies
+   of ``USAGE_PAYLOAD_WORD`` appended must raise input_tokens by an amount
+   inside ``[USAGE_DELTA_MIN, USAGE_DELTA_MAX]``.
+B. Output cap: that same long request is sent with
+   ``max_tokens=USAGE_OUTPUT_MAX_TOKENS``; the reported output_tokens must
+   not exceed the cap plus ``USAGE_OUTPUT_TOLERANCE``. Checks A and B share
+   one request because input_tokens does not depend on max_tokens.
+C. count_tokens reconciliation (Anthropic format only): POST
+   ``/v1/messages/count_tokens`` with the baseline's model and messages must
+   agree with the baseline's actual input_tokens within
+   ``USAGE_COUNT_TOKENS_TOLERANCE``. Any answer other than HTTP 200 with an
+   integer input_tokens (404, 400, unsupported route) is inconclusive.
+
+This is a counting signal, distinct from Step 3's injection signal. Step 3
+reads the idle level: a minimal prompt whose input_tokens sit well above the
+expected count suggests a hidden prompt. Check A reads the increment after a
+fixed payload is added; a hidden prefix adds the same tokens to both
+requests and cancels out of the difference. Check C does not cancel it:
+count_tokens does not see a prompt the relay injects into Messages requests,
+so when Step 3 already reports injection (above
+``USAGE_STEP3_INJECTION_THRESHOLD`` tokens) C is not sent and stays
+inconclusive instead of reporting the same cause twice.
+
+Readings that cannot be compared make a check inconclusive: a missing or
+non-integer count, prompt caching (``cache_read_input_tokens`` /
+``cache_creation_input_tokens``, which input_tokens excludes) for A and C,
+and reported thinking tokens or a missing or unexpected stop / finish
+reason for B.
+A negative count is impossible and makes the check implausible. Relay error
+text never reaches a note verbatim: HTTP errors keep only the status code
+and anything else is redacted, then clipped.
+
+Stream / non-stream usage parity lives in Step 10 and is not repeated here.
+No sampling parameters are sent: current Messages API versions reject
+temperature / top_p / top_k.
+
+Each check returns "plausible", "implausible" or "inconclusive". The
+combined verdict is "implausible" if any check is implausible, "plausible"
+if at least one check is plausible and none is implausible, and
+"inconclusive" otherwise. Nothing here is scored or fed to the risk matrix.
+"""
+
+import json
+import re
+import time
+
+
+USAGE_BASELINE_PROMPT = "Say hi"
+USAGE_PAYLOAD_WORD = " apple"
+USAGE_PAYLOAD_REPEATS = 80
+# Provisional, uncalibrated; calibrate against a direct-upstream baseline.
+USAGE_DELTA_MIN = 40
+USAGE_DELTA_MAX = 240
+USAGE_OUTPUT_MAX_TOKENS = 16
+USAGE_OUTPUT_TOLERANCE = 4
+USAGE_COUNT_TOKENS_TOLERANCE = 2
+USAGE_COUNT_TOKENS_PATH = "/v1/messages/count_tokens"
+# Step 3 reports injection above this many tokens (its yellow threshold).
+USAGE_STEP3_INJECTION_THRESHOLD = 20
+# Stop / finish reasons of a plain text reply that ended on its own or at
+# max_tokens (Anthropic, then OpenAI-compatible). A missing reason, or any
+# other value, leaves B inconclusive.
+USAGE_EXPECTED_STOP_REASONS = frozenset(
+    {"end_turn", "max_tokens", "stop_sequence", "stop", "length"})
+USAGE_CACHE_FIELDS = ("cache_read_input_tokens", "cache_creation_input_tokens")
+
+USAGE_PLAUSIBLE = "plausible"
+USAGE_IMPLAUSIBLE = "implausible"
+USAGE_INCONCLUSIVE = "inconclusive"
+
+_USAGE_TOKEN_KEYS = {
+    "input": ("input_tokens", "prompt_tokens"),
+    "output": ("output_tokens", "completion_tokens"),
+}
+_USAGE_HTTP_STATUS = re.compile(r"^\s*HTTP\s+(\d{3})\b")
+_USAGE_THINKING_KEY = re.compile(r"reasoning|thinking|thought", re.IGNORECASE)
+
+
+def usage_long_prompt(base_prompt=USAGE_BASELINE_PROMPT):
+    """Return ``base_prompt`` with the fixed check-A payload appended."""
+    return base_prompt + USAGE_PAYLOAD_WORD * USAGE_PAYLOAD_REPEATS
+
+
+def _usage_is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _usage_clip(text, limit=160):
+    """Collapse whitespace and pipes so a note stays on one Markdown line."""
+    flat = " ".join(str(text).split()).replace("|", "/")
+    return flat if len(flat) <= limit else flat[:limit - 3] + "..."
+
+
+def usage_safe_error(error, api_key=""):
+    """Return report-safe text for a relay or transport error.
+
+    An HTTP error keeps only its status code, so no relay error body reaches
+    the report. Any other text is redacted with ``redact_sensitive_text``
+    first and clipped afterwards, so clipping cannot split a secret.
+    """
+    text = str(error)
+    match = _USAGE_HTTP_STATUS.match(text)
+    if match:
+        return f"HTTP {match.group(1)}"
+    return _usage_clip(redact_sensitive_text(text, api_key))
+
+
+def _usage_raw_usage(result):
+    """Return the raw usage dict of a successful ``call()`` result, or None."""
+    if not isinstance(result, dict) or result.get("error"):
+        return None
+    raw = result.get("raw")
+    if isinstance(raw, dict) and isinstance(raw.get("usage"), dict):
+        return raw["usage"]
+    return None
+
+
+def usage_token_reading(result, kind, label, api_key=""):
+    """Return ``(value, reason)`` for a count a ``client.call()`` result reported.
+
+    ``kind`` is ``"input"`` or ``"output"``. ``value`` is the reported
+    integer, negative values included so the checks can call them
+    implausible, or None; ``reason`` then says why. The client normalizes a
+    missing usage block to 0, so the raw response is read first; results
+    that carry no ``raw`` dict fall back to the normalized field.
+    """
+    if not isinstance(result, dict):
+        return None, f"{label} returned no result"
+    if result.get("error"):
+        return None, f"{label} failed: {usage_safe_error(result['error'], api_key)}"
+    keys = _USAGE_TOKEN_KEYS[kind]
+    raw = result.get("raw")
+    if isinstance(raw, dict):
+        usage = raw.get("usage")
+        if not isinstance(usage, dict):
+            return None, f"usage field missing from the {label} response"
+    else:
+        usage = {keys[0]: result.get(keys[0])}
+    for key in keys:
+        value = usage.get(key)
+        if value is None:
+            continue
+        if not _usage_is_int(value):
+            return None, f"{key} is not an integer in the {label} response"
+        return value, None
+    return None, f"{keys[0]} missing from the {label} response"
+
+
+def usage_cache_note(result, label):
+    """Return a note when prompt caching touched a reply, else None.
+
+    Anthropic's input_tokens excludes cached tokens, so a non-zero
+    ``cache_read_input_tokens`` or ``cache_creation_input_tokens`` makes
+    input comparisons unreliable.
+    """
+    usage = _usage_raw_usage(result)
+    if usage is None:
+        return None
+    active = [f"{field}={usage[field]}" for field in USAGE_CACHE_FIELDS
+              if _usage_is_int(usage.get(field)) and usage[field] != 0]
+    if not active:
+        return None
+    return (f"prompt caching touched the {label} ({', '.join(active)}); "
+            "input_tokens excludes cached tokens")
+
+
+def usage_thinking_note(result, label):
+    """Return a note when a reply reports thinking / reasoning tokens, else None.
+
+    Looks for positive integer counts under usage keys that mention
+    reasoning, thinking or thought, one level deep (for example
+    ``completion_tokens_details.reasoning_tokens``). Some upstreams do not
+    cap thinking with max_tokens but still count it as output.
+    """
+    usage = _usage_raw_usage(result)
+    if usage is None:
+        return None
+    hits = []
+    for key, value in usage.items():
+        if isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                if (_USAGE_THINKING_KEY.search(str(sub_key))
+                        and _usage_is_int(sub_value) and sub_value > 0):
+                    hits.append(f"{_usage_clip(key, 40)}."
+                                f"{_usage_clip(sub_key, 40)}={sub_value}")
+        elif (_USAGE_THINKING_KEY.search(str(key))
+                and _usage_is_int(value) and value > 0):
+            hits.append(f"{_usage_clip(key, 40)}={value}")
+    if not hits:
+        return None
+    # Key names come from the relay: clip them so they cannot add Markdown lines.
+    return (f"the {label} reports thinking tokens "
+            f"({_usage_clip(', '.join(hits), 120)}), which "
+            "some upstreams do not cap with max_tokens")
+
+
+def usage_stop_reason(result):
+    """Return the stop / finish reason of a successful ``call()`` result."""
+    if not isinstance(result, dict) or result.get("error"):
+        return None
+    raw = result.get("raw")
+    if not isinstance(raw, dict):
+        return None
+    reason = raw.get("stop_reason")
+    if reason is None:
+        choices = raw.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            reason = choices[0].get("finish_reason")
+    return reason if isinstance(reason, str) else None
+
+
+def check_usage_input_delta(baseline_input, long_input, reason=None,
+                            cache_note=None):
+    """Check A: input_tokens increment after the fixed payload is appended."""
+    check = {
+        "check": "input_delta",
+        "baseline_input_tokens": baseline_input,
+        "long_input_tokens": long_input,
+        "delta": None,
+        "verdict": USAGE_INCONCLUSIVE,
+        "note": reason,
+    }
+    if baseline_input is None or long_input is None:
+        if check["note"] is None:
+            check["note"] = "input_tokens not reported for both requests"
+        return check
+    if baseline_input < 0 or long_input < 0:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (f"negative input_tokens reading (baseline "
+                         f"{baseline_input}, long prompt {long_input})")
+        return check
+    if cache_note:
+        check["note"] = cache_note
+        return check
+    delta = long_input - baseline_input
+    check["delta"] = delta
+    if USAGE_DELTA_MIN <= delta <= USAGE_DELTA_MAX:
+        check["verdict"] = USAGE_PLAUSIBLE
+    else:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (
+            f"appending {USAGE_PAYLOAD_REPEATS} x "
+            f"'{USAGE_PAYLOAD_WORD.strip()}' changed input_tokens by "
+            f"{delta:+d}, outside {USAGE_DELTA_MIN}..{USAGE_DELTA_MAX}"
+        )
+    return check
+
+
+def check_usage_output_cap(output_tokens, reason=None, stop_reason=None,
+                           thinking_note=None):
+    """Check B: output_tokens of a max_tokens-capped reply stay under the cap.
+
+    Reported thinking tokens, or a stop reason that is missing or outside
+    ``USAGE_EXPECTED_STOP_REASONS``, leave the check inconclusive.
+    """
+    limit = USAGE_OUTPUT_MAX_TOKENS + USAGE_OUTPUT_TOLERANCE
+    check = {
+        "check": "output_cap",
+        "output_tokens": output_tokens,
+        "max_tokens": USAGE_OUTPUT_MAX_TOKENS,
+        "limit": limit,
+        "stop_reason": stop_reason,
+        "verdict": USAGE_INCONCLUSIVE,
+        "note": reason,
+    }
+    if output_tokens is None:
+        if check["note"] is None:
+            check["note"] = "output_tokens not reported"
+        return check
+    if output_tokens < 0:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = f"negative output_tokens reading ({output_tokens})"
+        return check
+    if thinking_note:
+        check["note"] = thinking_note
+        return check
+    if stop_reason is None:
+        check["note"] = "stop reason missing"
+        return check
+    if stop_reason not in USAGE_EXPECTED_STOP_REASONS:
+        check["note"] = (f"stop reason {_usage_clip(stop_reason, 40)!r} is "
+                         "neither a natural stop nor the max_tokens cut")
+        return check
+    if output_tokens <= limit:
+        check["verdict"] = USAGE_PLAUSIBLE
+    else:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (
+            f"max_tokens={USAGE_OUTPUT_MAX_TOKENS} reply reported "
+            f"{output_tokens} output_tokens, above {limit}"
+        )
+    return check
+
+
+def check_usage_count_tokens(baseline_input, response, reason=None, api_key=""):
+    """Check C: count_tokens against the baseline's actual input_tokens.
+
+    ``response`` is a ``client.raw_request()`` dict, or None when the request
+    was not sent. ``difference`` is actual minus counted, so a positive value
+    means the Messages reply reported more tokens than count_tokens.
+    """
+    check = {
+        "check": "count_tokens",
+        "baseline_input_tokens": baseline_input,
+        "count_tokens": None,
+        "difference": None,
+        "status": None,
+        "verdict": USAGE_INCONCLUSIVE,
+        "note": reason,
+    }
+    if not isinstance(response, dict):
+        if check["note"] is None:
+            check["note"] = "count_tokens not sent"
+        return check
+    status = response.get("status")
+    check["status"] = status
+    if status != 200:
+        if status:
+            check["note"] = f"count_tokens unavailable (HTTP {status})"
+        else:
+            check["note"] = "count_tokens request failed: " + usage_safe_error(
+                response.get("error") or "no HTTP status", api_key)
+        return check
+    try:
+        payload = json.loads(response.get("body") or "")
+    except (TypeError, ValueError):
+        payload = None
+    counted = payload.get("input_tokens") if isinstance(payload, dict) else None
+    if counted is None:
+        check["note"] = "count_tokens answered HTTP 200 without input_tokens"
+        return check
+    if not _usage_is_int(counted):
+        check["note"] = "count_tokens input_tokens is not an integer"
+        return check
+    check["count_tokens"] = counted
+    if baseline_input is None:
+        if check["note"] is None:
+            check["note"] = "baseline input_tokens not reported"
+        return check
+    if baseline_input < 0 or counted < 0:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (f"negative input_tokens reading (actual "
+                         f"{baseline_input}, counted {counted})")
+        return check
+    difference = baseline_input - counted
+    check["difference"] = difference
+    if abs(difference) <= USAGE_COUNT_TOKENS_TOLERANCE:
+        check["verdict"] = USAGE_PLAUSIBLE
+    else:
+        check["verdict"] = USAGE_IMPLAUSIBLE
+        check["note"] = (
+            f"count_tokens counted {counted} input_tokens, the "
+            f"'{USAGE_BASELINE_PROMPT}' request reported {baseline_input}"
+        )
+    return check
+
+
+def combine_usage_verdicts(verdicts):
+    """Combine per-check verdicts into the observed usage sanity verdict."""
+    verdicts = list(verdicts)
+    if USAGE_IMPLAUSIBLE in verdicts:
+        return USAGE_IMPLAUSIBLE
+    if USAGE_PLAUSIBLE in verdicts:
+        return USAGE_PLAUSIBLE
+    return USAGE_INCONCLUSIVE
+
+
+def _usage_result(checks, requests_sent):
+    return {
+        "verdict": combine_usage_verdicts(c["verdict"] for c in checks),
+        "checks": checks,
+        "requests_sent": requests_sent,
+    }
+
+
+def _usage_all_inconclusive(reason, requests_sent=0):
+    return _usage_result([
+        check_usage_input_delta(None, None, reason),
+        check_usage_output_cap(None, reason),
+        check_usage_count_tokens(None, None, reason),
+    ], requests_sent)
+
+
+def _usage_run(client, baseline, injection_size, sleep_fn, pause_seconds):
+    api_key = getattr(client, "api_key", "")
+    baseline_label = "'Say hi' baseline"
+    baseline_input, baseline_reason = usage_token_reading(
+        baseline, "input", baseline_label, api_key)
+    if baseline_input is None:
+        return _usage_all_inconclusive("not sent; " + baseline_reason)
+
+    requests_sent = 0
+    try:
+        long_result = client.call(
+            [{"role": "user", "content": usage_long_prompt()}],
+            max_tokens=USAGE_OUTPUT_MAX_TOKENS,
+        )
+    except Exception as exc:  # client.call should not raise; stay safe
+        long_result = {"error": f"{type(exc).__name__}: {exc}"}
+    requests_sent += 1
+    long_label = "long-prompt request"
+    long_input, long_input_reason = usage_token_reading(
+        long_result, "input", long_label, api_key)
+    long_output, long_output_reason = usage_token_reading(
+        long_result, "output", long_label, api_key)
+    baseline_cache = usage_cache_note(baseline, baseline_label)
+    checks = [
+        check_usage_input_delta(
+            baseline_input, long_input, long_input_reason,
+            cache_note=baseline_cache or usage_cache_note(long_result, long_label)),
+        check_usage_output_cap(
+            long_output, long_output_reason,
+            stop_reason=usage_stop_reason(long_result),
+            thinking_note=usage_thinking_note(long_result, long_label)),
+    ]
+
+    detected_format = getattr(client, "detected_format", None)
+    skip_reason = None
+    if detected_format != "anthropic":
+        skip_reason = ("not sent, because count_tokens is Anthropic-format "
+                       f"only and the client format is {detected_format!r}")
+    elif (_usage_is_int(injection_size)
+            and injection_size > USAGE_STEP3_INJECTION_THRESHOLD):
+        skip_reason = ("not sent; count_tokens cannot see injected content, "
+                       "so the gap is already explained by Step 3's injection "
+                       f"finding (~{injection_size} tokens)")
+    elif baseline_cache:
+        skip_reason = "not sent; " + baseline_cache
+    if skip_reason:
+        checks.append(check_usage_count_tokens(baseline_input, None, skip_reason))
+        return _usage_result(checks, requests_sent)
+
+    sleep_fn(pause_seconds)
+    body = {
+        "model": getattr(client, "model", ""),
+        "messages": [{"role": "user", "content": USAGE_BASELINE_PROMPT}],
+    }
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+    }
+    try:
+        response = client.raw_request(
+            "POST", USAGE_COUNT_TOKENS_PATH, headers,
+            json.dumps(body).encode("utf-8"),
+            content_type="application/json", timeout=30,
+        )
+    except Exception as exc:  # raw_request should not raise; stay safe
+        response = {"status": 0, "headers": {}, "body": "",
+                    "error": f"{type(exc).__name__}: {exc}"}
+    requests_sent += 1
+    checks.append(check_usage_count_tokens(baseline_input, response,
+                                           api_key=api_key))
+    return _usage_result(checks, requests_sent)
+
+
+def run_usage_sanity(client, baseline, injection_size=None,
+                     sleep_fn=time.sleep, pause_seconds=1.0):
+    """Run checks A-C and return the observation. Never raises.
+
+    Args:
+        client: An ``APIClient`` (or compatible double) already used by
+            Step 3, so ``detected_format`` is settled.
+        baseline: Step 3's ``client.call()`` result for
+            ``USAGE_BASELINE_PROMPT`` without a system prompt, or None.
+            When it is missing or unusable, nothing is sent and every check
+            is inconclusive.
+        injection_size: Step 3's measured injection in tokens, or None.
+            Above ``USAGE_STEP3_INJECTION_THRESHOLD`` check C is not sent.
+        sleep_fn: Pause function, injectable so tests do not sleep.
+        pause_seconds: Pause before the count_tokens request.
+
+    Returns:
+        ``{"verdict": str, "checks": [A, B, C], "requests_sent": int}``. At
+        most two requests are sent: the long prompt shared by checks A and B,
+        and one count_tokens call for Anthropic-format clients.
+    """
+    try:
+        return _usage_run(client, baseline, injection_size, sleep_fn,
+                          pause_seconds)
+    except Exception as exc:  # observation must never break Step 3
+        return _usage_all_inconclusive("usage sanity failed: " + usage_safe_error(
+            f"{type(exc).__name__}: {exc}", getattr(client, "api_key", "")))
+
+
 # ============================================================
 # Audit orchestration
 # ============================================================
@@ -4963,7 +7008,7 @@ API Relay Security Audit Tool v2.5
 
 Full 14-step audit: infrastructure recon, model list, token injection,
 prompt extraction, instruction conflict + identity, jailbreak, context
-length, tool-call substitution (AC-1.a), error response leakage (AC-2),
+length, tool-call integrity (AC-1 / AC-1.a), error response leakage (AC-2),
 stream integrity (AC-1 SSE), Web3 prompt injection (profile=web3|full),
 infrastructure fingerprint, latency variance, upstream channel classifier.
 Threat taxonomy follows Liu et al., *Your Agent Is Mine*, arXiv:2604.08407
@@ -5106,13 +7151,18 @@ def parse_args():
                    help="Run a quick Anthropic/OpenAI Chat connectivity check "
                         "and exit without running the full 14-step audit.")
     p.add_argument("--skip-infra", action="store_true", help="Skip infrastructure recon")
+    p.add_argument("--skip-usage-sanity", action="store_true",
+                   help="Skip the informational token usage sanity checks "
+                        "appended to Step 3 (up to 2 extra requests: one "
+                        "long prompt and one count_tokens call).")
     p.add_argument("--skip-context", action="store_true", help="Skip context length test")
     p.add_argument("--fast-context", action="store_true",
                    help="Use a reduced Step 7 context scan ladder "
                         "(10K/50K/100K/200K chars) to lower token cost. "
                         "Default is the full scan.")
     p.add_argument("--skip-tool-substitution", action="store_true",
-                   help="Skip tool-call package substitution test (AC-1.a)")
+                   help="Skip the entire Step 8 tool-call integrity test "
+                        "(text AC-1.a and structured AC-1 probes)")
     p.add_argument("--skip-error-leakage", action="store_true",
                    help="Skip error response header leakage test (Step 9, AC-2 adjacent)")
     p.add_argument("--aggressive-error-probes", action="store_true",
@@ -5121,6 +7171,12 @@ def parse_args():
     p.add_argument("--skip-stream-integrity", action="store_true",
                    help="Skip stream integrity test (Step 10). Useful if the "
                         "relay does not support Anthropic streaming.")
+    p.add_argument("--verify-signature", action="store_true",
+                   help="Opt-in Step 10 check: pass the streamed thinking block "
+                        "back twice, intact and with one signature character "
+                        "changed, and record whether the upstream tells them "
+                        "apart. Sends up to 2 extra paid requests. "
+                        "Informational only, not scored. Default: off.")
     p.add_argument("--profile", choices=["general", "web3", "full"],
                    default="general",
                    help="Audit profile selector. 'general' (default) runs "
@@ -5425,7 +7481,7 @@ def test_models(client, report):
     print(f"  Done: model list ({len(models)} models)")
 
 
-def test_token_injection(client, report):
+def test_token_injection(client, report, usage_sanity=True):
     report.h2("3. Token Injection Detection")
     report.p("Send minimal messages, compare expected vs actual input_tokens. Delta = hidden injection.\n")
 
@@ -5442,9 +7498,12 @@ def test_token_injection(client, report):
     errors = []
     success_count = 0
     error_diagnostics = []
+    usage_baseline = None  # short baseline reused by the usage sanity block
     for name, sys_prompt, user_msg, expected in tests:
         r = client.call([{"role": "user", "content": user_msg}],
                         system=sys_prompt, max_tokens=100)
+        if sys_prompt is None and user_msg == USAGE_BASELINE_PROMPT:
+            usage_baseline = r
         if "error" in r:
             report.p(f"| {name} | ERROR | ~{expected} | - |")
             errors.append(r.get("error", ""))
@@ -5478,6 +7537,11 @@ def test_token_injection(client, report):
                 "errored, so hidden prompt injection could not be measured.",
             )
         print("  Done: token injection (inconclusive, all probes errored)")
+        try:
+            _report_usage_sanity(client, report, usage_baseline, usage_sanity)
+        except Exception as exc:  # the observation must never change Step 3
+            print(f"  [usage sanity] not rendered: {type(exc).__name__}",
+                  file=sys.stderr)
         return None
 
     if injection_size > 100:
@@ -5488,7 +7552,121 @@ def test_token_injection(client, report):
         report.flag("green", "No token injection detected")
 
     print(f"  Done: token injection (delta: ~{injection_size} tokens)")
+    try:
+        _report_usage_sanity(client, report, usage_baseline, usage_sanity,
+                             injection_size)
+    except Exception as exc:  # the observation must never change Step 3
+        print(f"  [usage sanity] not rendered: {type(exc).__name__}",
+              file=sys.stderr)
     return injection_size
+
+
+def _report_usage_sanity(client, report, baseline, enabled=True,
+                         injection_size=None):
+    """Append Step 3's informational token usage sanity subsection.
+
+    Runs :func:`run_usage_sanity` on top of Step 3's "Say hi" baseline and
+    renders its three checks. ``injection_size`` is Step 3's measured
+    injection: when Step 3 already reports injection, check C is not sent,
+    because count_tokens cannot see injected content. The result is an
+    observation only: it never calls ``report.flag()``, never changes Step
+    3's return value and never feeds the risk matrix.
+
+    Must not raise: ``_run_step`` would turn an exception into a crashed,
+    inconclusive Step 3, so every failure degrades to an inconclusive row.
+    """
+    report.h3("Token usage sanity (informational)")
+    if not enabled:
+        report.p("Skipped by `--skip-usage-sanity`; no extra requests were "
+                 "sent.")
+        print("  Done: token usage sanity (skipped)")
+        return
+    report.p(
+        "Counting signal, kept apart from the injection signal above. The "
+        "injection table reads the idle level: its Delta is the actual "
+        "input_tokens of a minimal prompt minus the expected count, so a "
+        "hidden prompt raises it directly. Check A reads the increment "
+        f"instead: the same '{USAGE_BASELINE_PROMPT}' message with "
+        f"{USAGE_PAYLOAD_REPEATS} x '{USAGE_PAYLOAD_WORD.strip()}' appended, "
+        "minus the baseline. A hidden prefix adds the same tokens to both "
+        "requests and cancels out, so an increment outside the range points "
+        "at how usage is counted rather than at injection. Check C is "
+        "different: count_tokens does not see a prompt the relay injects "
+        "into Messages requests, so when the injection table above "
+        "reports injection, C is not sent and stays inconclusive. Stream / "
+        "non-stream usage parity is covered by the Step 10 parity section "
+        "and is not repeated here. Informational only: it does not change "
+        "the Step 3 verdict or the risk matrix, and its thresholds are "
+        "provisional and uncalibrated.\n"
+    )
+    try:
+        result = run_usage_sanity(client, baseline, injection_size,
+                                  sleep_fn=time.sleep)
+        checks = {check["check"]: check for check in result["checks"]}
+        delta = checks["input_delta"]
+        cap = checks["output_cap"]
+        count = checks["count_tokens"]
+
+        if delta["delta"] is None:
+            delta_cell = "—"
+        else:
+            delta_cell = (
+                f"{delta['delta']:+d} ({delta['baseline_input_tokens']} "
+                f"→ {delta['long_input_tokens']})"
+            )
+        cap_cell = ("—" if cap["output_tokens"] is None
+                    else str(cap["output_tokens"]))
+        if count["difference"] is not None:
+            count_cell = (
+                f"actual {count['baseline_input_tokens']}, counted "
+                f"{count['count_tokens']} ({count['difference']:+d})"
+            )
+        elif count["status"]:
+            count_cell = f"HTTP {count['status']}"
+        else:
+            count_cell = "—"
+        cap_limit = USAGE_OUTPUT_MAX_TOKENS + USAGE_OUTPUT_TOLERANCE
+
+        report.p("| Check | Observed | Rule (provisional) | Result |")
+        report.p("|-------|----------|--------------------|--------|")
+        report.p(
+            f"| A. Input delta (long - short input_tokens) | {delta_cell} | "
+            f"{USAGE_DELTA_MIN} <= delta <= {USAGE_DELTA_MAX} | "
+            f"{delta['verdict']} |"
+        )
+        report.p(
+            f"| B. Output cap (max_tokens={USAGE_OUTPUT_MAX_TOKENS}) | "
+            f"{cap_cell} | output_tokens <= {cap_limit} | {cap['verdict']} |"
+        )
+        report.p(
+            f"| C. count_tokens vs actual input_tokens | {count_cell} | "
+            f"abs(actual - counted) <= {USAGE_COUNT_TOKENS_TOLERANCE}; "
+            f"Anthropic format only | {count['verdict']} |"
+        )
+        report.p(
+            f"| Observed usage sanity | {result['verdict']} | not scored | — |"
+        )
+        report.p(
+            "\nExtra requests sent by this subsection: "
+            f"{result['requests_sent']}."
+        )
+        notes = [
+            f"{label}: {check['note']}"
+            for label, check in (("A", delta), ("B", cap), ("C", count))
+            if check["note"]
+        ]
+        if notes:
+            report.p("\n**Usage sanity notes (observed)**:")
+            for note in notes:
+                report.p(f"- {note}")
+        verdict = result["verdict"]
+    except Exception as exc:  # informational block must never fail Step 3
+        report.p(
+            f"Usage sanity could not be evaluated ({type(exc).__name__}); "
+            "observed verdict: inconclusive."
+        )
+        verdict = "inconclusive"
+    print(f"  Done: token usage sanity ({verdict})")
 
 
 def test_prompt_extraction(client, report):
@@ -5801,21 +7979,21 @@ def test_jailbreak(client, report):
 
 
 def test_tool_substitution(client, report):
-    report.h2("8. Tool-Call Package Substitution (AC-1.a)")
+    report.h2("8. Tool-Call Integrity (AC-1 / AC-1.a)")
     report.p(
-        "Ask the model to echo exact package-install commands and verify "
-        "character-level integrity on the return path. A malicious middleware "
-        "running AC-1.a rewrites package names (e.g. `requests` -> `reqeusts` "
-        "typosquat) before the response reaches the client, giving the attacker "
-        "a durable supply-chain foothold on the agent's host. "
+        "Verify both package-install text and one inert, non-streaming structured "
+        "Tool Call on the return path. The structured call is inspected only: "
+        "the audit provides no executor, sends no tool result, and never runs "
+        "returned content. A malicious middleware can rewrite a tool name, "
+        "arguments, call count, or package command before it reaches the client. "
         "Reference: Liu et al., *Your Agent Is Mine*, arXiv:2604.08407 section 4.2.1.\n"
     )
-    report.p(
-        "Limitation: this is a text-echo surrogate. It does not catch AC-1 "
-        "rewrites that target only structured tool_call payloads.\n"
-    )
 
-    results, detected, inconclusive = run_tool_substitution_test(client, sleep=1.0)
+    report.h3("Package-command text probes (AC-1.a)")
+
+    results, text_detected, text_inconclusive = run_tool_substitution_test(
+        client, sleep=1.0,
+    )
 
     report.p("| Manager | Expected | Received | Verdict |")
     report.p("|---------|----------|----------|---------|")
@@ -5830,7 +8008,10 @@ def test_tool_substitution(client, report):
             received_cell = f"ERROR: {err_short}"
             icon = "\u26aa skipped"
         else:
-            disp = r["received"][:80].replace("|", "\\|").replace("\n", " ")
+            disp = (
+                r["received"][:80].replace("\r", " ").replace("\n", " ")
+                .replace("`", "\u2019").replace("|", "\\|")
+            )
             received_cell = f"`{disp}`"
             if r["verdict"] == "exact":
                 icon = "\U0001f7e2 exact"
@@ -5845,31 +8026,123 @@ def test_tool_substitution(client, report):
         for manager, error in error_diagnostics:
             report.p(f"- {manager}: {format_diagnosis(_diagnosis_for_error(error))}")
 
-    if detected:
+    if text_detected:
         subs = sum(1 for r in results if r["verdict"] == "substituted")
+        report.p(
+            f"🔴 **Package-command substitution detected (AC-1.a): "
+            f"{subs}/{len(results)} probes rewritten on return path.**"
+        )
+    elif text_inconclusive:
+        report.p(
+            "🟡 **Package-command text probes INCONCLUSIVE: every probe errored.**"
+        )
+    elif error_count > 0:
+        report.p(
+            f"Tool-call substitution test partially skipped "
+            f"({error_count}/{len(results)} probes errored).",
+        )
+    else:
+        report.p("🟢 Package-command text probes preserved exactly.")
+
+    report.h3("Structured Tool Call probe (non-streaming)")
+    try:
+        structured = run_tool_call_integrity_test(client)
+    except Exception:
+        structured = {
+            "verdict": "inconclusive",
+            "expected_count": 1,
+            "received_count": 0,
+            "name_match": None,
+            "arguments_match": None,
+            "findings": [
+                "Structured Tool Call probe failed; support could not be verified"
+            ],
+            "protocol_notes": [],
+            "received_calls": [],
+        }
+
+    def _match_label(value):
+        if value is None:
+            return "unknown"
+        return "true" if value else "false"
+
+    report.p(f"**Structured verdict**: `{structured['verdict']}`")
+    report.p(
+        f"**Expected calls**: `{structured['expected_count']}` | "
+        f"**Observed calls**: `{structured['received_count']}`"
+    )
+    report.p(
+        f"**Tool name match**: `{_match_label(structured.get('name_match'))}` | "
+        f"**Arguments match**: `{_match_label(structured.get('arguments_match'))}`"
+    )
+    preview = format_tool_calls_preview(
+        structured.get("received_calls", []),
+        api_key=getattr(client, "api_key", ""),
+    )
+    report.p(f"**Received arguments preview**: `{preview}`")
+    if structured.get("findings"):
+        report.p("\n**Structured findings:**")
+        for finding in structured["findings"]:
+            safe = str(finding)[:240].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
+            report.p(f"- {safe}")
+    if structured.get("protocol_notes"):
+        report.p("\n**Protocol notes (informational, not scored):**")
+        for note in structured["protocol_notes"]:
+            safe = str(note)[:240].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
+            report.p(f"- {safe}")
+    if structured.get("text_excerpt"):
+        # Already redacted, code-span-safe, and bounded by the detector. Only
+        # idempotent steps run here (flatten, bound, backtick stand-in), so
+        # pipes are never escaped twice.
+        excerpt = " ".join(str(structured["text_excerpt"]).split())[:240]
+        excerpt = excerpt.replace("`", "\u2019")
+        report.p(f"**Text returned instead of a Tool Call (redacted excerpt)**: `{excerpt}`")
+
+    structured_anomaly = structured["verdict"] == "anomaly"
+    structured_inconclusive = structured["verdict"] == "inconclusive"
+    detected = text_detected or structured_anomaly
+    inconclusive = not detected and (text_inconclusive or structured_inconclusive)
+
+    if detected:
+        paths = []
+        if text_detected:
+            paths.append("package-command text")
+        if structured_anomaly:
+            paths.append("structured Tool Call")
         report.flag(
             "red",
-            f"Tool-call package substitution detected (AC-1.a): "
-            f"{subs}/{len(results)} probes rewritten on return path",
+            "Tool-call integrity anomaly detected (AC-1 / AC-1.a): "
+            + " and ".join(paths)
+            + " path failed integrity checks",
         )
     elif inconclusive:
+        paths = []
+        if text_inconclusive:
+            paths.append("package-command text")
+        if structured_inconclusive:
+            paths.append("structured Tool Call")
         report.flag(
             "yellow",
-            "Tool-call substitution test INCONCLUSIVE: every probe errored. "
-            "The relay may be blocking plaintext echo -- re-run with a different "
-            "model or consider this a red flag in itself.",
+            "Tool-call integrity test INCONCLUSIVE: "
+            + " and ".join(paths)
+            + " path could not be verified",
         )
     elif error_count > 0:
         report.flag(
             "yellow",
-            f"Tool-call substitution test partially skipped "
-            f"({error_count}/{len(results)} probes errored)",
+            f"No tool-call integrity anomaly detected, but "
+            f"{error_count}/{len(results)} package-command probes errored",
         )
     else:
-        report.flag("green", "No tool-call package substitution detected")
+        report.flag(
+            "green",
+            "Tool-call integrity clean: package-command text and structured "
+            "tool name, arguments, and call count all matched (stop reason "
+            "also checked for Anthropic format)",
+        )
 
     state = "detected" if detected else ("inconclusive" if inconclusive else "clean")
-    print(f"  Done: tool-call substitution ({state})")
+    print(f"  Done: tool-call integrity ({state})")
     return detected, inconclusive
 
 
@@ -5982,13 +8255,16 @@ def test_error_leakage(client, args, report):
     return severity, inconclusive
 
 
-def test_stream_integrity(client, report):
+def test_stream_integrity(client, report, verify_signature=False):
     """Step 10: Stream Integrity (SSE whitelist + usage monotonicity +
     thinking signature + stream model identity).
 
     Opens an Anthropic-format streaming request with ``thinking`` enabled
     and captures every SSE event into a :class:`StreamSignals`. Then
     runs :func:`analyze_stream` for a tri-state verdict.
+
+    With ``verify_signature`` (``--verify-signature``) it also appends the
+    opt-in thinking signature round-trip, which is informational only.
 
     Returns ``(verdict, inconclusive)`` where ``verdict`` is one of
     ``"clean"`` / ``"anomaly"`` / ``"inconclusive"`` and
@@ -6012,10 +8288,13 @@ def test_stream_integrity(client, report):
         "2026-04-11. See reference_hvoy_relayapi memory for details.\n"
     )
 
+    probe_messages = [{"role": "user", "content": "Reply with the single word: ok"}]
+    probe_max_tokens = 100
+    probe_with_thinking = True
     signals = client.stream_call(
-        [{"role": "user", "content": "Reply with the single word: ok"}],
-        max_tokens=100,
-        with_thinking=True,
+        probe_messages,
+        max_tokens=probe_max_tokens,
+        with_thinking=probe_with_thinking,
     )
     analysis = analyze_stream(signals)
     verdict = analysis["verdict"]
@@ -6071,9 +8350,291 @@ def test_stream_integrity(client, report):
             "identity all passed",
         )
 
+    # Informational only: never changes ``verdict``, emits no flag and does
+    # not feed the risk matrix. The helper never raises.
+    _report_stream_parity(
+        client, report, signals,
+        probe_messages, probe_max_tokens, probe_with_thinking,
+    )
+
+    # Opt-in (--verify-signature) and informational, same contract as the
+    # parity section. A default run sends nothing extra.
+    if verify_signature:
+        _report_signature_roundtrip(client, report, signals, probe_messages,
+                                    probe_max_tokens)
+
     print(f"  Done: stream integrity ({verdict})")
     return verdict, verdict == "inconclusive"
 
+
+def _report_stream_parity(client, report, signals, messages, max_tokens,
+                          with_thinking):
+    """Append Step 10's informational stream / non-stream parity section.
+
+    Sends one non-stream request with the same messages, max_tokens and
+    thinking setting as the Step 10 stream, then compares the pair with
+    :func:`compare_stream_nonstream`. The result is an observation only:
+    it never changes the Step 10 verdict, never calls ``report.flag()`` and
+    never feeds the risk matrix.
+
+    Must not raise: ``_run_step`` would turn an exception into an
+    inconclusive Step 10, so every failure degrades to an inconclusive
+    parity row instead.
+
+    No sampling parameters are sent on either request: current Messages API
+    versions reject temperature / top_p / top_k, so both requests run at the
+    model default. That is why only input_tokens and the streamed
+    stop_reason decide the parity verdict, while text similarity and
+    output_tokens (which include thinking tokens) are recorded as notes.
+    """
+    report.h3("Stream / non-stream parity (informational)")
+    report.p(
+        "Observed comparison between the Step 10 stream and one non-stream "
+        "request with the same messages, max_tokens and thinking setting. "
+        "The parity verdict uses only input_tokens and the streamed "
+        "stop_reason. Text similarity and output_tokens are recorded but do "
+        "not decide it: both requests run at the model's default "
+        "temperature, so the reply text varies between samples, and "
+        "output_tokens include thinking tokens. Informational only: it does "
+        "not change the Step 10 verdict or the risk matrix, and its "
+        "thresholds are provisional and uncalibrated.\n"
+    )
+    try:
+        detected_format = getattr(client, "detected_format", None)
+        stream_text = signals.text if isinstance(signals.text, str) else ""
+        if signals.transport_error or not stream_text.strip():
+            nonstream = {"error": "not sent, because the stream returned no "
+                                  "comparable text"}
+        elif detected_format != "anthropic":
+            # A Chat Completions reply is not comparable with an Anthropic
+            # stream, and an undetected client would auto-detect with a
+            # thinking body and could pin the wrong format for later steps.
+            nonstream = {"error": "not sent, because the non-stream client "
+                                  "format is " + repr(detected_format)
+                                  + " rather than 'anthropic'"}
+        else:
+            nonstream = client.call(
+                messages, max_tokens=max_tokens, with_thinking=with_thinking,
+            )
+        parity = compare_stream_nonstream(signals, nonstream)
+    except Exception as exc:  # informational block must never fail Step 10
+        parity = {
+            "verdict": "inconclusive",
+            "input_tokens_delta": None,
+            "output_tokens_delta": None,
+            "output_tokens_tolerance": None,
+            "similarity": None,
+            "stop_reason": None,
+            "stop_reason_valid": False,
+            "notes": [f"Parity check failed: {type(exc).__name__}: {exc}"[:240]],
+        }
+
+    def _delta(value):
+        return "—" if value is None else f"{value:+d}"
+
+    tolerance = parity.get("output_tokens_tolerance")
+    similarity = parity.get("similarity")
+    if parity["verdict"] == "inconclusive":
+        stop_cell = "—"
+    else:
+        stop_cell = (
+            ("yes" if parity["stop_reason_valid"] else "NO")
+            + f" ({parity.get('stop_reason') or 'missing'})"
+        )
+    report.p("| Metric | Observed | Rule (provisional) |")
+    report.p("|--------|----------|--------------------|")
+    report.p(
+        f"| input_tokens delta (stream - non-stream) | "
+        f"{_delta(parity['input_tokens_delta'])} | "
+        f"verdict: abs <= {PARITY_INPUT_TOKEN_TOLERANCE} |"
+    )
+    report.p(
+        f"| Streamed stop_reason valid | {stop_cell} | verdict: one of "
+        f"{', '.join(sorted(PARITY_VALID_STOP_REASONS))} |"
+    )
+    report.p(
+        f"| output_tokens delta (stream - non-stream) | "
+        f"{_delta(parity['output_tokens_delta'])} | note only: "
+        + (f"abs <= {tolerance}" if tolerance is not None
+           else "abs <= max(3, 50% of the larger count)")
+        + " |"
+    )
+    report.p(
+        "| Text similarity (normalized difflib ratio) | "
+        + ("—" if similarity is None else f"{similarity:.3f}")
+        + f" | note only: >= {PARITY_SIMILARITY_MIN} |"
+    )
+    report.p(f"| Observed parity | {parity['verdict']} | not scored |")
+    if parity["notes"]:
+        report.p("\n**Parity notes (observed)**:")
+        for note in parity["notes"]:
+            report.p(f"- {_parity_note_for_report(note, client)}")
+
+
+def _parity_note_for_report(note, client):
+    """Redact, flatten and bound a parity note before it reaches the report."""
+    text = " ".join(str(note).split())
+    text = redact_sensitive_text(text, getattr(client, "api_key", "") or "")
+    return text.replace("|", "\\|")[:240]
+
+
+SIGNATURE_REPLAY_FOLLOW_UP = "Reply with the single word: done"
+
+
+def _redacted_excerpt(client, text, limit=160):
+    """Redact, flatten and clip text before it reaches the report."""
+    text = redact_sensitive_text(str(text), getattr(client, "api_key", "") or "")
+    return " ".join(text.split())[:limit]
+
+
+def _roundtrip_verdict_line(report, verdict):
+    report.p(f"\nObserved round-trip result: **{verdict}** "
+             "(informational, not scored)")
+
+
+def _signature_roundtrip_skip_reason(client, signals):
+    """Return why the signature round-trip cannot run, or ``None``."""
+    detected_format = getattr(client, "detected_format", None)
+    if detected_format != "anthropic":
+        return (f"the client format is {detected_format!r} rather than "
+                "'anthropic'")
+    if signals.transport_error:
+        return "the Step 10 stream had a transport error"
+    issue = getattr(signals, "thinking_capture_issue", None)
+    if issue:
+        return f"the thinking capture cannot be replayed byte for byte ({issue})"
+    if not has_replayable_signature(signals):
+        blocks = signals.thinking_blocks if isinstance(signals.thinking_blocks, list) else []
+        types = {b.get("type") for b in blocks if isinstance(b, dict)}
+        if "thinking" in types:
+            return ("a thinking block carried no signature, so even the intact "
+                    "replay could not be accepted")
+        if "redacted_thinking" in types:
+            return ("the stream carried only redacted_thinking blocks, with no "
+                    "thinking block signature to change")
+        return "the stream carried no thinking block with a non-empty signature"
+    text = signals.text if isinstance(signals.text, str) else ""
+    if not text.strip():
+        return "the stream carried no reply text to pass back"
+    return None
+
+
+def _report_signature_roundtrip(client, report, signals, messages, max_tokens):
+    """Append Step 10's opt-in thinking signature round-trip section.
+
+    Runs only under ``--verify-signature``. Passes the streamed assistant
+    turn (thinking blocks plus reply text) back to the same model with the
+    stream's user message, ``max_tokens`` and thinking setting, once
+    unchanged and then, only if that replay was accepted, with one signature
+    character changed. The pair is judged by
+    :func:`analyze_signature_roundtrip`; a skipped check is recorded as
+    inconclusive. Observation only: it never changes the Step 10 verdict,
+    never calls ``report.flag()`` and never feeds the risk matrix.
+
+    Must not raise: every failure degrades to an inconclusive result, and
+    every error excerpt goes through redaction and clipping.
+    """
+    report.h3("Thinking signature round-trip (opt-in, informational)")
+    report.p(
+        "Passes the Step 10 thinking block back to the same model twice: once "
+        "unchanged, then with one character in the middle of its signature "
+        "changed. Both requests reuse the stream's user message, reply text, "
+        "max_tokens and thinking setting, with no system prompt, tools or "
+        "sampling parameters, so they differ only in that character. An "
+        "upstream that checks signatures accepts the intact replay and "
+        "rejects the tampered one with an HTTP 400 that names the signature "
+        "(upstream-verified). Without a tool-use turn the model may strip "
+        "replayed thinking blocks before checking them, so two accepted "
+        "replays are no-signal: they show neither that nothing upstream "
+        "verifies signatures nor that the signature was forged. A stronger "
+        "probe would replay a tool-use turn; this check does not. Sonnet 5.5 "
+        "and Haiku 5.5 thinking blocks are bound to the account that produced "
+        "them, so a relay that rotates one conversation across several "
+        "upstream accounts may fail the intact replay; that is an untested "
+        "hypothesis, only recorded here. Informational only: it does not "
+        "change the Step 10 verdict or the risk matrix.\n"
+    )
+
+    intact = None
+    tampered = None
+    try:
+        skip = _signature_roundtrip_skip_reason(client, signals)
+        if skip:
+            report.p(f"Skipped: {skip}. No replay request sent.")
+            _roundtrip_verdict_line(report, "inconclusive")
+            return
+        intact = client.replay_thinking(
+            messages,
+            build_replay_assistant_content(signals.thinking_blocks, signals.text),
+            SIGNATURE_REPLAY_FOLLOW_UP, max_tokens=max_tokens,
+        )
+        if replay_accepted(intact):
+            tampered = client.replay_thinking(
+                messages,
+                build_replay_assistant_content(
+                    signals.thinking_blocks, signals.text, tamper=True),
+                SIGNATURE_REPLAY_FOLLOW_UP, max_tokens=max_tokens,
+            )
+        roundtrip = analyze_signature_roundtrip(intact, tampered)
+    except Exception as exc:  # informational block must never fail Step 10
+        roundtrip = {
+            "verdict": "inconclusive",
+            "notes": ["Signature round-trip failed: "
+                      + _redacted_excerpt(client, f"{type(exc).__name__}: {exc}")],
+        }
+
+    try:
+        _render_signature_roundtrip(client, report, intact, tampered, roundtrip)
+    except Exception as exc:  # rendering must not fail Step 10 either
+        _roundtrip_verdict_line(report, "inconclusive")
+        report.p("- Signature round-trip report failed: "
+                 + _redacted_excerpt(client, f"{type(exc).__name__}: {exc}"))
+
+
+def _render_signature_roundtrip(client, report, intact, tampered, roundtrip):
+    """Render the round-trip table, verdict and notes. Sends no request."""
+    def _cell(value):
+        if value is None:
+            return "—"
+        return _redacted_excerpt(client, value, 60).replace("|", "\\|")
+
+    def _observation(res):
+        if res is None:
+            return "not sent"
+        status = res.get("status") if isinstance(res, dict) else None
+        if status is None:
+            return "no HTTP response"
+        if replay_accepted(res):
+            return "accepted"
+        if isinstance(status, int) and 200 <= status < 300:
+            return "error body"
+        return "rejected"
+
+    rows = (
+        ("intact (signature unchanged)", intact),
+        ("tampered (1 signature character changed)", tampered),
+    )
+    report.p("| Replay | HTTP status | error_type | input_tokens | Observation |")
+    report.p("|--------|-------------|------------|--------------|-------------|")
+    for label, res in rows:
+        res_dict = res if isinstance(res, dict) else {}
+        report.p(
+            f"| {label} | {_cell(res_dict.get('status'))} | "
+            f"{_cell(res_dict.get('error_type'))} | "
+            f"{_cell(res_dict.get('input_tokens'))} | {_observation(res)} |"
+        )
+    _roundtrip_verdict_line(report, roundtrip["verdict"])
+    notes = list(roundtrip.get("notes") or [])
+    for label, res in rows:
+        error = res.get("error") if isinstance(res, dict) else None
+        if error:
+            notes.append(f"{label.split(' ', 1)[0]} replay error (redacted): "
+                         + _redacted_excerpt(client, error))
+    if notes:
+        report.p("\n**Round-trip notes (observed)**:")
+        for note in notes:
+            safe = str(note)[:400].replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
+            report.p(f"- {safe}")
 
 def test_web3_injection(client, report):
     """Step 11: Web3 Prompt Injection (SlowMist signature isolation).
@@ -6532,8 +9093,111 @@ def test_channel_classifier(client, report):
 
     print(f"  Done: channel classifier ({channel}, conf={confidence:.2f}, "
           f"verdict={verdict})")
+    if getattr(client, "detected_format", None) == "openai":
+        try:
+            result["openai_usage"] = _report_openai_usage_fingerprint(client, report)
+        except Exception as exc:  # the add-on must never become a Step 14 crash
+            print(f"step14 usage fingerprint: {type(exc).__name__}",
+                  file=sys.stderr)
+            report.p(
+                "\nUsage fingerprint **inconclusive**: internal error "
+                f"({type(exc).__name__}). Informational only; the audit "
+                "continues."
+            )
+            result["openai_usage"] = {"verdict": "inconclusive",
+                                      "error": type(exc).__name__}
     return result
 
+
+def _report_openai_usage_fingerprint(client, report):
+    """Step 14 add-on for OpenAI-format relays (v2.6, informational).
+
+    Runs only when the client already detected OpenAI-compatible format;
+    the Anthropic path and an undetected format keep the original Step 14
+    behavior (no extra request). One minimal ``client.call()`` with
+    ``max_tokens=4``; its ``usage`` key names are checked by
+    ``classify_openai_usage``. Key names are rendered sanitized and capped
+    by ``format_usage_key_list``; a probe error shows only ``HTTP <status>``
+    or ``transport error``. Not fed into the risk matrix.
+    """
+    report.h3("OpenAI-format usage fingerprint (informational)")
+    report.p(
+        "The client talks to this relay in OpenAI-compatible format, so "
+        "Step 14 also sends one minimal `/v1/chat/completions` call "
+        "(`max_tokens=4`) and checks the key names of its `usage` object. "
+        "Any `claude_cache_creation*` key, or an `input_tokens` + "
+        "`output_tokens` pair that replaces the OpenAI names (or comes with "
+        "Anthropic-only cache keys) and has no `*_details` objects, means "
+        "the relay translates an Anthropic-shaped upstream response (Tier 1, "
+        "`anthropic-translated`). A declared `usage_source` other than "
+        "`openai` is labeled `foreign-usage-source` (Tier 1). Key names are "
+        "sanitized and capped; the only value shown is a sanitized "
+        "`usage_source`. "
+        "**Informational only** -- not fed into the overall risk rating.\n"
+    )
+
+    usage = run_openai_usage_probe(client)
+    verdict = usage["verdict"]
+    keys = format_usage_key_list(usage["usage_keys"])
+    matched = format_usage_key_list(usage["matched_keys"])
+    source = usage.get("usage_source_value")
+    confidence = f"{usage['confidence']:.2f}"
+    if usage["tier"]:
+        confidence += f" (Tier {usage['tier']})"
+
+    report.p("| Field | Value |")
+    report.p("|-------|-------|")
+    if usage["error"]:
+        report.p(f"| probe | ERR: {usage['error']} |")
+    report.p(f"| usage keys | {keys or '—'} |")
+    report.p(f"| matched keys | {matched or '—'} |")
+    if source is not None:
+        report.p(f"| usage_source | `usage_source={source}` |")
+    report.p(f"| evidence | {', '.join(usage['evidence']) or '—'} |")
+    report.p(f"| classified | `{usage['channel']}` |")
+    report.p(f"| confidence | {confidence} |")
+    report.p(f"| verdict | `{verdict}` |")
+
+    if verdict == "classified" and usage["channel"] == "anthropic-translated":
+        report.flag(
+            "green",
+            f"OpenAI-format usage carries Anthropic-translated fields "
+            f"({matched}): the relay converts an Anthropic-shaped upstream "
+            "response into OpenAI format. Expected when the audited model is "
+            "Claude; not by itself fraud -- it matters only if the claimed "
+            "model is not Claude or Steps 5/13 also flag. Informational only, "
+            "not in the risk matrix.",
+        )
+    elif verdict == "classified":
+        report.flag(
+            "green",
+            f"OpenAI-format usage declares a non-openai `usage_source` "
+            f"(`usage_source={source}`). This is a self-reported marker; it "
+            "may name another provider or relay-side token accounting. "
+            "Informational only, not in the risk matrix.",
+        )
+    elif verdict == "no-signal" and OPENAI_USAGE_WEAK_PAIR_EVIDENCE in usage["evidence"]:
+        report.p(
+            "\nWeak naming hint only: `input_tokens` + `output_tokens` appear "
+            "next to OpenAI names or `*_details` objects. Some "
+            "OpenAI-compatible stacks emit this shape, so it is not "
+            "attributed to any upstream. Informational only."
+        )
+    elif verdict == "no-signal":
+        report.p(
+            "\nNo Anthropic-translated or foreign-source usage fields: the "
+            "`usage` object uses standard OpenAI names (or the relay scrubs "
+            "them). Informational only."
+        )
+    else:
+        report.p(
+            "\nUsage fingerprint **inconclusive**: the probe failed or the "
+            "response had no `usage` object. Informational only; the audit "
+            "continues."
+        )
+
+    print(f"  Done: OpenAI usage fingerprint ({verdict})")
+    return usage
 
 # ============================================================
 # Fail-open step wrapper
@@ -6706,6 +9370,7 @@ def _run_audit(args, report_stdout):
     print("[3/14] Token injection detection...")
     injection = _run_step("Step 3 token injection", report,
                           test_token_injection, client, report,
+                          not args.skip_usage_sanity,
                           default=None, crashes=step_crashes)
 
     # 4. Prompt extraction
@@ -6734,18 +9399,18 @@ def _run_audit(args, report_stdout):
     else:
         print("[7/14] Context length test (skipped)")
 
-    # 8. Tool-call package substitution (AC-1.a)
+    # 8. Tool-call integrity (text AC-1.a + structured AC-1)
     substitution_detected = False
     substitution_inconclusive = False
     if not args.skip_tool_substitution:
-        print("[8/14] Tool-call substitution test...")
+        print("[8/14] Tool-call integrity test...")
         substitution_detected, substitution_inconclusive = _run_step(
-            "Step 8 tool substitution", report,
+            "Step 8 tool-call integrity", report,
             test_tool_substitution, client, report,
             default=(False, True), crashes=step_crashes,
         )
     else:
-        print("[8/14] Tool-call substitution test (skipped)")
+        print("[8/14] Tool-call integrity test (skipped)")
 
     # 9. Error response header leakage (AC-2 adjacent)
     err_severity = "none"
@@ -6768,6 +9433,7 @@ def _run_audit(args, report_stdout):
         stream_verdict, stream_inconclusive = _run_step(
             "Step 10 stream integrity", report,
             test_stream_integrity, client, report,
+            getattr(args, "verify_signature", False),
             default=("clean", True), crashes=step_crashes,
         )
     else:
@@ -6829,8 +9495,8 @@ def _run_audit(args, report_stdout):
     #   D1i = Step 3 crashed / inconclusive                 (Step 3)
     #   D2  = caller system instruction not followed        (Step 5)
     #   D2i = Step 5 crashed / inconclusive                 (Step 5)
-    #   D3  = tool-call package substitution detected       (Step 8)
-    #   D3i = Step 8 inconclusive (all probes errored)      (Step 8)
+    #   D3  = text or structured Tool Call anomaly          (Step 8)
+    #   D3i = Step 8 text/structured path inconclusive      (Step 8)
     #   D4  = error response leakage (critical or high)     (Step 9)
     #   D4m = error response leakage (medium only)          (Step 9)
     #   D4i = Step 9 inconclusive                           (Step 9)
@@ -6866,9 +9532,10 @@ def _run_audit(args, report_stdout):
         reasons = []
         if d3:
             reasons.append(
-                "**Tool-call package substitution detected (AC-1.a).** "
-                "A malicious middleware is rewriting package-install commands "
-                "on the return path -- a code-execution-level finding."
+                "**Tool-call integrity anomaly detected (AC-1 / AC-1.a).** "
+                "A Tool Call or package-install command on the return path appears to "
+                "have been rewritten, or the Tool Call's stop reason did not match; an agent "
+                "loop may execute the wrong call or ignore the call."
             )
         if err_severity == "critical":
             reasons.append(
@@ -6938,9 +9605,9 @@ def _run_audit(args, report_stdout):
             )
         if d3i:
             medium_reasons.append(
-                "Tool-call substitution test (Step 8) was **inconclusive**: "
-                "every probe errored, so the relay's AC-1.a behavior could not "
-                "be verified -- a relay that blocks plaintext echo is itself a red flag."
+                "Tool-call integrity test (Step 8) was **inconclusive**: at least "
+                "one text or structured Tool Call path could not be verified. "
+                "The relay may reject strict tool schemas or block the probe format."
             )
         if d4m:
             medium_reasons.append(

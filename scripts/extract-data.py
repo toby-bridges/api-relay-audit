@@ -101,25 +101,41 @@ def parse_report(file_path):
     if "owned_by: openai" in content_lower:
         api_format = "Both" if "owned_by: vertex-ai" in content_lower else "OpenAI"
 
-    # Tool-call package substitution (Step 8, AC-1.a)
+    # Tool-call integrity (Step 8, structured fields are optional for legacy data)
     tool_substitution = {"detected": False, "probes": []}
     sub_section_match = re.search(
-        r"## 8\. Tool-Call Package Substitution.*?(?=\n## |\Z)",
+        r"## 8\. (?:Tool-Call Integrity|Tool-Call Package Substitution)"
+        r".*?(?=\n## |\Z)",
         content, re.DOTALL,
     )
     if sub_section_match:
         section = sub_section_match.group(0)
-        # Detection verdict from the flag line
-        if "SUBSTITUTED" in section or "substitution detected" in section.lower():
+        lines = section.split("\n")
+        # Detection comes only from report-generated markers: red flag lines,
+        # the structured verdict field, and per-probe verdict cells. Relay
+        # text (received cells, argument previews, text excerpts) never starts
+        # a line with these markers, so quoting "SUBSTITUTED" cannot flip it.
+        flag_detected = any(
+            line.startswith("\U0001f534 **")
+            and (
+                "substitution detected" in line.lower()
+                or "integrity anomaly detected" in line.lower()
+            )
+            for line in lines
+        )
+        if flag_detected or re.search(
+            r"^\*\*Structured verdict\*\*:\s*`anomaly`", section, re.MULTILINE
+        ):
             tool_substitution["detected"] = True
         # Parse the per-probe table rows
-        for line in section.split("\n"):
+        for line in lines:
             if not line.startswith("| "):
                 continue
             # Skip the header and separator rows
             if "Manager" in line or "---" in line:
                 continue
-            parts = [p.strip() for p in line.split("|")[1:-1]]
+            # Split on unescaped pipes only; reports escape relay "|" as "\|".
+            parts = [p.strip() for p in re.split(r"(?<!\\)\|", line)[1:-1]]
             if len(parts) >= 4:
                 verdict_cell = parts[3]
                 if "exact" in verdict_cell:
@@ -138,6 +154,33 @@ def parse_report(file_path):
                     "received": parts[2].strip("`"),
                     "verdict": verdict,
                 })
+        if any(p["verdict"] == "substituted" for p in tool_substitution["probes"]):
+            tool_substitution["detected"] = True
+
+        structured_verdict = re.search(
+            r"\*\*Structured verdict\*\*:\s*`([^`]+)`", section)
+        if structured_verdict:
+            expected_count = re.search(
+                r"\*\*Expected calls\*\*:\s*`(\d+)`", section)
+            received_count = re.search(
+                r"\*\*Observed calls\*\*:\s*`(\d+)`", section)
+            name_match = re.search(
+                r"\*\*Tool name match\*\*:\s*`(true|false|unknown)`", section)
+            arguments_match = re.search(
+                r"\*\*Arguments match\*\*:\s*`(true|false|unknown)`", section)
+
+            def parse_optional_bool(match):
+                if not match or match.group(1) == "unknown":
+                    return None
+                return match.group(1) == "true"
+
+            tool_substitution["structured"] = {
+                "verdict": structured_verdict.group(1),
+                "expectedCount": int(expected_count.group(1)) if expected_count else None,
+                "receivedCount": int(received_count.group(1)) if received_count else None,
+                "nameMatch": parse_optional_bool(name_match),
+                "argumentsMatch": parse_optional_bool(arguments_match),
+            }
 
     # Error response leakage (Step 9, AC-2 adjacent)
     error_leakage = {"severity": "none", "triggers": []}

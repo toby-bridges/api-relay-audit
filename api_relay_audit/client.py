@@ -16,6 +16,7 @@ import httpx
 
 from api_relay_audit import _transport
 from api_relay_audit.error_diagnosis import diagnose_error
+from api_relay_audit.error_leakage import redact_sensitive_text
 from api_relay_audit.stream_integrity import StreamSignals
 
 
@@ -42,6 +43,49 @@ def _extract_anthropic_text(content) -> str:
         if isinstance(text, str):
             parts.append(text)
     return "".join(parts)
+
+
+TOOL_PROBE_TEXT_LIMIT = 200
+
+
+def _is_token_char(char) -> bool:
+    return (char.isascii() and char.isalnum()) or char in "-_.~+/="
+
+
+def _clip_probe_text(text, limit=TOOL_PROBE_TEXT_LIMIT) -> str:
+    """Bound the text a no-call Tool Call probe returned.
+
+    When the cut lands inside a token, the partial token is dropped so a
+    truncated credential cannot fall below the redaction patterns' minimum
+    length before the report layer redacts the excerpt.
+    """
+    if not isinstance(text, str):
+        return ""
+    if len(text) <= limit:
+        return text
+    end = limit
+    if _is_token_char(text[limit]):
+        while end and _is_token_char(text[end - 1]):
+            end -= 1
+    return text[:end]
+
+
+def _thinking_config(max_tokens: int) -> dict:
+    """Return the ``thinking`` request field shared by :meth:`APIClient.call`
+    and :meth:`APIClient.stream_call`.
+
+    ``thinking.budget_tokens`` must be strictly less than ``max_tokens``.
+    Keeping one builder means a stream / non-stream request pair always
+    asks for the same thinking configuration.
+    """
+    return {"type": "enabled", "budget_tokens": max(1, max_tokens - 1)}
+
+
+def _optional_call_kwargs(with_thinking=False) -> dict:
+    """Return ``with_thinking`` as a keyword argument only when set, so a
+    default call keeps its original ``(messages, system, max_tokens)`` shape
+    all the way down to the format-specific helpers."""
+    return {"with_thinking": True} if with_thinking else {}
 
 
 def _parse_curl_i_output(output: str) -> dict:
@@ -140,6 +184,8 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
                 signals.content_block_types.append(block_type)
             if block.get("type") == "thinking":
                 signals.thinking_start_seen = True
+            if block.get("type") in ("thinking", "redacted_thinking"):
+                _capture_thinking_block_start(event, block, signals)
 
     elif event_type == "content_block_delta":
         signals.has_content_block_delta = True
@@ -151,15 +197,25 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
 
             if delta_type == "text_delta":
                 signals.has_text_delta = True
+                text = delta.get("text")
+                if isinstance(text, str) and len(signals.text) < MAX_STREAM_TEXT_CHARS:
+                    signals.text = (signals.text + text)[:MAX_STREAM_TEXT_CHARS]
             elif delta_type == "thinking_delta":
                 signals.thinking_delta_seen = True
+                _capture_thinking_delta(event, signals, "thinking", delta.get("thinking"))
             elif delta_type == "signature_delta":
                 signature = delta.get("signature")
                 if isinstance(signature, str) and not signature.strip():
                     signals.empty_signature_delta_count += 1
+                _capture_thinking_delta(event, signals, "signature", signature)
 
     elif event_type == "message_delta":
         signals.has_message_delta = True
+        message_delta = event.get("delta", {})
+        if isinstance(message_delta, dict):
+            stop_reason = message_delta.get("stop_reason")
+            if isinstance(stop_reason, str) and stop_reason:
+                signals.stop_reason = stop_reason
         usage = event.get("usage", {})
         if isinstance(usage, dict):
             input_tokens = usage.get("input_tokens")
@@ -173,12 +229,124 @@ def _populate_stream_signals(event: dict, signals: StreamSignals) -> None:
         signals.has_message_stop = True
 
 
+def _thinking_capture_size(signals: StreamSignals) -> int:
+    """Characters held in ``signals.thinking_blocks`` payload fields."""
+    size = 0
+    for block in signals.thinking_blocks:
+        for key in ("thinking", "signature", "data"):
+            value = block.get(key)
+            if isinstance(value, str):
+                size += len(value)
+    return size
+
+
+def _content_block_index(event: dict):
+    """Return the event's content block ``index``, or ``None`` if missing."""
+    index = event.get("index")
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        return None
+    return index
+
+
+def _stop_thinking_capture(signals: StreamSignals, reason: str) -> None:
+    """Mark the thinking capture as not replayable; the first reason wins."""
+    if signals.thinking_capture_issue is None:
+        signals.thinking_capture_issue = reason
+
+
+def _capture_thinking_block_start(event: dict, block: dict,
+                                  signals: StreamSignals) -> None:
+    """Open one captured ``thinking`` / ``redacted_thinking`` block.
+
+    The block is kept in the shape the Messages API accepts back and keyed by
+    the event's content block ``index``. A missing or repeated index, or a
+    bound being hit, stops the capture for good with a reason, so an
+    uncertain or partial capture is never replayed.
+    """
+    if signals.thinking_capture_issue is not None:
+        return
+    index = _content_block_index(event)
+    if index is None:
+        _stop_thinking_capture(
+            signals, "a thinking block started without a content block index")
+        return
+    if index in signals.thinking_block_indexes:
+        _stop_thinking_capture(signals, f"content block {index} started twice")
+        return
+    if block.get("type") == "redacted_thinking":
+        data = block.get("data")
+        entry = {"type": "redacted_thinking",
+                 "data": data if isinstance(data, str) else ""}
+    else:
+        thinking = block.get("thinking")
+        signature = block.get("signature")
+        entry = {"type": "thinking",
+                 "thinking": thinking if isinstance(thinking, str) else "",
+                 "signature": signature if isinstance(signature, str) else ""}
+    added = sum(len(v) for k, v in entry.items() if k != "type")
+    if (len(signals.thinking_blocks) >= MAX_STREAM_THINKING_BLOCKS
+            or _thinking_capture_size(signals) + added > MAX_STREAM_THINKING_CHARS):
+        _stop_thinking_capture(signals, "the thinking capture bound was exceeded")
+        return
+    signals.thinking_blocks.append(entry)
+    signals.thinking_block_indexes.append(index)
+
+
+def _capture_thinking_delta(event: dict, signals: StreamSignals, key: str,
+                            value) -> None:
+    """Append a ``thinking_delta`` / ``signature_delta`` value to its block.
+
+    The block is found by the event's content block ``index``, so interleaved
+    blocks and a signature_delta that precedes the thinking text are still
+    attributed correctly. A delta whose index is not a started thinking block
+    stops the capture. A genuine stream sends one ``signature_delta`` per
+    block; values are appended (official SDKs assign), which is the same on a
+    genuine stream and keeps a relay that splits the signature replayable.
+    """
+    if signals.thinking_capture_issue is not None or not isinstance(value, str):
+        return
+    index = _content_block_index(event)
+    if index is None or index not in signals.thinking_block_indexes:
+        _stop_thinking_capture(
+            signals, f"a {key} delta arrived for content block {index}, which "
+                     "is not a started thinking block")
+        return
+    block = signals.thinking_blocks[signals.thinking_block_indexes.index(index)]
+    if block.get("type") != "thinking":
+        _stop_thinking_capture(
+            signals, f"a {key} delta arrived for redacted_thinking block {index}")
+        return
+    if _thinking_capture_size(signals) + len(value) > MAX_STREAM_THINKING_CHARS:
+        _stop_thinking_capture(signals, "the thinking capture bound was exceeded")
+        return
+    block[key] += value
+
 # v1.7.1 safety valve: cap the SSE parser buffer so a malformed/
 # malicious relay that sends a huge chunk without newlines cannot
 # grow memory unboundedly. 1 MB is comfortably above any real
 # Anthropic event size (biggest thinking blocks are ~100 KB).
 MAX_STREAM_BUFFER_BYTES = 1024 * 1024
+# Same idea for StreamSignals.text: bound memory and CPU when a relay streams
+# far more text than requested. 64 KiB is far above Step 10's 100-token probe.
+MAX_STREAM_TEXT_CHARS = 64 * 1024
+# Same idea for StreamSignals.thinking_blocks (thinking text, signatures and
+# redacted data kept for the opt-in signature round-trip). Step 10's probe
+# thinks for under 100 tokens, so real streams stay far below both bounds.
+MAX_STREAM_THINKING_CHARS = 64 * 1024
+MAX_STREAM_THINKING_BLOCKS = 16
+# Error text kept from a signature replay, after redaction.
+REPLAY_ERROR_CHARS = 160
 CURL_STATUS_SENTINEL = "__CODEX_HTTP_STATUS__:"
+
+
+def _clip_replay_error(text, api_key: str) -> str:
+    """Redact, flatten and clip the error text of a signature replay.
+
+    Redaction runs on the full text before the cut, so a credential cannot
+    survive by being split at the boundary.
+    """
+    text = redact_sensitive_text(str(text), api_key)
+    return " ".join(text.split())[:REPLAY_ERROR_CHARS]
 
 
 def _process_sse_line(line: str, signals: StreamSignals) -> bool:
@@ -347,7 +515,8 @@ class APIClient:
 
     # -- Anthropic native format ----------------------------------------------
 
-    def _call_anthropic(self, messages, system=None, max_tokens=512):
+    def _call_anthropic(self, messages, system=None, max_tokens=512,
+                        with_thinking=False):
         url = self.base_url
         if url.endswith("/v1"):
             url = url[:-3]
@@ -356,6 +525,8 @@ class APIClient:
         body = {"model": self.model, "max_tokens": max_tokens, "messages": messages}
         if system:
             body["system"] = system
+        if with_thinking:
+            body["thinking"] = _thinking_config(max_tokens)
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
@@ -376,7 +547,11 @@ class APIClient:
 
     # -- OpenAI compatible format ---------------------------------------------
 
-    def _call_openai(self, messages, system=None, max_tokens=512):
+    def _call_openai(self, messages, system=None, max_tokens=512,
+                     with_thinking=False):
+        # ``with_thinking`` is accepted for signature parity with
+        # ``_call_anthropic`` but ignored: Chat Completions has no standard
+        # ``thinking`` field, and strict endpoints reject unknown fields.
         url = self.base_url
         if not url.endswith("/v1"):
             url += "/v1"
@@ -405,6 +580,185 @@ class APIClient:
             "raw": data,
         }
 
+    def _prepare_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256):
+        url = self.base_url
+        if url.endswith("/v1"):
+            url = url[:-3]
+        url += "/v1/messages"
+
+        body = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+            "tools": [{**tool_spec, "strict": True}],
+            "tool_choice": {
+                "type": "tool",
+                "name": tool_spec["name"],
+                "disable_parallel_tool_use": True,
+            },
+        }
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        return url, headers, body
+
+    def _call_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256,
+                                   prepared=None):
+        url, headers, body = prepared or self._prepare_tool_probe_anthropic(
+            messages, tool_spec, max_tokens=max_tokens)
+        data = self._post(url, headers, body)
+        if "_http_error" in data:
+            return self._error_result(data["_http_error"])
+
+        tool_calls = []
+        content = data.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    # Keep malformed entries so the integrity analysis can
+                    # report the response shape as invalid instead of clean.
+                    tool_calls.append(block)
+                    continue
+                block_type = block.get("type")
+                tool_like = block_type == "tool_use" or any(
+                    key in block for key in ("id", "name", "input")
+                )
+                if not tool_like:
+                    continue
+                arguments = block.get("input")
+                arguments_error = None
+                if not isinstance(arguments, dict):
+                    arguments_error = "Anthropic tool input was not a JSON object"
+                    arguments = None
+                tool_calls.append({
+                    "type": "function" if block_type == "tool_use" else block_type,
+                    "id": block.get("id"),
+                    "name": block.get("name"),
+                    "arguments": arguments,
+                    "arguments_error": arguments_error,
+                })
+
+        usage = data.get("usage", {})
+        result = {
+            "protocol": "anthropic",
+            "tool_calls": tool_calls,
+            "stop_reason": data.get("stop_reason"),
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "raw": data,
+        }
+        if not tool_calls:
+            result["text"] = _clip_probe_text(_extract_anthropic_text(content))
+        return result
+
+    def _prepare_tool_probe_openai(self, messages, tool_spec, max_tokens=256):
+        url = self.base_url
+        if not url.endswith("/v1"):
+            url += "/v1"
+        url += "/chat/completions"
+
+        body = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": tool_spec["name"],
+                    "description": tool_spec["description"],
+                    "parameters": tool_spec["input_schema"],
+                    "strict": True,
+                },
+            }],
+            "tool_choice": {
+                "type": "function",
+                "function": {"name": tool_spec["name"]},
+            },
+            "parallel_tool_calls": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "content-type": "application/json",
+        }
+        return url, headers, body
+
+    def _call_tool_probe_openai(self, messages, tool_spec, max_tokens=256,
+                                prepared=None):
+        url, headers, body = prepared or self._prepare_tool_probe_openai(
+            messages, tool_spec, max_tokens=max_tokens)
+        data = self._post(url, headers, body)
+        if "_http_error" in data:
+            return self._error_result(data["_http_error"])
+
+        choices = data.get("choices", [])
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        if not isinstance(choice, dict):
+            choice = {}
+        message = choice.get("message", {})
+        if not isinstance(message, dict):
+            message = {}
+        raw_calls = message.get("tool_calls", [])
+        if not isinstance(raw_calls, list):
+            raw_calls = []
+
+        tool_calls = []
+        for raw_call in raw_calls:
+            if not isinstance(raw_call, dict):
+                # Keep malformed entries so the integrity analysis can
+                # report the response shape as invalid instead of clean.
+                tool_calls.append(raw_call)
+                continue
+            call_type = raw_call.get("type")
+            if call_type == "function":
+                function = raw_call.get("function", {})
+                if not isinstance(function, dict):
+                    function = {}
+                raw_arguments = function.get("arguments")
+                arguments = None
+                arguments_error = None
+                if not isinstance(raw_arguments, str):
+                    arguments_error = "OpenAI tool arguments were not a JSON string"
+                else:
+                    try:
+                        arguments = json.loads(raw_arguments)
+                    except (TypeError, ValueError):
+                        arguments_error = "invalid JSON arguments"
+                    if arguments_error is None and not isinstance(arguments, dict):
+                        arguments_error = "OpenAI tool arguments were not a JSON object"
+                        arguments = None
+                name = function.get("name")
+            else:
+                custom = raw_call.get("custom", {})
+                if not isinstance(custom, dict):
+                    custom = {}
+                name = custom.get("name")
+                arguments = None
+                arguments_error = "Unexpected non-function Tool Call type"
+            tool_calls.append({
+                "type": call_type,
+                "id": raw_call.get("id"),
+                "name": name,
+                "arguments": arguments,
+                "arguments_error": arguments_error,
+            })
+
+        usage = data.get("usage", {})
+        result = {
+            "protocol": "openai",
+            "tool_calls": tool_calls,
+            "stop_reason": choice.get("finish_reason"),
+            "input_tokens": usage.get("prompt_tokens", 0),
+            "output_tokens": usage.get("completion_tokens", 0),
+            "raw": data,
+        }
+        if not tool_calls:
+            content = message.get("content")
+            text = content if isinstance(content, str) else _extract_anthropic_text(content)
+            result["text"] = _clip_probe_text(text)
+        return result
+
     # -- Public API -----------------------------------------------------------
 
     def ensure_format(self):
@@ -432,7 +786,7 @@ class APIClient:
         except Exception:
             pass
 
-    def call(self, messages, system=None, max_tokens=512):
+    def call(self, messages, system=None, max_tokens=512, with_thinking=False):
         """Send a chat completion request, auto-detecting format on first call.
 
         The method records wall-clock elapsed time and attaches it as the
@@ -445,6 +799,9 @@ class APIClient:
                 ``"system"`` field (Anthropic) or as a system-role message
                 (OpenAI).
             max_tokens: Maximum tokens to generate. Defaults to 512.
+            with_thinking: If True, send the same ``thinking`` block that
+                :meth:`stream_call` sends. Anthropic format only; the
+                OpenAI-compatible body ignores it. Defaults to False.
 
         Returns:
             A dict with the following keys on success:
@@ -464,10 +821,15 @@ class APIClient:
             ...     print(result["text"])
         """
         start = time.time()
-        request_body = json.dumps({"model": self.model, "max_tokens": max_tokens,
-                                   "messages": messages, "system": system or ""})
+        logged_request = {"model": self.model, "max_tokens": max_tokens,
+                          "messages": messages, "system": system or ""}
+        if with_thinking:
+            logged_request["thinking"] = _thinking_config(max_tokens)
+        request_body = json.dumps(logged_request)
         try:
-            result = self._call_with_detection(messages, system, max_tokens)
+            result = self._call_with_detection(
+                messages, system, max_tokens,
+                **_optional_call_kwargs(with_thinking))
             result["time"] = time.time() - start
             # v1.7.7 transparent-log
             self._log_transparent(
@@ -483,6 +845,54 @@ class APIClient:
                 request_body, None, 0, None, elapsed, str(e))
             return self._error_result(e, time=elapsed)
 
+    def call_tool_probe(self, messages, tool_spec, max_tokens=256):
+        """Request one inert client Tool Call without ever executing it.
+
+        ``tool_spec`` uses the protocol-neutral Anthropic shape (``name``,
+        ``description``, ``input_schema``). The client forces that tool,
+        disables parallel calls, and normalizes Anthropic/OpenAI responses
+        into a shared ``tool_calls`` list. No executor callback exists and no
+        ``tool_result`` follow-up request is sent.
+        """
+        start = time.time()
+        request_url = self._resolve_call_url()
+        request_body = json.dumps({})
+        try:
+            if self._format is None:
+                self.ensure_format()
+            if self._format == "anthropic":
+                prepared = self._prepare_tool_probe_anthropic(
+                    messages, tool_spec, max_tokens=max_tokens)
+                request_url, _, wire_body = prepared
+                request_body = json.dumps(wire_body)
+                result = self._call_tool_probe_anthropic(
+                    messages, tool_spec, max_tokens=max_tokens,
+                    prepared=prepared)
+            elif self._format == "openai":
+                prepared = self._prepare_tool_probe_openai(
+                    messages, tool_spec, max_tokens=max_tokens)
+                request_url, _, wire_body = prepared
+                request_body = json.dumps(wire_body)
+                result = self._call_tool_probe_openai(
+                    messages, tool_spec, max_tokens=max_tokens,
+                    prepared=prepared)
+            else:
+                result = self._error_result(
+                    "Could not detect API format for structured Tool Call probe")
+            result["time"] = time.time() - start
+            self._log_transparent(
+                "tool_call_probe", request_url, "POST",
+                request_body, json.dumps(result.get("raw", {})),
+                200 if "error" not in result else 0,
+                None, result["time"], result.get("error"))
+            return result
+        except Exception as e:
+            elapsed = time.time() - start
+            self._log_transparent(
+                "tool_call_probe", request_url, "POST",
+                request_body, None, 0, None, elapsed, str(e))
+            return self._error_result(e, time=elapsed)
+
     def _resolve_call_url(self) -> str:
         """Reconstruct the URL used by the last ``call()`` based on detected format."""
         base = self.base_url
@@ -495,17 +905,19 @@ class APIClient:
             base = base[:-3]
         return base + "/v1/messages"
 
-    def _call_with_detection(self, messages, system, max_tokens):
+    def _call_with_detection(self, messages, system, max_tokens,
+                             with_thinking=False):
+        extra = _optional_call_kwargs(with_thinking)
         # Already detected — use that format
         if self._format == "openai":
-            return self._call_openai(messages, system, max_tokens)
+            return self._call_openai(messages, system, max_tokens, **extra)
         if self._format == "anthropic":
-            return self._call_anthropic(messages, system, max_tokens)
+            return self._call_anthropic(messages, system, max_tokens, **extra)
 
         # Auto-detect: try Anthropic first
         anthropic_result = None
         try:
-            anthropic_result = self._call_anthropic(messages, system, max_tokens)
+            anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
             if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                 self._format = "anthropic"
                 self._log("  [format] -> Anthropic native")
@@ -514,7 +926,7 @@ class APIClient:
             if self._handle_ssl_error(e):
                 # Retry Anthropic with curl before falling through to OpenAI
                 try:
-                    anthropic_result = self._call_anthropic(messages, system, max_tokens)
+                    anthropic_result = self._call_anthropic(messages, system, max_tokens, **extra)
                     if "error" not in anthropic_result and anthropic_result.get("text", "").strip():
                         self._format = "anthropic"
                         self._log("  [format] -> Anthropic native (curl)")
@@ -526,7 +938,7 @@ class APIClient:
         self._log("  [format] Anthropic failed/empty, trying OpenAI...")
         openai_result = None
         try:
-            openai_result = self._call_openai(messages, system, max_tokens)
+            openai_result = self._call_openai(messages, system, max_tokens, **extra)
             if "error" not in openai_result and openai_result.get("text", "").strip():
                 self._format = "openai"
                 suffix = " (curl)" if self._use_curl else ""
@@ -534,7 +946,7 @@ class APIClient:
                 return openai_result
         except Exception as e:
             if self._handle_ssl_error(e):
-                return self._call_with_detection(messages, system, max_tokens)
+                return self._call_with_detection(messages, system, max_tokens, **extra)
 
         # Both failed — return whichever has more info
         if anthropic_result and "error" not in anthropic_result:
@@ -781,10 +1193,7 @@ class APIClient:
             body["system"] = system
         if with_thinking:
             # thinking.budget_tokens must be strictly less than max_tokens
-            body["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": max(1, max_tokens - 1),
-            }
+            body["thinking"] = _thinking_config(max_tokens)
 
         headers = {
             "x-api-key": self.api_key,
@@ -816,6 +1225,93 @@ class APIClient:
                 signals.transport_error)
 
         return signals
+
+    def replay_thinking(self, messages_prefix, assistant_content,
+                        follow_up_text, max_tokens=32) -> dict:
+        """Pass a streamed assistant turn back once (opt-in signature round-trip).
+
+        Sends one non-stream Anthropic request whose ``messages`` are
+        ``messages_prefix`` (the original user turn, unchanged), an assistant
+        turn whose ``content`` is ``assistant_content`` exactly as given (the
+        streamed thinking blocks plus the reply text) and a new user turn with
+        ``follow_up_text``. ``thinking`` comes from the same builder as the
+        Step 10 stream. No system prompt, tools or sampling parameters are
+        sent: current API versions reject temperature / top_p / top_k.
+
+        Never raises. Returns a normalized dict:
+
+        - ``status``: HTTP status code, or ``None`` on a transport failure
+        - ``error``: ``None`` on a 2xx message reply; otherwise the message of
+          an error body, else ``"HTTP <status>"`` (a 2xx whose body is an
+          error or not a message is an error too) or the transport error,
+          redacted and clipped to :data:`REPLAY_ERROR_CHARS` characters. A
+          raw response body is never copied.
+        - ``error_type``: ``error.type`` of an Anthropic error body, or ``None``
+        - ``input_tokens``: ``usage.input_tokens`` of a 2xx message reply, or
+          ``None``
+        """
+        result = {"status": None, "error": None, "error_type": None,
+                  "input_tokens": None}
+        try:
+            body = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "messages": list(messages_prefix) + [
+                    {"role": "assistant", "content": assistant_content},
+                    {"role": "user", "content": follow_up_text},
+                ],
+                "thinking": _thinking_config(max_tokens),
+            }
+            headers = {
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+            }
+            response = self.raw_request(
+                "POST", "/v1/messages", headers,
+                json.dumps(body).encode("utf-8"),
+                content_type="application/json", timeout=self.timeout,
+            )
+            if not isinstance(response, dict):
+                response = {"status": 0, "error": "unexpected raw_request result"}
+            status = response.get("status")
+            if isinstance(status, bool) or not isinstance(status, int) or status <= 0:
+                result["error"] = _clip_replay_error(
+                    response.get("error") or "no HTTP status", self.api_key)
+                return result
+            result["status"] = status
+            body_text = response.get("body")
+            body_text = body_text if isinstance(body_text, str) else ""
+            try:
+                payload = json.loads(body_text) if body_text.strip() else None
+            except ValueError:
+                payload = None
+            is_message = isinstance(payload, dict) and payload.get("type") == "message"
+            if 200 <= status < 300 and is_message:
+                usage = payload.get("usage")
+                input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
+                if isinstance(input_tokens, int) and not isinstance(input_tokens, bool):
+                    result["input_tokens"] = input_tokens
+                return result
+            # Not an accepted replay: a non-2xx status, or a 2xx whose body is
+            # an error or not a message. Only the error object's type and
+            # message are kept; a raw body (an HTML error page, say) is never
+            # copied into the result.
+            message = None
+            error_obj = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(error_obj, dict):
+                if payload.get("type") == "error" and isinstance(error_obj.get("type"), str):
+                    result["error_type"] = _clip_replay_error(
+                        error_obj["type"], self.api_key)
+                if isinstance(error_obj.get("message"), str) and error_obj["message"].strip():
+                    message = error_obj["message"]
+            if message is None:
+                message = (f"HTTP {status} without a message body"
+                           if 200 <= status < 300 else f"HTTP {status}")
+            result["error"] = _clip_replay_error(message, self.api_key)
+        except Exception as e:
+            result["error"] = _clip_replay_error(
+                f"{type(e).__name__}: {e}", self.api_key)
+        return result
 
     def _stream_via_httpx(self, url: str, headers: dict, body: dict,
                           timeout: int, signals: StreamSignals,

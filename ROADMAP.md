@@ -35,6 +35,24 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
 - **Final test count**: 885/885 passing on the merged JSON source.
 - v2.5.0 release preparation follows these changes. Publication, GEO/SEO work,
   and additional ecosystem connectors have separate verification gates.
+### 2026-08-24 follow-up — Structured Tool Call integrity
+- **Step 8 deepened without adding a step**: the four AC-1.a package-command
+  text probes remain, followed by one forced, non-streaming structured Tool
+  Call using a randomized tool name and canary arguments.
+- **Anthropic/OpenAI adapters**: `APIClient.call_tool_probe()` emits strict
+  one-tool schemas, disables parallel calls, normalizes both response shapes,
+  and records a hash-only transparent-log entry as `tool_call_probe`.
+- **No execution surface**: the audit exposes no executor callback, sends no
+  `tool_result`, and never runs returned tool names or arguments.
+- **Tri-state and D3 semantics preserved**: exact name/arguments/count is
+  `clean`; any mutation is `anomaly` and D3/HIGH; unsupported strict tools,
+  HTTP/format errors, or zero calls are D3i/MEDIUM. An anomaly always takes
+  priority over an inconclusive sibling path.
+- **Dual distribution preserved**: `tool_call_integrity.py` is a standalone
+  generator section, with curl-path and modular/standalone risk-parity tests.
+  Streaming Tool Call fragment reassembly remains a future Step 10 extension.
+- **Final test count**: 843/843 passing (808 baseline, +35 structured probe,
+  client adapter, orchestration, extractor, and standalone parity cases).
 
 ### 2026-08-16 distribution — DeepSeek Harness bundle
 - **Two-profile bundle**: the repository package installs into DSH web and
@@ -766,6 +784,35 @@ pass 条件：响应中不出现竞争模型名称 OR 明确重申 Claude 身份
 我们的"Explicitly NOT doing"表里已有此项，理由仍然成立：
 relay 可硬编码"May 2025"在 system prompt 里轻松绕过。**不重新评估。**
 
+### 2.8 veridrop 对照衍生候选 (2026-10-26)
+**来源**：canarybyte/veridrop main@e87ed92 逐检测器对照（会话记录 detector-diff-v1.md、veridrop-adoption-v1.md）。
+**状态**：v2.6 实施中。许可同为 AGPL-3.0，但其实现依赖 async httpx 与 rapidfuzz，只做方法引用、标准库重写，docstring 标明来源。
+**评审**：每条分支两轮独立评审（Opus 5.5，不同上下文），MUST 项修完再合入集成分支；本机无 codex CLI，未走 Codex 轮。
+
+#### 2.8.0 PR #95 补缺（P0）✅ 分支 feat/v26-p0-tool-call-gaps
+Final test count: 1063/1063 passing (collect-only under tests/ on v26-integration d2a2c08; full pytest run incl. scripts/: 1071)
+归一化响应加 protocol 标记；Anthropic 格式下 tool_use id 非 toolu_ 只记 protocol_notes；调用存在但 stop_reason 不是 tool_use（含缺失）判 anomaly 进 D3；OpenAI 格式 finish_reason 为 stop / tool_calls 正常，其余只记 note；无调用时记录脱敏、限长的 text_excerpt。
+#### 2.8.1 Step 10 跨模式对照（P1）✅ 分支 feat/v26-p1-stream-parity
+Final test count: 1063/1063 passing (collect-only under tests/ on v26-integration d2a2c08; full pytest run incl. scripts/: 1071)
+同题非流式请求与流对照；divergent 只由 input_tokens 差与流侧 stop_reason 决定，相似度与 output_tokens 只记 note（默认温度下文本会变，output 含 thinking）；信息性，不进 D5；阈值 provisional，待直连基线校准。temperature 参数不提供（官方文档：新 API 版本下带该参数即 400）。
+#### 2.8.2 Step 14 OpenAI 格式 usage 异源字段（P2b）✅ 分支 feat/v26-p2b-openai-usage-source
+Final test count: 1063/1063 passing (collect-only under tests/ on v26-integration d2a2c08; full pytest run incl. scripts/: 1071)
+Tier 1 信息性规则：claude_cache_creation* 键 → anthropic-translated；input_tokens+output_tokens 成对且无 *_details、且缺 OpenAI 命名或带 Anthropic cache 键 → anthropic-translated；usage_source 为非空且非 openai 的字符串 → foreign-usage-source；键名净化限长，错误行不带响应体。
+#### 2.8.3 Step 3 用量合理性（P2）✅ 分支 feat/v26-p2-usage-sanity
+Final test count: 1200/1200 passing (collect-only under tests/ on v26-integration after wave 2; full pytest run incl. scripts/: 1208)
+增量区间、输出上限、跨模式 usage（复用 P1 请求对）、count_tokens 对账；信息性；与"明确不做"表的精确计数不冲突；阈值需直连基线。
+#### 2.8.4 思维签名回传验签（P3）✅ 分支 feat/v26-p3-signature-roundtrip，可选 flag `--verify-signature`
+Final test count: 1200/1200 passing (same run as 2.8.3)
+--verify-signature 默认关；原样回传期望 200、改一位期望 400；同模型回传；Sonnet 5.5 / Haiku 5.5 的 thinking 块绑定账号，号池信号待验证。
+#### 2.8.5 不做
+行为指纹正则版（见 §10、§11a）、知识截止（见"明确不做"表）、PDF 能力（另见 §2.6.2）。
+#### 2.8.6 本波次明确不做（附触发条件）
+- 跨模式 output_tokens 对照：默认温度下 output 含 thinking token、每次都变，Step 10 只对照 input_tokens；触发条件：拿到直连基线证明 output 在同配置下稳定。
+- 用量阈值校准：A 的 40–240、C 的 ±2 都是 provisional；触发条件：一次直连 Anthropic 基线运行。
+- 签名回传带工具调用的强探针：本波次只做非工具调用回传，模型可能在校验前剥离块；触发条件：有真上游录制响应。
+**已知待办（基线既有）**：httpx 流式解码可能丢跨块多字节字符（P3 后会抬高 inconclusive 比例，单文件版不受影响）；Step 8 文本探针单元格与 err_short 的脱敏（P0 二轮 S2）。
+**已知待办**：Step 10 探针 budget_tokens=99 是否低于官方下限，当前文档页未见下限，待直连基线一并核实。
+
 ### 3. MistTrack AML integration (profile=web3|full, optional)
 **Status**: sketched in SlowMist OpenClaw Practice Guide, not started
 **Scope**: ~100 LOC adapter + external API dependency
@@ -782,19 +829,16 @@ modular-only, with `--profile full` gate.
 
 ## 🛠 Medium-term ideas (1-3 month horizon)
 
-### 6. Full AC-1 tool_call support (as opposed to AC-1.a text echo)
-**Status**: backlog item from Step 8
-**Scope**: ~150 LOC — `APIClient.tool_call()` method + structured
-tool_call payload inspection + matching probe set
-**Why**: Step 8 currently catches AC-1.a (typosquat on plain text echoes)
-via text-level comparison. A more specific attack — rewriting the
-`tool_calls` JSON payload but leaving plain text alone — is not caught.
-Paper §4.2.1 notes: "the compromised dependency is cached locally and
-re-imported across future sessions, giving the attacker a durable
-supply-chain foothold."
-**Cost vs benefit**: marginal coverage uplift over AC-1.a (all observed
-wild samples were AC-1.a). Defer until the first wild AC-1 case is
-reported.
+### 6. Full non-streaming AC-1 tool_call support ✅ shipped 2026-08-24
+**Status**: completed in Step 8
+**Delivered**: `APIClient.call_tool_probe()` plus
+`api_relay_audit/tool_call_integrity.py` now inspect strict Anthropic and
+OpenAI structured Tool Calls for name, JSON-argument, type, and call-count
+mutation. The existing AC-1.a text probes remain as a complementary path.
+**Boundary**: this probe is deliberately non-streaming and observe-only; it
+does not execute calls or submit tool results. Anthropic/OpenAI streaming
+fragment reassembly belongs to a future Step 10 enhancement rather than this
+completed item.
 
 ### 7. Schema deviation anomaly detection (paper §7.2)
 **Status**: paper lists it as a detection dimension; we don't implement

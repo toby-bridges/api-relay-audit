@@ -36,6 +36,14 @@ text the user sees looks correct:
    Trailing ``ping`` keepalives are allowed. A graceful HTTP close or a
    generic ``[DONE]`` sentinel does not replace this protocol terminator.
 
+Step 10 also records an informational **stream / non-stream parity**
+observation (:func:`compare_stream_nonstream`): the same request is sent
+once more without streaming. The parity verdict uses ``input_tokens`` and
+the streamed ``stop_reason``; ``output_tokens`` and text similarity are
+recorded as notes only. It never changes the Step 10 verdict or the risk
+matrix; its thresholds are provisional until calibrated against
+direct-upstream baselines.
+
 ## Attribution
 
 The threat model and the specific list of observable signals is
@@ -65,6 +73,9 @@ arXiv:2604.08407, section 4.2. SSE whitelist / usage monotonicity
 layer.
 """
 
+import difflib
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -154,6 +165,27 @@ class StreamSignals:
         raw_event_count: Total number of events parsed from the
             stream, including unknown types. Zero means no data was
             received at all — another inconclusive signal.
+        text: Concatenation of every ``text_delta`` ``text`` value, in
+            arrival order (capped by the client's
+            ``MAX_STREAM_TEXT_CHARS``). Used by the informational
+            stream / non-stream parity check.
+        stop_reason: The last non-empty ``delta.stop_reason`` seen in a
+            ``message_delta`` event, or ``None``.
+        thinking_blocks: Every ``thinking`` and ``redacted_thinking`` content
+            block, in stream order, in the shape the Messages API accepts
+            back: ``{"type": "thinking", "thinking": <accumulated
+            thinking_delta text>, "signature": <signature_delta value>}`` or
+            ``{"type": "redacted_thinking", "data": ...}``. Read only by the
+            opt-in signature round-trip check; :func:`analyze_stream` ignores
+            it. Bounded by the client's ``MAX_STREAM_THINKING_CHARS`` and
+            ``MAX_STREAM_THINKING_BLOCKS``.
+        thinking_block_indexes: The content block ``index`` of each entry in
+            :attr:`thinking_blocks`, in the same order. Deltas are attributed
+            by this index, so interleaved blocks cannot leak into each other.
+        thinking_capture_issue: ``None`` while the capture is faithful;
+            otherwise why it stopped (a bound was hit, or a delta could not
+            be attributed to a started thinking block). :attr:`thinking_blocks`
+            must then not be replayed.
     """
 
     # Ordered event type sequence (for whitelist check)
@@ -186,6 +218,15 @@ class StreamSignals:
     transport_error: Optional[str] = None
     total_duration_seconds: Optional[float] = None
     raw_event_count: int = 0
+
+    # Content and terminal signals (stream / non-stream parity)
+    text: str = ""
+    stop_reason: Optional[str] = None
+
+    # Thinking blocks as streamed (opt-in signature round-trip replay)
+    thinking_blocks: List[dict] = field(default_factory=list)
+    thinking_block_indexes: List[int] = field(default_factory=list)
+    thinking_capture_issue: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -440,3 +481,511 @@ def analyze_stream(signals: "StreamSignals") -> dict:
         "stream_model_is_claude": stream_model_is_claude,
         "findings": findings,
     }
+
+
+# ---------------------------------------------------------------------------
+# Stream / non-stream parity (informational, v2.6 P1)
+# ---------------------------------------------------------------------------
+
+# All parity thresholds below are provisional, uncalibrated defaults. They
+# need at least five relay dogfood runs plus one direct-upstream baseline with
+# zero false positives before the parity result may feed any scored dimension.
+#
+# Only two checks decide the parity verdict, because neither depends on
+# sampling: input_tokens across modes and the streamed stop_reason. Text
+# similarity and output_tokens are recorded as notes only: no sampling
+# parameters are sent, so the reply text varies between samples, and with
+# thinking enabled output_tokens include thinking tokens that differ from run
+# to run.
+
+# Verdict: max absolute input_tokens difference between the stream and the
+# non-stream reply to the same request (provisional, uncalibrated).
+PARITY_INPUT_TOKEN_TOLERANCE = 3
+# Verdict: stop_reason values the streamed message_delta may legitimately
+# carry.
+PARITY_VALID_STOP_REASONS = frozenset({
+    "end_turn",
+    "max_tokens",
+    "stop_sequence",
+    "tool_use",
+    "pause_turn",
+    "refusal",
+})
+# Note only: min difflib.SequenceMatcher ratio between the two normalized
+# reply texts (provisional, uncalibrated).
+PARITY_SIMILARITY_MIN = 0.85
+# Note only: output_tokens may differ by at most this fraction of the larger
+# of the two counts, but never less than the floor (provisional,
+# uncalibrated).
+PARITY_OUTPUT_TOKEN_FRAC = 0.5
+PARITY_OUTPUT_TOKEN_FLOOR = 3
+# Only this many leading characters of each normalized text are compared,
+# which bounds the difflib cost on a relay that returns far more text than
+# requested.
+PARITY_MAX_COMPARE_CHARS = 4000
+
+
+def _parity_positive_int(value) -> Optional[int]:
+    """Return ``value`` if it is a positive int, else ``None``.
+
+    The client reports a missing usage block as ``0``, so zero means
+    "not reported" here rather than a real count.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def _parity_last_int(samples) -> Optional[int]:
+    """Return the last sample if it is a positive int, else ``None``."""
+    if not isinstance(samples, list) or not samples:
+        return None
+    return _parity_positive_int(samples[-1])
+
+
+def _parity_normalize_text(text) -> str:
+    """Casefold, drop punctuation and collapse whitespace before comparing.
+
+    Non-string input normalizes to ``""``.
+    """
+    if not isinstance(text, str):
+        return ""
+    kept = "".join(
+        ch for ch in text.casefold()
+        if not unicodedata.category(ch).startswith("P")
+    )
+    return " ".join(kept.split())
+
+
+_PARITY_HTTP_STATUS = re.compile(r"^\s*HTTP\s+(\d{3})")
+
+
+def _parity_error_summary(text) -> str:
+    """Reduce a relay-controlled error string to a status-only summary.
+
+    The transport layer keeps the response body in its error string, and a
+    relay can echo credentials there. Parity notes therefore keep only the
+    HTTP status code, or the words ``transport error``; the body never
+    reaches the report.
+    """
+    text = str(text or "")
+    if text.startswith("not sent"):
+        # Produced by the audit itself, never by the relay: keep the reason.
+        return " ".join(text.split())[:200]
+    match = _PARITY_HTTP_STATUS.match(text)
+    return f"HTTP {match.group(1)}" if match else "transport error"
+
+
+def compare_stream_nonstream(signals: "StreamSignals", nonstream: dict) -> dict:
+    """Compare a Step 10 stream with a non-stream reply to the same request.
+
+    Concept inspired by canarybyte/veridrop integrity.py (AGPL-3.0);
+    reimplemented with stdlib.
+
+    ``signals`` is the populated :class:`StreamSignals`; ``nonstream`` is the
+    dict returned by :meth:`api_relay_audit.client.APIClient.call` (``text``,
+    ``input_tokens``, ``output_tokens``, or ``error`` on failure).
+
+    Returns a dict with these keys:
+
+    - ``verdict``: ``"consistent"`` / ``"divergent"`` / ``"inconclusive"``
+    - ``input_tokens_delta``: stream minus non-stream ``input_tokens``, or
+      ``None`` when either side did not report it
+    - ``output_tokens_delta``: final streamed ``output_tokens`` (read from
+      ``message_delta`` events only) minus non-stream ``output_tokens``, or
+      ``None``
+    - ``output_tokens_tolerance``: the note-only output tolerance for this
+      pair, or ``None``
+    - ``similarity``: ``difflib.SequenceMatcher`` ratio of the two texts after
+      casefolding, dropping punctuation and collapsing whitespace (0.0 to
+      1.0, rounded to 3 places), or ``None`` when either text is missing
+    - ``stop_reason``: the streamed ``stop_reason`` or ``None``
+    - ``stop_reason_valid``: bool, streamed ``stop_reason`` is in
+      :data:`PARITY_VALID_STOP_REASONS`
+    - ``notes``: list of human-readable observations
+
+    Verdict priority (first match wins):
+
+    1. **inconclusive**: the non-stream request failed, the stream had a
+       transport error, or input_tokens is missing on both sides.
+    2. **divergent**: input_tokens differ by more than
+       :data:`PARITY_INPUT_TOKEN_TOLERANCE`, or the streamed ``stop_reason``
+       is missing or not a known value. An input_tokens count missing on
+       only one side skips that check with a note.
+    3. **consistent**: neither of the above.
+
+    Text similarity and output_tokens never decide the verdict; they are
+    returned and, when outside their provisional bounds, noted. An empty
+    reply text on either side only skips the similarity, with a note. Both
+    requests run without sampling parameters, so the text varies between
+    samples, and output_tokens include thinking tokens.
+
+    Informational only: callers must not feed the verdict into Step 10's
+    verdict or the risk matrix. Pure and deterministic, no I/O.
+    """
+    if not isinstance(nonstream, dict):
+        nonstream = {"error": f"unexpected non-stream result type {type(nonstream).__name__}"}
+    failed = "error" in nonstream
+    notes = []
+
+    stream_text = signals.text.strip() if isinstance(signals.text, str) else ""
+    nonstream_text = nonstream.get("text")
+    nonstream_text = nonstream_text.strip() if isinstance(nonstream_text, str) else ""
+
+    # input_tokens (verdict): message_start first, message_delta as fallback.
+    stream_input = _parity_positive_int(signals.input_tokens)
+    if stream_input is None:
+        stream_input = _parity_last_int(signals.message_delta_input_tokens_samples)
+    nonstream_input = _parity_positive_int(nonstream.get("input_tokens"))
+    input_delta = None
+    input_ok = True
+    if stream_input is not None and nonstream_input is not None:
+        input_delta = stream_input - nonstream_input
+        input_ok = abs(input_delta) <= PARITY_INPUT_TOKEN_TOLERANCE
+        if not input_ok:
+            notes.append(
+                f"input_tokens differ across modes: stream {stream_input}, "
+                f"non-stream {nonstream_input} (tolerance "
+                f"{PARITY_INPUT_TOKEN_TOLERANCE})"
+            )
+    elif (stream_input is None) != (nonstream_input is None) and not failed:
+        notes.append("input_tokens missing on one side; check skipped")
+
+    # output_tokens (note only): the final cumulative value, and only when a
+    # message_delta event carried it.
+    stream_output = None
+    if signals.has_message_delta:
+        stream_output = _parity_last_int(signals.output_tokens_samples)
+    nonstream_output = _parity_positive_int(nonstream.get("output_tokens"))
+    output_delta = None
+    output_tolerance = None
+    if stream_output is not None and nonstream_output is not None:
+        output_delta = stream_output - nonstream_output
+        output_tolerance = max(
+            PARITY_OUTPUT_TOKEN_FLOOR,
+            int(PARITY_OUTPUT_TOKEN_FRAC * max(stream_output, nonstream_output)),
+        )
+        if abs(output_delta) > output_tolerance:
+            notes.append(
+                f"output_tokens differ across modes: stream {stream_output}, "
+                f"non-stream {nonstream_output} (note only, tolerance "
+                f"{output_tolerance}; thinking tokens vary between runs)"
+            )
+    elif not failed:
+        notes.append(
+            "output_tokens not reported by both a stream message_delta and "
+            "the non-stream reply; not compared"
+        )
+
+    # Text similarity (note only), on normalized text.
+    similarity = None
+    if stream_text and nonstream_text:
+        a_full = _parity_normalize_text(stream_text)
+        b_full = _parity_normalize_text(nonstream_text)
+        a = a_full[:PARITY_MAX_COMPARE_CHARS]
+        b = b_full[:PARITY_MAX_COMPARE_CHARS]
+        if len(a_full) > len(a) or len(b_full) > len(b):
+            notes.append(
+                f"texts compared on their first {PARITY_MAX_COMPARE_CHARS} "
+                "normalized characters"
+            )
+        # autojunk=False: the default heuristic drops frequent characters
+        # from texts of 200+ characters and can deflate the ratio. For
+        # shorter texts the result is identical to the default.
+        similarity = difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+    stop_reason = signals.stop_reason if isinstance(signals.stop_reason, str) else None
+    stop_reason_valid = stop_reason in PARITY_VALID_STOP_REASONS
+
+    result = {
+        "verdict": "inconclusive",
+        "input_tokens_delta": input_delta,
+        "output_tokens_delta": output_delta,
+        "output_tokens_tolerance": output_tolerance,
+        "similarity": round(similarity, 3) if similarity is not None else None,
+        "stop_reason": stop_reason,
+        "stop_reason_valid": stop_reason_valid,
+        "notes": notes,
+    }
+
+    if failed:
+        notes.insert(0, f"Non-stream request unavailable: {_parity_error_summary(nonstream['error'])}")
+        return result
+    if signals.transport_error:
+        notes.insert(0, f"Stream transport error: {_parity_error_summary(signals.transport_error)}")
+        return result
+    if stream_input is None and nonstream_input is None:
+        notes.insert(0, "input_tokens missing on both sides; parity not decided")
+        return result
+
+    if not stream_text or not nonstream_text:
+        side = "one side" if (stream_text or nonstream_text) else "both sides"
+        notes.append(f"text missing on {side}; similarity not computed")
+    elif similarity < PARITY_SIMILARITY_MIN:
+        notes.append(
+            f"normalized text similarity {similarity:.3f} is below "
+            f"{PARITY_SIMILARITY_MIN} (note only; replies vary between samples)"
+        )
+    if not stop_reason_valid:
+        notes.append(
+            f"streamed stop_reason {stop_reason!r} is not one of "
+            f"{sorted(PARITY_VALID_STOP_REASONS)}"
+        )
+
+    result["verdict"] = "consistent" if (input_ok and stop_reason_valid) else "divergent"
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Thinking signature round-trip (opt-in, informational)
+# ---------------------------------------------------------------------------
+#
+# The Messages API checks a thinking block's signature when the block is
+# passed back: the block must come from the current model and nothing before
+# it (system, tools, earlier messages) may have changed. With
+# ``--verify-signature`` Step 10 passes its own streamed assistant turn back
+# twice, intact and with one signature character changed. Without a tool-use
+# turn the model may strip replayed thinking blocks before any check, so two
+# accepted replays carry no signal either way. Informational only: nothing
+# here feeds the Step 10 verdict or the risk matrix.
+
+# A tampered replay rejected with HTTP 400 counts as a signature rejection
+# only when its error text mentions this word (casefolded). "thinking" alone
+# is not enough: a 400 about the thinking configuration (budget_tokens, say)
+# says nothing about the signature. The keyword is presumed until a
+# direct-upstream baseline records the real error text.
+SIGNATURE_ERROR_KEYWORD = "signature"
+
+
+def has_replayable_signature(signals: "StreamSignals") -> bool:
+    """True iff at least one thinking block was captured and every captured
+    thinking block has a non-empty signature.
+
+    A thinking block without a signature cannot be passed back, so even the
+    intact replay would be rejected.
+    """
+    blocks = getattr(signals, "thinking_blocks", None)
+    if not isinstance(blocks, list):
+        return False
+    thinking = [b for b in blocks if isinstance(b, dict) and b.get("type") == "thinking"]
+    return bool(thinking) and all(
+        isinstance(b.get("signature"), str) and bool(b["signature"].strip())
+        for b in thinking
+    )
+
+
+def tamper_signature(signature: str) -> str:
+    """Return ``signature`` with only its middle character replaced.
+
+    The replacement stays in the base64 alphabet (``A``, or ``B`` when the
+    middle character already is ``A``), so the length and encoding do not
+    change and the value differs in exactly one character.
+    """
+    if not isinstance(signature, str) or not signature:
+        return signature
+    mid = len(signature) // 2
+    replacement = "B" if signature[mid] == "A" else "A"
+    return signature[:mid] + replacement + signature[mid + 1:]
+
+
+def build_replay_assistant_content(thinking_blocks, text, tamper=False) -> list:
+    """Rebuild the streamed assistant turn for the signature round-trip.
+
+    Returns every captured ``thinking`` / ``redacted_thinking`` block in
+    stream order, unchanged, followed by ``text`` as one text block when it is
+    not blank. With ``tamper=True`` the first thinking block with a non-empty
+    signature carries :func:`tamper_signature` instead, so the tampered turn
+    differs from the intact one in exactly one character.
+    """
+    content = []
+    tampered = False
+    for block in thinking_blocks if isinstance(thinking_blocks, list) else []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "thinking":
+            thinking = block.get("thinking")
+            signature = block.get("signature")
+            item = {
+                "type": "thinking",
+                "thinking": thinking if isinstance(thinking, str) else "",
+                "signature": signature if isinstance(signature, str) else "",
+            }
+            if tamper and not tampered and item["signature"].strip():
+                item["signature"] = tamper_signature(item["signature"])
+                tampered = True
+            content.append(item)
+        elif block.get("type") == "redacted_thinking":
+            data = block.get("data")
+            content.append({
+                "type": "redacted_thinking",
+                "data": data if isinstance(data, str) else "",
+            })
+    if isinstance(text, str) and text.strip():
+        content.append({"type": "text", "text": text})
+    return content
+
+
+def replay_status(result) -> Optional[int]:
+    """Return the HTTP status of a replay result, or ``None``."""
+    if not isinstance(result, dict):
+        return None
+    status = result.get("status")
+    if isinstance(status, bool) or not isinstance(status, int):
+        return None
+    return status
+
+
+def replay_accepted(result) -> bool:
+    """True iff a replay result is a 2xx without an error.
+
+    :meth:`api_relay_audit.client.APIClient.replay_thinking` sets ``error``
+    on a 2xx whose body is an error or not a message, so such a reply never
+    counts as accepted.
+    """
+    status = replay_status(result)
+    return (status is not None and 200 <= status < 300
+            and not result.get("error"))
+
+
+def _replay_mentions_signature(result) -> bool:
+    error = result.get("error") if isinstance(result, dict) else None
+    if not isinstance(error, str):
+        return False
+    return SIGNATURE_ERROR_KEYWORD in error.casefold()
+
+
+def _replay_input_tokens(result) -> Optional[int]:
+    value = result.get("input_tokens") if isinstance(result, dict) else None
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def analyze_signature_roundtrip(intact, tampered) -> dict:
+    """Judge the opt-in thinking signature round-trip.
+
+    ``intact`` is the :meth:`api_relay_audit.client.APIClient.replay_thinking`
+    result for the streamed assistant turn passed back unchanged; ``tampered``
+    is the result with one signature character changed, or ``None`` when it
+    was not sent. Each result carries ``status`` (HTTP status or ``None``),
+    ``error``, ``error_type`` and ``input_tokens``.
+
+    Returns a dict with ``verdict``, ``intact_status``, ``tampered_status``,
+    ``tampered_mentions_signature`` and ``notes``. Verdict, first match wins:
+
+    1. ``"inconclusive"``: the intact replay was not accepted (no 2xx
+       without an error, see :func:`replay_accepted`).
+    2. ``"upstream-verified"``: intact accepted, tampered HTTP 400 with an
+       error mentioning :data:`SIGNATURE_ERROR_KEYWORD`.
+    3. ``"no-signal"``: both replays 2xx. The model may strip non-tool-use
+       thinking blocks before checking them, so this shows neither that
+       nothing verifies signatures nor that the signature was forged.
+    4. ``"inconclusive"``: any other combination.
+
+    ``input_tokens`` never decides the verdict. When both replays are
+    accepted it is compared and noted as an inference: the docs say blocks
+    the model cannot read are dropped without billing, so if an invalid
+    block is handled the same way, a lower tampered count fits "dropped"
+    rather than "accepted"; equal counts are uninformative.
+
+    Informational only. Pure and deterministic, no I/O.
+    """
+    intact_status = replay_status(intact)
+    tampered_status = replay_status(tampered)
+    mentions = _replay_mentions_signature(tampered)
+    notes = []
+    result = {
+        "verdict": "inconclusive",
+        "intact_status": intact_status,
+        "tampered_status": tampered_status,
+        "tampered_mentions_signature": mentions,
+        "notes": notes,
+    }
+
+    if not replay_accepted(intact):
+        error_type = intact.get("error_type") if isinstance(intact, dict) else None
+        notes.append(
+            "Intact replay not accepted (HTTP "
+            + (str(intact_status) if intact_status is not None else "none")
+            + (f", error_type {error_type}" if error_type else "")
+            + "); the round-trip cannot be judged."
+        )
+        return result
+
+    if tampered is None:
+        notes.append("Tampered replay not sent; the round-trip cannot be judged.")
+        return result
+
+    if tampered_status == 400 and mentions:
+        result["verdict"] = "upstream-verified"
+        notes.append(
+            "Intact replay accepted and the one-character signature change "
+            "rejected with HTTP 400: something upstream checks thinking "
+            "signatures. A valid signature shows only that the block was "
+            "produced for this model; it says nothing about pricing tier or "
+            "text-only substitution."
+        )
+        return result
+
+    if replay_accepted(tampered):
+        result["verdict"] = "no-signal"
+        notes.append(
+            "Both replays accepted. The model may strip thinking blocks that "
+            "are not part of a tool-use turn before checking them, so this "
+            "shows neither that nothing upstream verifies signatures nor that "
+            "the signature was forged."
+        )
+        intact_tokens = _replay_input_tokens(intact)
+        tampered_tokens = _replay_input_tokens(tampered)
+        if intact_tokens is not None and tampered_tokens is not None:
+            if tampered_tokens < intact_tokens:
+                notes.append(
+                    f"Inference, not part of the verdict: the tampered replay "
+                    f"billed fewer input_tokens ({tampered_tokens} vs "
+                    f"{intact_tokens}). The docs say blocks the model cannot "
+                    "read are dropped without billing; if an invalid block is "
+                    "handled the same way, this fits the tampered block being "
+                    "dropped rather than accepted."
+                )
+            elif tampered_tokens > intact_tokens:
+                notes.append(
+                    f"Inference, not part of the verdict: the tampered replay "
+                    f"billed more input_tokens ({tampered_tokens} vs "
+                    f"{intact_tokens}); a dropped block does not explain that, "
+                    "so it is not interpreted."
+                )
+            else:
+                notes.append(
+                    f"input_tokens equal on both replays ({intact_tokens}): "
+                    "uninformative, both blocks may have been stripped or both "
+                    "accepted."
+                )
+        return result
+
+    error_type = tampered.get("error_type") if isinstance(tampered, dict) else None
+    type_text = f" ({error_type})" if error_type else ""
+    if tampered_status == 400:
+        error = tampered.get("error") if isinstance(tampered, dict) else None
+        only_thinking = isinstance(error, str) and "thinking" in error.casefold()
+        notes.append(
+            f"Tampered replay returned HTTP 400{type_text}, but its error does "
+            "not mention signature"
+            + (" (it mentions thinking only)" if only_thinking else "")
+            + ", so the rejection is not attributed to the signature. The "
+            "keyword rule is presumed until a direct-upstream baseline records "
+            "the real error text."
+        )
+    elif tampered_status is not None and 200 <= tampered_status < 300:
+        notes.append(
+            f"Tampered replay returned HTTP {tampered_status}{type_text} with "
+            "an error or non-message body; it counts neither as accepted nor "
+            "as a signature rejection."
+        )
+    else:
+        notes.append(
+            "Tampered replay returned HTTP "
+            + (str(tampered_status) if tampered_status is not None else "none")
+            + type_text
+            + "; only HTTP 400 counts as a signature rejection."
+        )
+    return result

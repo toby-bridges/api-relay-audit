@@ -46,8 +46,10 @@ SOURCE_PATHS = (
     "api_relay_audit/refusal.py",
     "api_relay_audit/reporter.py",
     "api_relay_audit/stream_integrity.py",
+    "api_relay_audit/tool_call_integrity.py",
     "api_relay_audit/tool_substitution.py",
     "api_relay_audit/transparent_log.py",
+    "api_relay_audit/usage_sanity.py",
     "api_relay_audit/web3/injection_probes.py",
 )
 
@@ -317,6 +319,7 @@ def transform_client(text: str) -> str:
         "import httpx",
         "from api_relay_audit import _transport",
         "from api_relay_audit.error_diagnosis import ",
+        "from api_relay_audit.error_leakage import ",
         "from api_relay_audit.stream_integrity import StreamSignals",
         "from api_relay_audit.transparent_log import ",
     ))
@@ -403,6 +406,11 @@ SECTIONS = (
         "api_relay_audit/context.py",
     ),
     Section(
+        "Structured Tool Call integrity detector",
+        "api_relay_audit/tool_call_integrity.py",
+        drop_import_prefixes=("from api_relay_audit.error_leakage import ",),
+    ),
+    Section(
         "Tool-call substitution detector",
         "api_relay_audit/tool_substitution.py",
     ),
@@ -442,6 +450,11 @@ SECTIONS = (
     Section(
         "Upstream channel classifier",
         "api_relay_audit/channel_classifier.py",
+    ),
+    Section(
+        "Token usage sanity observation",
+        "api_relay_audit/usage_sanity.py",
+        drop_import_prefixes=("from api_relay_audit.error_leakage import ",),
     ),
     Section(
         "Audit orchestration",
