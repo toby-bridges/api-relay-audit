@@ -47,8 +47,10 @@ def test_all_known_legacy_pages_have_canonical_and_manual_fallback(tmp_path):
         text = (output / page).read_text()
         url = module.canonical_url(page)
         assert f'<link rel="canonical" href="{url}">' in text
-        assert 'http-equiv="refresh"' not in text
-        assert f'href="{url}"' in text
+        head = text.split("</head>", 1)[0]
+        assert f'<noscript><meta http-equiv="refresh" content="0; url={url}#"></noscript>' in head
+        assert text.count('http-equiv="refresh"') == 1
+        assert f'<a href="{url}">' in text
     assert module.canonical_url("index.html") == "https://apirelayaudit.com/"
     assert module.canonical_url("zh/index.html") == "https://apirelayaudit.com/zh/"
     assert module.canonical_url("myindex.html") == "https://apirelayaudit.com/myindex.html"
