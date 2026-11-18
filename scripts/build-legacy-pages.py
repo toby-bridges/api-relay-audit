@@ -56,6 +56,10 @@ def canonical_url(page):
 
 
 def redirect_html(destination):
+    """Use an empty fragment for the no-script move so that a misplaced
+    stub at its canonical URL navigates within the document instead of
+    reloading it. The canonical and manual link remain fragment-free.
+    """
     escaped = html.escape(destination, quote=True)
     # JSON encoding is sufficient for the fixed-origin, validated manifest URL.
     js_target = json.dumps(destination)
@@ -64,6 +68,7 @@ def redirect_html(destination):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>API Relay Audit — page moved</title>
 <link rel="canonical" href="{escaped}">
+<noscript><meta http-equiv="refresh" content="0; url={escaped}#"></noscript>
 </head><body><p>This page has moved to <a href="{escaped}">{escaped}</a>.</p>
 <script>
 if (window.location.hostname === "toby-bridges.github.io") {{
