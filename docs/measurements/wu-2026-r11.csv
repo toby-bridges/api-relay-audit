@@ -1,0 +1,9 @@
+model,category,tokens,usd_per_million
+Astra,ordinary_input,63575,1.50
+Astra,cache_read,756388,0.15
+Astra,cache_write,0,1.875
+Astra,output,25011,7.50
+Opus,ordinary_input,180067,1.25
+Opus,cache_read,722046,0.125
+Opus,cache_write,0,1.5625
+Opus,output,78293,6.25

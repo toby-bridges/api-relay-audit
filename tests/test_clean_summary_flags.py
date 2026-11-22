@@ -240,8 +240,8 @@ class TestCompletionGatedRelayInconclusive:
         result = modular.test_token_injection(_error_client(self.GATE_ERROR), reporter)
         assert result is None
         levels = _summary_levels(reporter)
-        assert any(level == "yellow" and "Token injection test INCONCLUSIVE" in msg for level, msg in levels)
-        assert not any(level == "green" and "No token injection detected" in msg for level, msg in levels)
+        assert any(level == "yellow" and "Input usage comparison INCONCLUSIVE" in msg for level, msg in levels)
+        assert not any(level == "green" for level, _ in levels)
 
     def test_standalone_token_injection_all_errors_returns_none_and_yellow(self, standalone, monkeypatch):
         self._time_sleep_patched(monkeypatch, standalone)
@@ -249,8 +249,8 @@ class TestCompletionGatedRelayInconclusive:
         result = standalone.test_token_injection(_error_client(self.GATE_ERROR), reporter)
         assert result is None
         levels = list(reporter.summary)
-        assert any(level == "yellow" and "Token injection test INCONCLUSIVE" in msg for level, msg in levels)
-        assert not any(level == "green" and "No token injection detected" in msg for level, msg in levels)
+        assert any(level == "yellow" and "Input usage comparison INCONCLUSIVE" in msg for level, msg in levels)
+        assert not any(level == "green" for level, _ in levels)
 
     def test_modular_instruction_override_all_errors_returns_none_and_yellow(self, modular, monkeypatch):
         from api_relay_audit.reporter import Reporter

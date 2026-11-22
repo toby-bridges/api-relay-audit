@@ -339,7 +339,7 @@ def transform_client(text: str) -> str:
 
 def transform_transport(text: str) -> str:
     text = strip_shebang(text)
-    text = drop_import_blocks(text, ("import httpx",))
+    text = drop_import_blocks(text, ("import httpx", "from api_relay_audit.error_diagnosis import "))
     text = drop_top_level_defs(
         text,
         {"httpx_post_json", "httpx_get_json_data", "httpx_raw_request"},

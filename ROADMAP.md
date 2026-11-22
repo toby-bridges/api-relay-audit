@@ -6,7 +6,7 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-10-28 (standalone website migration; tool behavior unchanged)
+**Last updated**: 2026-11-22 (measurement PR waves)
 
 **Final test count for website separation**: 894/894 passing locally using
 synthetic and loopback fixtures. Website checks now run in the dedicated website
@@ -21,6 +21,22 @@ LLMprobe-engine (Bazaarlinkorg/LLMprobe-engine, AGPL-3.0, 朋友项目，未来
 contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我们的安全攻击),
 掺水了么? (is.real.dpdns.org, 震旦安全实验室自称，匿名个人开发者，Vercel,
 9 黑盒检测维度 — 逆向 2026-05-09).
+
+---
+
+## Measurement PR waves
+
+Each wave contributes through a pull request. Dates are target review windows in 2026. A merged implementation and a completed field measurement are separate milestones. [Research evidence and interpretation](./docs/references.md#relay-measurements)
+
+| Wave | Target | Contribution and status |
+|---|---|---|
+| 0 · Citation | Nov 22 | The English and Chinese README sections link the paper’s discussion and reference [35]. [#120](https://github.com/toby-bridges/api-relay-audit/pull/120) |
+| 1 · Reported usage | Nov 23–25 | Step 3 counts cached input by protocol and reports unexplained usage differences. The client also distinguishes a stream returned for a non-streaming request from a structured refusal. [#123](https://github.com/toby-bridges/api-relay-audit/pull/123) · [#124](https://github.com/toby-bridges/api-relay-audit/pull/124) |
+| 2 · Tool permissions | Nov 26–29 | The explicit-suppression and omitted-tool checks merged into the v2.6 integration branch in [#125](https://github.com/toby-bridges/api-relay-audit/pull/125). Delivery to `master` depends on [#115](https://github.com/toby-bridges/api-relay-audit/pull/115). |
+| 3 · Reproducible measurement | Nov 30–Dec 13 | The [measurement protocol](./docs/measurements/relay-comparison.md) and [offline replay](./scripts/experiments/replay_relay_measurements.py) reproduce billed usage in Table S3. The field-results PR still needs an authorized relay, official API access and a call budget for two collection windows. [#121](https://github.com/toby-bridges/api-relay-audit/pull/121) |
+| 4 · Capability pilot | Dec 14–18 | The [Table III recount](./scripts/experiments/relay-retest/recount.py) and [interpretation](./scripts/experiments/relay-retest/README.md) compare flag changes under four scoring rules. A new capability pilot needs two independently collected official samples to estimate normal variation before interpreting a relay difference. [#122](https://github.com/toby-bridges/api-relay-audit/pull/122) |
+
+Hosted DSH acceptance tests use the dependency pin from [#126](https://github.com/toby-bridges/api-relay-audit/pull/126). Keep published measurements, project fixtures and newly collected field results labeled by source. For changes to audit logic, regenerate the standalone script and run the repository’s generation, parity and regression checks.
 
 ---
 
@@ -974,7 +990,7 @@ When adding any new feature, verify these hold before committing:
 ## 🧭 How to use this roadmap
 
 **Starting a new session**:
-1. Read the top "Shipped" section to know current state
+1. Read the measurement PR waves and the shipped section to identify open work.
 2. Read "Near-term candidates" — skip entries marked closed / historical,
    then pick one based on available time and current field evidence
 3. If the session is short (< 1 hour), prefer validation / docs /

@@ -2,7 +2,7 @@
 """
 API Relay Security Audit Tool v2.5
 
-Full 14-step audit: infrastructure recon, model list, token injection,
+Full 14-step audit: infrastructure recon, model list, input usage,
 prompt extraction, instruction conflict + identity, jailbreak, context
 length, tool-call substitution (AC-1.a), error response leakage (AC-2),
 stream integrity (AC-1 SSE), Web3 prompt injection (profile=web3|full),
@@ -504,69 +504,67 @@ def test_models(client, report):
 
 
 def test_token_injection(client, report):
-    report.h2("3. Token Injection Detection")
-    report.p("Send minimal messages, compare expected vs actual input_tokens. Delta = hidden injection.\n")
+    report.h2("3. Reported Input Token Usage")
+    report.p("Compare the relay's reported input with rough local estimates for three short "
+             "requests. A difference may reflect request wrapping, tokenization or accounting. "
+             "The relay controls its usage report. See "
+             "[Wu et al., §IV-E](https://arxiv.org/html/2611.07650v1#S4.SS5).")
 
     tests = [
         ("'Say hi' (no system prompt)", None, "Say hi", 10),
         ("'Say hi' + short system prompt", "You are a helpful assistant.", "Say hi", 20),
         ("'Who are you' (no system prompt)", None, "Who are you?", 15),
     ]
+    report.p("| Test | Ordinary | Cache read | Cache write | Total input | Estimate | Delta |")
+    report.p("|------|----------|------------|-------------|-------------|----------|-------|")
 
-    report.p("| Test | Actual input_tokens | Expected | Delta |")
-    report.p("|------|---------------------|----------|-------|")
-
-    injection_size = 0
+    deltas = []
     errors = []
-    success_count = 0
-    error_diagnostics = []
     for name, sys_prompt, user_msg, expected in tests:
-        r = client.call([{"role": "user", "content": user_msg}],
-                        system=sys_prompt, max_tokens=100)
-        if "error" in r:
-            report.p(f"| {name} | ERROR | ~{expected} | - |")
-            errors.append(r.get("error", ""))
-            error_diagnostics.append((name, r["error"]))
+        result = client.call([{"role": "user", "content": user_msg}],
+                             system=sys_prompt, max_tokens=100)
+        usage = result.get("input_usage", {})
+        total = usage.get("total")
+        if "error" in result:
+            errors.append((name, result["error"]))
+            report.p(f"| {name} | — | — | — | ERROR | ~{expected} | — |")
         else:
-            success_count += 1
-            actual = r["input_tokens"]
-            diff = actual - expected
-            injection_size = max(injection_size, diff)
-            report.p(f"| {name} | **{actual}** | ~{expected} | **~{diff}** |")
+            delta = None if total is None else total - expected
+            values = (usage.get("ordinary"), usage.get("cache_read"),
+                      usage.get("cache_write"), total, f"~{expected}", delta)
+            report.p(f"| {name} | " + " | ".join(
+                "—" if value is None else str(value) for value in values) + " |")
+            if delta is not None:
+                deltas.append(delta)
         time.sleep(1)
 
-    if error_diagnostics:
+    if errors:
         report.p("\n**Error diagnostics:**")
-        for name, error in error_diagnostics:
+        for name, error in errors:
             report.p(f"- {name}: {format_diagnosis(_diagnosis_for_error(error))}")
 
-    if success_count == 0:
-        if errors and all(_looks_like_claude_code_client_gate(err) for err in errors):
-            report.flag(
-                "yellow",
-                "Token injection test INCONCLUSIVE: every completion probe "
-                "was rejected as Claude Code-client-only. The relay appears "
-                "restricted to Claude Code clients, so hidden prompt injection "
-                "could not be measured.",
-            )
-        else:
-            report.flag(
-                "yellow",
-                f"Token injection test INCONCLUSIVE: all {len(errors)} probes "
-                "errored, so hidden prompt injection could not be measured.",
-            )
-        print("  Done: token injection (inconclusive, all probes errored)")
+    if len(deltas) < len(tests):
+        coverage = f"Usable input totals: {len(deltas)}/{len(tests)}."
+        if len(errors) == len(tests) and all(
+                _looks_like_claude_code_client_gate(error) for _, error in errors):
+            coverage += " All probes were rejected as Claude Code-client-only."
+        if not deltas:
+            report.flag("yellow", f"Input usage comparison INCONCLUSIVE. {coverage}")
+            return None
+        report.flag("yellow", f"Input usage comparison partially measured. {coverage}")
+
+    max_surplus = max(0, max(deltas))
+    if max_surplus > 20:
+        level = "red" if max_surplus > 100 else "yellow"
+        report.flag(level, f"Unexplained reported input surplus of up to ~{max_surplus} tokens "
+                    "over the local estimate.")
+    elif len(deltas) == len(tests):
+        report.flag("green", "Reported input was within 20 tokens above the local estimates.")
+    print(f"  Done: input usage comparison (maximum surplus: ~{max_surplus} tokens)")
+    if len(deltas) < len(tests) and max_surplus <= 100:
+        # An unmeasured probe could still cross the D1 threshold.
         return None
-
-    if injection_size > 100:
-        report.flag("red", f"Hidden system prompt injection detected (~{injection_size} tokens/request)")
-    elif injection_size > 20:
-        report.flag("yellow", f"Minor injection detected (~{injection_size} tokens)")
-    else:
-        report.flag("green", "No token injection detected")
-
-    print(f"  Done: token injection (delta: ~{injection_size} tokens)")
-    return injection_size
+    return max_surplus
 
 
 def test_prompt_extraction(client, report):
@@ -1781,11 +1779,11 @@ def _run_audit(args, report_stdout):
     _run_step("Step 2 model list", report, test_models, client, report,
               crashes=step_crashes)
 
-    # 3. Token injection
-    print("[3/14] Token injection detection...")
-    injection = _run_step("Step 3 token injection", report,
-                          test_token_injection, client, report,
-                          default=None, crashes=step_crashes)
+    # 3. Input usage comparison (retain the legacy JSON coverage key).
+    print("[3/14] Comparing reported input usage...")
+    input_surplus = _run_step("Step 3 token injection", report,
+                              test_token_injection, client, report,
+                              default=None, crashes=step_crashes)
 
     # 4. Prompt extraction
     print("[4/14] Prompt extraction tests...")
@@ -1904,7 +1902,7 @@ def _run_audit(args, report_stdout):
 
     # Overall rating
     # Dimensions (v3, post-v1.7.5):
-    #   D1  = hidden system-prompt injection > 100 tokens   (Step 3)
+    #   D1  = reported input surplus > 100 tokens   (Step 3)
     #   D1i = Step 3 crashed / inconclusive                 (Step 3)
     #   D2  = caller system instruction not followed        (Step 5)
     #   D2i = Step 5 crashed / inconclusive                 (Step 5)
@@ -1926,8 +1924,8 @@ def _run_audit(args, report_stdout):
     #   else                                        -> LOW
     report.h2("14. Overall Rating")
     any_step_crashed = bool(step_crashes)
-    d1 = injection is not None and injection > 100
-    d1i = injection is None
+    d1 = input_surplus is not None and input_surplus > 100
+    d1i = input_surplus is None
     d2 = overridden is not None and overridden
     d2i = overridden is None
     d3 = substitution_detected
@@ -1981,18 +1979,17 @@ def _run_audit(args, report_stdout):
     elif d1 and d2:
         risk_level = "HIGH"
         report.p("### HIGH RISK\n")
-        report.p("Hidden injection signal and caller system instruction non-adherence "
-                 "observed. The mechanism and attribution remain unverified. "
-                 "Not suitable for any use case requiring custom behavior.")
+        report.p("Step 3 found a reported input surplus above 100 tokens, and Step 5 observed "
+                 "caller system instruction non-adherence. The cause remains unverified.")
     elif d1:
         risk_level = "MEDIUM"
         report.p("### MEDIUM RISK\n")
-        report.p("Hidden injection detected but instructions may partially work. "
-                 "OK for simple Q&A, not recommended for complex applications.")
+        report.p("Reported input exceeded a local estimate by more than 100 tokens. "
+                 "Compare identical requests against a matched official reference to investigate.")
     elif d2:
         risk_level = "MEDIUM"
         report.p("### MEDIUM RISK\n")
-        report.p("No significant injection signal, but Step 5 observed caller "
+        report.p("Step 5 observed caller "
                  "system instruction non-adherence. The mechanism remains unverified.")
     elif d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_step_crashed:
         risk_level = "MEDIUM"
@@ -2007,8 +2004,8 @@ def _run_audit(args, report_stdout):
             )
         if d1i:
             medium_reasons.append(
-                "Token injection test (Step 3) **crashed or was inconclusive**: "
-                "the relay's injection behavior could not be verified."
+                "Input usage comparison (Step 3) **crashed or was inconclusive**. "
+                "The available counts give incomplete coverage."
             )
         if d2i:
             medium_reasons.append(
@@ -2049,7 +2046,7 @@ def _run_audit(args, report_stdout):
     else:
         risk_level = "LOW"
         report.p("### LOW RISK\n")
-        report.p("No significant injection, instruction override, tool-call "
+        report.p("No large input surplus, instruction override, tool-call "
                  "substitution, error response leakage, stream integrity "
                  "anomaly, or Web3 injection detected.")
 

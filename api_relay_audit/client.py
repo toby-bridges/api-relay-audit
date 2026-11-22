@@ -15,8 +15,32 @@ from datetime import datetime, timezone
 import httpx
 
 from api_relay_audit import _transport
-from api_relay_audit.error_diagnosis import diagnose_error
+from api_relay_audit.error_diagnosis import CompletionResponseError, diagnose_error
 from api_relay_audit.stream_integrity import StreamSignals
+
+
+def _token_count(value):
+    return value if type(value) is int and value >= 0 else None
+
+
+def _reported_input_usage(usage, protocol):
+    """Compare provider-reported input using the accounting in arXiv:2611.07650 §IV-E."""
+    if protocol == "anthropic":
+        ordinary = _token_count(usage.get("input_tokens"))
+        read = _token_count(usage.get("cache_read_input_tokens", 0))
+        write = _token_count(usage.get("cache_creation_input_tokens", 0))
+        counts = (ordinary, read, write)
+        total = sum(counts) if None not in counts else None
+    else:
+        total = _token_count(usage.get("prompt_tokens"))
+        details = usage.get("prompt_tokens_details")
+        read = write = ordinary = None
+        if isinstance(details, dict):
+            read = _token_count(details.get("cached_tokens"))
+            write = _token_count(details.get("cache_write_tokens", 0))
+            if None not in (total, read, write) and read + write <= total:
+                ordinary = total - read - write
+    return {"ordinary": ordinary, "cache_read": read, "cache_write": write, "total": total}
 
 
 def _extract_anthropic_text(content) -> str:
@@ -42,6 +66,33 @@ def _extract_anthropic_text(content) -> str:
         if isinstance(text, str):
             parts.append(text)
     return "".join(parts)
+
+
+def _empty_protocol_refusal(data):
+    """Identify explicit, empty refusal envelopes, including cross-format replies.
+
+    Wu et al., arXiv:2611.07650v1, Table VI reports a translated
+    content_filter at R15 and unsolicited streaming at R19.
+    """
+    if not isinstance(data, dict) or "_http_error" in data:
+        return False
+    choices = data.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices else {}
+    if not isinstance(choice, dict):
+        return False
+    reasons = (data.get("stop_reason"), choice.get("finish_reason"))
+    if not any(reason in ("refusal", "content_filter") for reason in reasons):
+        return False
+    message = choice.get("message") or {}
+    if not isinstance(message, dict):
+        return False
+    if message.get("content") or message.get("tool_calls") or message.get("function_call"):
+        return False
+    blocks = data.get("content") or []
+    if not isinstance(blocks, list) or _extract_anthropic_text(blocks).strip():
+        return False
+    return not any(isinstance(block, dict) and block.get("type") in ("tool_use", "server_tool_use")
+                   for block in blocks)
 
 
 def _parse_curl_i_output(output: str) -> dict:
@@ -335,6 +386,12 @@ class APIClient:
         return _transport.httpx_post_json(
             url, headers, body, self.timeout, httpx_module=httpx)
 
+    def _post_text_completion(self, url, headers, body):
+        data = self._post(url, headers, body)
+        if _empty_protocol_refusal(data):
+            raise CompletionResponseError("Explicit safety refusal without an answer", url, raw=data)
+        return data
+
     @staticmethod
     def _error_result(error, **extra):
         error_text = str(error)
@@ -362,13 +419,16 @@ class APIClient:
             "content-type": "application/json",
         }
 
-        data = self._post(url, headers, body)
+        data = self._post_text_completion(url, headers, body)
         if "_http_error" in data:
             return self._error_result(data["_http_error"])
         text = _extract_anthropic_text(data.get("content"))
-        usage = data.get("usage", {})
+        usage = data.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
         return {
             "text": text,
+            "input_usage": _reported_input_usage(usage, "anthropic"),
             "input_tokens": usage.get("input_tokens", 0),
             "output_tokens": usage.get("output_tokens", 0),
             "raw": data,
@@ -392,14 +452,17 @@ class APIClient:
             "content-type": "application/json",
         }
 
-        data = self._post(url, headers, body)
+        data = self._post_text_completion(url, headers, body)
         if "_http_error" in data:
             return self._error_result(data["_http_error"])
         choice = data.get("choices", [{}])[0]
         text = choice.get("message", {}).get("content", "")
-        usage = data.get("usage", {})
+        usage = data.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
         return {
             "text": text,
+            "input_usage": _reported_input_usage(usage, "openai"),
             "input_tokens": usage.get("prompt_tokens", 0),
             "output_tokens": usage.get("completion_tokens", 0),
             "raw": data,
@@ -450,7 +513,9 @@ class APIClient:
             A dict with the following keys on success:
 
             - ``text`` (str): The model's reply text.
-            - ``input_tokens`` (int): Prompt token count.
+            - ``input_tokens``: Legacy provider field (Messages input or Chat prompt).
+            - ``input_usage``: Reported ordinary, cache-read, cache-write and total
+              input counts. An unavailable measurement is represented by None.
             - ``output_tokens`` (int): Completion token count.
             - ``raw`` (dict): Full JSON response from the relay.
             - ``time`` (float): Wall-clock seconds elapsed.
@@ -475,6 +540,16 @@ class APIClient:
                 request_body, json.dumps(result.get("raw", {})),
                 200 if "error" not in result else 0,
                 None, result["time"], result.get("error"))
+            return result
+        except CompletionResponseError as e:
+            elapsed = time.time() - start
+            self._log_transparent(
+                "call", e.url, "POST", request_body,
+                json.dumps(e.raw) if e.raw is not None else None,
+                e.status or 0, None, elapsed, str(e))
+            result = self._error_result(e, time=elapsed)
+            if e.raw is not None:
+                result["raw"] = e.raw
             return result
         except Exception as e:
             elapsed = time.time() - start
@@ -510,6 +585,8 @@ class APIClient:
                 self._format = "anthropic"
                 self._log("  [format] -> Anthropic native")
                 return anthropic_result
+        except CompletionResponseError:
+            raise
         except Exception as e:
             if self._handle_ssl_error(e):
                 # Retry Anthropic with curl before falling through to OpenAI
@@ -519,6 +596,8 @@ class APIClient:
                         self._format = "anthropic"
                         self._log("  [format] -> Anthropic native (curl)")
                         return anthropic_result
+                except CompletionResponseError:
+                    raise
                 except Exception:
                     pass  # Fall through to OpenAI probe
 
@@ -532,6 +611,8 @@ class APIClient:
                 suffix = " (curl)" if self._use_curl else ""
                 self._log(f"  [format] -> OpenAI compatible{suffix}")
                 return openai_result
+        except CompletionResponseError:
+            raise
         except Exception as e:
             if self._handle_ssl_error(e):
                 return self._call_with_detection(messages, system, max_tokens)

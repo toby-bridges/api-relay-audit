@@ -27,12 +27,12 @@
     },
     {
       "step_number": 3,
-      "step_name": "Token injection detection",
+      "step_name": "Reported input token usage",
       "step_status": "run",
       "verdict": "anomaly",
       "severity": "medium",
-      "summary": "The fixture shows a moderate hidden-token delta so users can see how prompt injection evidence is surfaced.",
-      "evidence_redacted": "Expected 38 input tokens; observed 146 input tokens; delta +108 tokens."
+      "summary": "Reported input exceeds the local estimate by 108 tokens. The cause is unknown.",
+      "evidence_redacted": "Local estimate: 10 tokens. Reported total input: 118. Difference: +108."
     },
     {
       "step_number": 4,

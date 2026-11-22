@@ -12,6 +12,16 @@ import re
 _HTTP_STATUS_RE = re.compile(r"\bHTTP\s+(\d{3})\b", re.IGNORECASE)
 
 
+class CompletionResponseError(ValueError):
+    """An observed response that cannot supply an answer to a text probe."""
+
+    def __init__(self, reason, url, *, raw=None, status=None):
+        super().__init__(reason)
+        self.url = url
+        self.raw = raw
+        self.status = status
+
+
 def _coerce_status(status):
     if status is None:
         return None
@@ -130,6 +140,20 @@ def diagnose_error(error=None, status=None):
             "Check the raw response, relay documentation, selected model, and account state.",
         )
 
+    if text == "Unexpected SSE response to a non-streaming request":
+        return _diagnosis(
+            "unexpected-stream",
+            "The endpoint returned an event stream for a non-streaming request.",
+            "The response framing differed from the requested JSON completion.",
+            "Record the format mismatch and exclude this response from text scoring.",
+        )
+    if text == "Explicit safety refusal without an answer":
+        return _diagnosis(
+            "safety-refusal",
+            "The endpoint marked the response as refused or filtered and supplied no answer.",
+            "A refusal field or stop reason identifies this outcome.",
+            "Record the refusal separately when comparing completed answers.",
+        )
     if "both formats failed" in text_lower:
         return _diagnosis(
             "format-detection",

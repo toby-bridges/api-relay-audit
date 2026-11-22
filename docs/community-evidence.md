@@ -48,6 +48,8 @@ maintainer review before any public evidence record is published. A report is
 evidence from one run under one tool version and profile; it is not a relay
 recommendation, ranking, certification, or safety guarantee.
 
+For matched official and relay comparisons, use the [sampling protocol and offline replay](measurements/relay-comparison.md) to report denominators, returned tool calls and billed usage.
+
 ## Operator Response
 
 Relay operators can use the
