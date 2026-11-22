@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 4ccf1681b15bb36033f74c92756298c8fab2aff43c389260e312168b671cc79a
-# standalone_body_sha256: 0f2618498f02ac51eeed56130bc55c01cefd3c7f11feda1ace5082fd1febb3cd
+# source_sha256: 14718b5caf15c4b407207037f4e9a41620c6a86c8d232a1c0f2948a83e53880e
+# standalone_body_sha256: 36c131fb45515140d50e050e592da50677d02638c4fa6eea27c3d68af30b600e
 # END GENERATED STANDALONE HEADER
 
 """
@@ -1915,23 +1915,21 @@ class APIClient:
             "raw": data,
         }
 
-    def _prepare_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256):
+    def _prepare_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256,
+                                      permission="forced"):
         url = self.base_url
         if url.endswith("/v1"):
             url = url[:-3]
         url += "/v1/messages"
 
-        body = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "messages": messages,
-            "tools": [{**tool_spec, "strict": True}],
-            "tool_choice": {
+        body = {"model": self.model, "max_tokens": max_tokens, "messages": messages}
+        if permission != "undeclared":
+            body["tools"] = [{**tool_spec, "strict": True}]
+            body["tool_choice"] = {"type": "none"} if permission == "disabled" else {
                 "type": "tool",
                 "name": tool_spec["name"],
                 "disable_parallel_tool_use": True,
-            },
-        }
+            }
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
@@ -1988,17 +1986,16 @@ class APIClient:
             result["text"] = _clip_probe_text(_extract_anthropic_text(content))
         return result
 
-    def _prepare_tool_probe_openai(self, messages, tool_spec, max_tokens=256):
+    def _prepare_tool_probe_openai(self, messages, tool_spec, max_tokens=256,
+                                   permission="forced"):
         url = self.base_url
         if not url.endswith("/v1"):
             url += "/v1"
         url += "/chat/completions"
 
-        body = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "messages": messages,
-            "tools": [{
+        body = {"model": self.model, "max_tokens": max_tokens, "messages": messages}
+        if permission != "undeclared":
+            body["tools"] = [{
                 "type": "function",
                 "function": {
                     "name": tool_spec["name"],
@@ -2006,13 +2003,12 @@ class APIClient:
                     "parameters": tool_spec["input_schema"],
                     "strict": True,
                 },
-            }],
-            "tool_choice": {
+            }]
+            body["tool_choice"] = "none" if permission == "disabled" else {
                 "type": "function",
                 "function": {"name": tool_spec["name"]},
-            },
-            "parallel_tool_calls": False,
-        }
+            }
+            body["parallel_tool_calls"] = False
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "content-type": "application/json",
@@ -2180,15 +2176,15 @@ class APIClient:
                 request_body, None, 0, None, elapsed, str(e))
             return self._error_result(e, time=elapsed)
 
-    def call_tool_probe(self, messages, tool_spec, max_tokens=256):
-        """Request one inert client Tool Call without ever executing it.
+    def call_tool_probe(self, messages, tool_spec, max_tokens=256, *, permission="forced"):
+        """Send a non-streaming Tool Call probe and return the received data.
 
-        ``tool_spec`` uses the protocol-neutral Anthropic shape (``name``,
-        ``description``, ``input_schema``). The client forces that tool,
-        disables parallel calls, and normalizes Anthropic/OpenAI responses
-        into a shared ``tool_calls`` list. No executor callback exists and no
-        ``tool_result`` follow-up request is sent.
+        The default forces one inert client tool. The disabled condition declares
+        that tool with explicit suppression. The undeclared condition sends no
+        tool fields. No condition executes calls or sends a follow-up tool result.
         """
+        if permission not in ("forced", "disabled", "undeclared"):
+            raise ValueError("Unknown tool permission condition")
         start = time.time()
         request_url = self._resolve_call_url()
         request_body = json.dumps({})
@@ -2196,24 +2192,27 @@ class APIClient:
             if self._format is None:
                 self.ensure_format()
             if self._format == "anthropic":
-                prepared = self._prepare_tool_probe_anthropic(
-                    messages, tool_spec, max_tokens=max_tokens)
-                request_url, _, wire_body = prepared
-                request_body = json.dumps(wire_body)
-                result = self._call_tool_probe_anthropic(
-                    messages, tool_spec, max_tokens=max_tokens,
-                    prepared=prepared)
+                prepare = self._prepare_tool_probe_anthropic
+                parse_forced = self._call_tool_probe_anthropic
             elif self._format == "openai":
-                prepared = self._prepare_tool_probe_openai(
-                    messages, tool_spec, max_tokens=max_tokens)
-                request_url, _, wire_body = prepared
-                request_body = json.dumps(wire_body)
-                result = self._call_tool_probe_openai(
-                    messages, tool_spec, max_tokens=max_tokens,
-                    prepared=prepared)
+                prepare = self._prepare_tool_probe_openai
+                parse_forced = self._call_tool_probe_openai
             else:
-                result = self._error_result(
-                    "Could not detect API format for structured Tool Call probe")
+                raise ValueError("Could not detect API format for structured Tool Call probe")
+
+            prepared = prepare(messages, tool_spec, max_tokens=max_tokens, permission=permission)
+            request_url, _, wire_body = prepared
+            request_body = json.dumps(wire_body)
+            if permission == "forced":
+                result = parse_forced(messages, tool_spec, max_tokens=max_tokens, prepared=prepared)
+            else:
+                # The negative controls need the original envelope: forced-call
+                # normalization tolerates malformed and missing arrays as empty.
+                data = self._post(*prepared)
+                if isinstance(data, dict) and "_http_error" in data:
+                    result = self._error_result(data["_http_error"])
+                else:
+                    result = {"protocol": self._format, "raw": data}
             result["time"] = time.time() - start
             self._log_transparent(
                 "tool_call_probe", request_url, "POST",
@@ -3657,6 +3656,94 @@ def run_tool_call_integrity_test(client, nonce_factory=None):
         response.get("tool_calls", []) if isinstance(response, dict) else []
     )
     return result
+
+
+def _anthropic_permission_counts(raw):
+    blocks = raw.get("content")
+    if raw.get("role", "assistant") != "assistant" or not isinstance(blocks, list) or not blocks:
+        return 0, False
+    count = 0
+    complete = raw.get("stop_reason") in ("end_turn", "stop_sequence", "refusal")
+    visible = False
+    for block in blocks:
+        if not isinstance(block, dict):
+            complete = False
+        elif block.get("type") in ("tool_use", "server_tool_use"):
+            if isinstance(block.get("name"), str) and block["name"]:
+                count += 1
+            else:
+                complete = False
+        elif block.get("type") == "text" and isinstance(block.get("text"), str):
+            visible = visible or bool(block["text"].strip())
+        elif block.get("type") not in ("thinking", "redacted_thinking"):
+            complete = False
+    return count, complete and visible
+
+
+def _openai_permission_counts(raw):
+    choices = raw.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return 0, False
+    count = 0
+    complete = True
+    for choice in choices:
+        message = choice.get("message") if isinstance(choice, dict) else None
+        if not isinstance(message, dict) or message.get("role", "assistant") != "assistant":
+            complete = False
+            continue
+        calls = message.get("tool_calls")
+        if calls is not None and not isinstance(calls, list):
+            complete = False
+        else:
+            for call in calls or []:
+                kind = call.get("type") if isinstance(call, dict) else None
+                spec = call.get(kind) if kind in ("function", "custom") else None
+                if isinstance(spec, dict) and isinstance(spec.get("name"), str) and spec["name"]:
+                    count += 1
+                else:
+                    complete = False
+        legacy = message.get("function_call")
+        if legacy is not None:
+            if isinstance(legacy, dict) and isinstance(legacy.get("name"), str) and legacy["name"]:
+                count += 1
+            else:
+                complete = False
+        text = message.get("content")
+        refusal = message.get("refusal")
+        visible = any(isinstance(value, str) and value.strip() for value in (text, refusal))
+        if choice.get("finish_reason") not in ("stop", "content_filter") or not visible:
+            complete = False
+    return count, complete
+
+
+def run_tool_permission_probe(client, permission):
+    """Count returned call records under one zero-call request condition.
+
+    Inspired by Wu et al., arXiv:2611.07650v1 §IV-D. Inspect the original
+    response envelope: the forced-control adapter represents missing fields
+    as an empty list, which cannot establish an observed zero here.
+    """
+    spec = {
+        "name": "record_probe",
+        "description": "Inert test tool. This request disables tool use.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    }
+    response = client.call_tool_probe(
+        [{"role": "user", "content": "Reply with the word ready."}],
+        spec, max_tokens=64, permission=permission,
+    )
+    raw = response.get("raw") if isinstance(response, dict) and "error" not in response else None
+    count, complete = 0, False
+    if isinstance(raw, dict) and "error" not in raw:
+        if response.get("protocol") == "anthropic":
+            count, complete = _anthropic_permission_counts(raw)
+        elif response.get("protocol") == "openai":
+            count, complete = _openai_permission_counts(raw)
+    if count:
+        return "anomaly", count
+    if complete:
+        return "clean", 0
+    return "inconclusive", None
 
 
 # ============================================================
@@ -8098,10 +8185,24 @@ def test_tool_substitution(client, report):
         excerpt = excerpt.replace("`", "\u2019")
         report.p(f"**Text returned instead of a Tool Call (redacted excerpt)**: `{excerpt}`")
 
+    report.h3("Tool permission checks (non-streaming)")
+    report.p("Each request expects zero calls. Counts refer to recognized returned "
+             "call records. The client executes none. See Wu et al., "
+             "arXiv:2611.07650v1, Sections IV-D and V-E.")
+    permission_verdicts = []
+    for condition in ("disabled", "undeclared"):
+        verdict, observed = run_tool_permission_probe(client, condition)
+        count = "unknown" if observed is None else str(observed)
+        report.p(f"**Permission probe**: `{condition}` | expected `0` | "
+                 f"observed `{count}` | verdict `{verdict}`")
+        permission_verdicts.append(verdict)
+
     structured_anomaly = structured["verdict"] == "anomaly"
     structured_inconclusive = structured["verdict"] == "inconclusive"
-    detected = text_detected or structured_anomaly
-    inconclusive = not detected and (text_inconclusive or structured_inconclusive)
+    detected = text_detected or structured_anomaly or "anomaly" in permission_verdicts
+    inconclusive = not detected and (
+        text_inconclusive or structured_inconclusive or "inconclusive" in permission_verdicts
+    )
 
     if detected:
         paths = []
@@ -8109,6 +8210,8 @@ def test_tool_substitution(client, report):
             paths.append("package-command text")
         if structured_anomaly:
             paths.append("structured Tool Call")
+        if "anomaly" in permission_verdicts:
+            paths.append("tool permission")
         report.flag(
             "red",
             "Tool-call integrity anomaly detected (AC-1 / AC-1.a): "
@@ -8121,6 +8224,8 @@ def test_tool_substitution(client, report):
             paths.append("package-command text")
         if structured_inconclusive:
             paths.append("structured Tool Call")
+        if "inconclusive" in permission_verdicts:
+            paths.append("tool permission")
         report.flag(
             "yellow",
             "Tool-call integrity test INCONCLUSIVE: "
@@ -8138,7 +8243,7 @@ def test_tool_substitution(client, report):
             "green",
             "Tool-call integrity clean: package-command text and structured "
             "tool name, arguments, and call count all matched (stop reason "
-            "also checked for Anthropic format)",
+            "also checked for Anthropic format). Both zero-call conditions were observed.",
         )
 
     state = "detected" if detected else ("inconclusive" if inconclusive else "clean")
@@ -9533,9 +9638,9 @@ def _run_audit(args, report_stdout):
         if d3:
             reasons.append(
                 "**Tool-call integrity anomaly detected (AC-1 / AC-1.a).** "
-                "A Tool Call or package-install command on the return path appears to "
-                "have been rewritten, or the Tool Call's stop reason did not match; an agent "
-                "loop may execute the wrong call or ignore the call."
+                "The received package command, structured call, stop reason, or "
+                "tool permission differed from the expectation. See Step 8 for the "
+                "observed discrepancy. No returned command or tool call was executed."
             )
         if err_severity == "critical":
             reasons.append(

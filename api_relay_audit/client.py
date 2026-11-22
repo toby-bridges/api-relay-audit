@@ -580,23 +580,21 @@ class APIClient:
             "raw": data,
         }
 
-    def _prepare_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256):
+    def _prepare_tool_probe_anthropic(self, messages, tool_spec, max_tokens=256,
+                                      permission="forced"):
         url = self.base_url
         if url.endswith("/v1"):
             url = url[:-3]
         url += "/v1/messages"
 
-        body = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "messages": messages,
-            "tools": [{**tool_spec, "strict": True}],
-            "tool_choice": {
+        body = {"model": self.model, "max_tokens": max_tokens, "messages": messages}
+        if permission != "undeclared":
+            body["tools"] = [{**tool_spec, "strict": True}]
+            body["tool_choice"] = {"type": "none"} if permission == "disabled" else {
                 "type": "tool",
                 "name": tool_spec["name"],
                 "disable_parallel_tool_use": True,
-            },
-        }
+            }
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
@@ -653,17 +651,16 @@ class APIClient:
             result["text"] = _clip_probe_text(_extract_anthropic_text(content))
         return result
 
-    def _prepare_tool_probe_openai(self, messages, tool_spec, max_tokens=256):
+    def _prepare_tool_probe_openai(self, messages, tool_spec, max_tokens=256,
+                                   permission="forced"):
         url = self.base_url
         if not url.endswith("/v1"):
             url += "/v1"
         url += "/chat/completions"
 
-        body = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "messages": messages,
-            "tools": [{
+        body = {"model": self.model, "max_tokens": max_tokens, "messages": messages}
+        if permission != "undeclared":
+            body["tools"] = [{
                 "type": "function",
                 "function": {
                     "name": tool_spec["name"],
@@ -671,13 +668,12 @@ class APIClient:
                     "parameters": tool_spec["input_schema"],
                     "strict": True,
                 },
-            }],
-            "tool_choice": {
+            }]
+            body["tool_choice"] = "none" if permission == "disabled" else {
                 "type": "function",
                 "function": {"name": tool_spec["name"]},
-            },
-            "parallel_tool_calls": False,
-        }
+            }
+            body["parallel_tool_calls"] = False
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "content-type": "application/json",
@@ -845,15 +841,15 @@ class APIClient:
                 request_body, None, 0, None, elapsed, str(e))
             return self._error_result(e, time=elapsed)
 
-    def call_tool_probe(self, messages, tool_spec, max_tokens=256):
-        """Request one inert client Tool Call without ever executing it.
+    def call_tool_probe(self, messages, tool_spec, max_tokens=256, *, permission="forced"):
+        """Send a non-streaming Tool Call probe and return the received data.
 
-        ``tool_spec`` uses the protocol-neutral Anthropic shape (``name``,
-        ``description``, ``input_schema``). The client forces that tool,
-        disables parallel calls, and normalizes Anthropic/OpenAI responses
-        into a shared ``tool_calls`` list. No executor callback exists and no
-        ``tool_result`` follow-up request is sent.
+        The default forces one inert client tool. The disabled condition declares
+        that tool with explicit suppression. The undeclared condition sends no
+        tool fields. No condition executes calls or sends a follow-up tool result.
         """
+        if permission not in ("forced", "disabled", "undeclared"):
+            raise ValueError("Unknown tool permission condition")
         start = time.time()
         request_url = self._resolve_call_url()
         request_body = json.dumps({})
@@ -861,24 +857,27 @@ class APIClient:
             if self._format is None:
                 self.ensure_format()
             if self._format == "anthropic":
-                prepared = self._prepare_tool_probe_anthropic(
-                    messages, tool_spec, max_tokens=max_tokens)
-                request_url, _, wire_body = prepared
-                request_body = json.dumps(wire_body)
-                result = self._call_tool_probe_anthropic(
-                    messages, tool_spec, max_tokens=max_tokens,
-                    prepared=prepared)
+                prepare = self._prepare_tool_probe_anthropic
+                parse_forced = self._call_tool_probe_anthropic
             elif self._format == "openai":
-                prepared = self._prepare_tool_probe_openai(
-                    messages, tool_spec, max_tokens=max_tokens)
-                request_url, _, wire_body = prepared
-                request_body = json.dumps(wire_body)
-                result = self._call_tool_probe_openai(
-                    messages, tool_spec, max_tokens=max_tokens,
-                    prepared=prepared)
+                prepare = self._prepare_tool_probe_openai
+                parse_forced = self._call_tool_probe_openai
             else:
-                result = self._error_result(
-                    "Could not detect API format for structured Tool Call probe")
+                raise ValueError("Could not detect API format for structured Tool Call probe")
+
+            prepared = prepare(messages, tool_spec, max_tokens=max_tokens, permission=permission)
+            request_url, _, wire_body = prepared
+            request_body = json.dumps(wire_body)
+            if permission == "forced":
+                result = parse_forced(messages, tool_spec, max_tokens=max_tokens, prepared=prepared)
+            else:
+                # The negative controls need the original envelope: forced-call
+                # normalization tolerates malformed and missing arrays as empty.
+                data = self._post(*prepared)
+                if isinstance(data, dict) and "_http_error" in data:
+                    result = self._error_result(data["_http_error"])
+                else:
+                    result = {"protocol": self._format, "raw": data}
             result["time"] = time.time() - start
             self._log_transparent(
                 "tool_call_probe", request_url, "POST",

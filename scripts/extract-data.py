@@ -157,6 +157,19 @@ def parse_report(file_path):
         if any(p["verdict"] == "substituted" for p in tool_substitution["probes"]):
             tool_substitution["detected"] = True
 
+        for condition, count, verdict in re.findall(
+            r"^\*\*Permission probe\*\*: `(disabled|undeclared)` \| expected `0` "
+            r"\| observed `(\d+|unknown)` \| verdict `(clean|anomaly|inconclusive)`$",
+            section, re.MULTILINE,
+        ):
+            tool_substitution.setdefault("permissions", {})[condition] = {
+                "expectedCount": 0,
+                "receivedCount": None if count == "unknown" else int(count),
+                "verdict": verdict,
+            }
+            if verdict == "anomaly":
+                tool_substitution["detected"] = True
+
         structured_verdict = re.search(
             r"\*\*Structured verdict\*\*:\s*`([^`]+)`", section)
         if structured_verdict:

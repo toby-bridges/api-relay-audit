@@ -221,7 +221,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 | Version | `v2.5.0` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
-| pytest collected tests | 1203 |
+| pytest collected tests | 1214 |
 | CLI flags | 25 |
 | Runtime profiles | `general`, `web3`, `full` |
 
@@ -262,7 +262,7 @@ Model substitution means the relay claims to provide one model but may expose ev
 
 ### What is tool-call rewriting?
 
-Tool-call rewriting means the relay modifies a structured tool name, JSON arguments, call count, or package-install command in the model response. Step 8 checks four pinned text commands plus one forced, non-streaming Anthropic/OpenAI Tool Call. The structured call is inspected only: the audit provides no executor, sends no tool result, and never executes returned content.
+Tool-call rewriting means the relay modifies a structured tool name, JSON arguments, call count, or package-install command in the model response. Step 8 checks four pinned text commands and one forced, non-streaming Anthropic/OpenAI Tool Call. It also sends two short requests expecting zero calls. One explicitly disables a declared tool and the other omits tool definitions. The report records the number of recognized call records for each condition. These probes only inspect responses and execute no calls.
 
 ### What are SSE anomalies?
 
@@ -449,7 +449,7 @@ registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 | 版本 | `v2.5.0` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 1203 |
+| pytest collected tests | 1214 |
 | CLI flags | 25 |
 | Runtime profiles | `general`, `web3`, `full` |
 

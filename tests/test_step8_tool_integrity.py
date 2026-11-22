@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
 import scripts.audit as audit
 from api_relay_audit.reporter import Reporter
 
@@ -23,6 +25,11 @@ TEXT_ANOMALY = ([
         "verdict": "substituted",
     }
 ], True, False)
+
+
+@pytest.fixture(autouse=True)
+def clean_permission_controls(monkeypatch):
+    monkeypatch.setattr(audit, "run_tool_permission_probe", lambda *_: ("clean", 0))
 
 
 def _structured(verdict):
@@ -178,3 +185,25 @@ def test_relay_backticks_and_links_stay_inside_code_spans(monkeypatch):
     assert len(link_lines) == 3  # text table cell, arguments preview, text excerpt
     for line in link_lines:
         assert "evil.example" not in _outside_code_spans(line), line
+
+
+def test_permission_controls_flow_through_report_and_export(monkeypatch, tmp_path):
+    import runpy
+    from pathlib import Path
+
+    extract = runpy.run_path(str(Path(audit.__file__).with_name("extract-data.py")))
+    monkeypatch.setattr(audit, "run_tool_substitution_test", lambda *a, **kw: TEXT_CLEAN)
+    monkeypatch.setattr(audit, "run_tool_call_integrity_test", lambda _: _structured("clean"))
+    for second, expected_flags in [(("anomaly", 1), (True, False)), (("clean", 0), (False, True))]:
+        outcomes = {"disabled": ("inconclusive", None), "undeclared": second}
+        monkeypatch.setattr(audit, "run_tool_permission_probe", lambda _, mode: outcomes[mode])
+        report = Reporter()
+        assert audit.test_tool_substitution(MagicMock(), report) == expected_flags
+        path = tmp_path / "report.md"
+        path.write_text("\n".join(report.sections), encoding="utf-8")
+        exported = extract["parse_report"](path)["toolSubstitution"]
+        assert exported["detected"] == expected_flags[0]
+        assert exported["permissions"] == {
+            mode: {"expectedCount": 0, "receivedCount": count, "verdict": verdict}
+            for mode, (verdict, count) in outcomes.items()
+        }
