@@ -20,12 +20,12 @@
 | 测试数 (static) | 802 | grep `def test_*` in tests/ |
 | CLI flag 数 | 23 | grep `add_argument("--*")` |
 | profile 选项 | general, web3, full | argparse choices |
-| ROADMAP 上次更新 | 2026-10-28 | `ROADMAP.md` 头部 |
+| ROADMAP 上次更新 | 2026-11-22 | `ROADMAP.md` 头部 |
 | Codex review 提及次数 | 4 | grep `Codex review (cycle\|round)` 在 Shipped 节 |
 | Codex review 已编号轮次（最大） | 6 | grep `Nth Codex review round` |
 | Codex bug 累计（最新声称） | 18 | grep `cumulative N real bug` |
 | 测试数演进 (ROADMAP) | [546, 560, 562, 586, 642, 700, 808, 885, 894] | grep `Final test count: N/N passing` |
-| Recorded commit SHA | `cc6f4ce` | recent reachable commit; `--check` allows follow-up metrics commits |
+| Recorded commit SHA | `3af7126` | recent reachable commit; `--check` allows follow-up metrics commits |
 | Recorded commit date | 2026-10-28 | recent reachable commit; `--check` allows follow-up metrics commits |
 
 ## 一致性自检
