@@ -276,9 +276,9 @@ With the `web3` or `full` profile, API Relay Audit checks transfer guidance, sig
 
 `Inconclusive` means the tool could not determine a clean or anomalous result for that step. A blocked probe, unsupported format, or ambiguous response is not treated as safe; it remains visible in the final report.
 
-### How does this compare with hvoy.ai or cctest.ai?
+### How does this compare with hvoy.ai, cctest.ai, or Folkbench?
 
-They serve different needs. hvoy.ai is useful for relay reputation lookup, cctest.ai focuses on one-click testing and channel fingerprinting, and API Relay Audit focuses on local, open-source, repeatable security auditing with structured Markdown reports.
+They serve different needs. hvoy.ai and Folkbench are useful for relay reputation lookup and browser-based checks, cctest.ai focuses on one-click testing and channel fingerprinting, and API Relay Audit focuses on local, open-source, repeatable security auditing with structured Markdown reports. Folkbench states that check reports are visible only to the user and keys are not retained; its rankings follow the site's rules, including partner tiers and ops boosts, and some figures are display samples.
 
 ## License
 
