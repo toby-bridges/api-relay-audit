@@ -290,6 +290,10 @@ This keeps modified network-service deployments accountable to the same public s
 
 The core research references are listed in [docs/references.md](./docs/references.md). If you use API Relay Audit in research, security reports, or public relay evaluations, please cite the software with [CITATION.cff](./CITATION.cff).
 
+### Research citing API Relay Audit
+
+Xiaodong Wu and colleagues at Queen’s University cite this repository as reference [35] in *What the Middleman Delivers: Answer Behavior, Tool Permissions, and Billed Usage in LLM API Relays* (arXiv:2611.07650v1, November 5, 2026). Section III-C describes the project’s response, tool-call, and stream checks. The authors found synthetic example reports and identified a gap in comparable measurements of live services. [Paper, §III-C](https://arxiv.org/html/2611.07650v1#:~:text=Open-source%20tools%20expose) · [Reference 35](https://arxiv.org/html/2611.07650v1#:~:text=API%20Relay%20Audit%20contributors) · [Measurement roadmap](./ROADMAP.md#measurement-pr-waves)
+
 ## How to Contribute
 
 You do not need to write code to help. Good first contributions are small,
@@ -429,6 +433,10 @@ registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 模型自然语言自称 Qwen、DeepSeek、GPT 或 Claude，只能作为 identity consistency signal，不能单独证明真实上游供应商或平台替换了模型。
 
 更强的结论需要 raw response JSON、request id、provider/model metadata、stream signature、transparent-log hash 和可复现实验共同支撑。公开提交只接受脱敏报告证据；不要提交 API Key、raw headers、完整 response body、钱包材料、私有中转流量或用户数据。
+
+## 引用本项目的研究
+
+加拿大女王大学 Xiaodong Wu 等人在 2026 年 11 月 5 日的预印本《What the Middleman Delivers》中，将本仓库列为参考文献 [35]。第 III-C 节介绍了本项目对响应、工具调用和流式响应的检查，也指出作者当时查阅的材料提供了合成示例报告，缺少可与该研究对照的真实中转服务测量样本。[论文第 III-C 节](https://arxiv.org/html/2611.07650v1#:~:text=Open-source%20tools%20expose) · [参考文献 35](https://arxiv.org/html/2611.07650v1#:~:text=API%20Relay%20Audit%20contributors) · [实测排期](./ROADMAP.md#measurement-pr-waves)
 
 ## 工作方式
 

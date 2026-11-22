@@ -6,7 +6,7 @@ item has a short rationale so future contributors (including future
 iterations of the author) can quickly reconstruct why a thing is or is not
 on the list.
 
-**Last updated**: 2026-10-28 (standalone website migration; tool behavior unchanged)
+**Last updated**: 2026-11-22 (measurement PR waves)
 
 **Final test count for website separation**: 894/894 passing locally using
 synthetic and loopback fixtures. Website checks now run in the dedicated website
@@ -21,6 +21,22 @@ LLMprobe-engine (Bazaarlinkorg/LLMprobe-engine, AGPL-3.0, 朋友项目，未来
 contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我们的安全攻击),
 掺水了么? (is.real.dpdns.org, 震旦安全实验室自称，匿名个人开发者，Vercel,
 9 黑盒检测维度 — 逆向 2026-05-09).
+
+---
+
+## Measurement PR waves
+
+Each wave contributes through a pull request. Dates are target review windows in 2026. A merged implementation and a completed field measurement are separate milestones. [Research evidence and interpretation](./docs/references.md#relay-measurements)
+
+| Wave | Target | PR scope and acceptance |
+|---|---|---|
+| 0 · Citation | Nov 22 | Link the incoming citation from both README sections. Trace the paper’s results to the following PRs. |
+| 1 · Reported usage | Nov 23–25 | Report input, cache, and total counts using each protocol’s definitions. Verify that 10 ordinary plus 4,224 cache-read tokens gives 4,234 in Messages, cached Chat Completions input is counted once, and missing usage remains unknown. Align step and overall report language with these observations. |
+| 2 · Tool permissions | Nov 26–29 | Cover explicit suppression and omitted declarations in both supported protocols. Inspect returned records without executing them. Exercise a normal text answer, a disallowed call, and a malformed response for each request condition. [PR #95](https://github.com/toby-bridges/api-relay-audit/pull/95) and [PR #115](https://github.com/toby-bridges/api-relay-audit/pull/115) contain related forced-call work. |
+| 3 · Reproducible measurement | Nov 30–Dec 13 | Contribute the protocol and offline recomputation first. For field collection, freeze one model, prompts, configuration, sample counts and budget. Collect two independent official samples, a transparent local relay and an authorized target. Repeat in the second week. A separate field-results PR supplies redacted counts, usage deltas, and balance reconciliation where available. |
+| 4 · Capability pilot | Dec 14–18 | Check what the published repeated measurements establish. For the local pilot, fix the items and scoring rules before collection. Estimate official-to-official variation before interpreting relay differences. Record missing calls and refusals, and document the decision on expanding the item bank. |
+
+Wave 3 field collection needs official API access, an authorized relay and an agreed budget. Wave 4 can analyze published aggregates while independent samples are pending. Keep paper aggregates, project fixtures and new field observations clearly labeled. For changes to audit logic, regenerate the standalone script and run the repository’s generation, parity and regression checks.
 
 ---
 
@@ -974,7 +990,7 @@ When adding any new feature, verify these hold before committing:
 ## 🧭 How to use this roadmap
 
 **Starting a new session**:
-1. Read the top "Shipped" section to know current state
+1. Read the measurement PR waves and the shipped section to identify open work.
 2. Read "Near-term candidates" — skip entries marked closed / historical,
    then pick one based on available time and current field evidence
 3. If the session is short (< 1 hour), prefer validation / docs /
