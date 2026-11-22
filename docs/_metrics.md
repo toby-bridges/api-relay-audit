@@ -25,7 +25,7 @@
 | Codex review 已编号轮次（最大） | 6 | grep `Nth Codex review round` |
 | Codex bug 累计（最新声称） | 18 | grep `cumulative N real bug` |
 | 测试数演进 (ROADMAP) | [546, 560, 562, 586, 642, 700, 808, 885, 894] | grep `Final test count: N/N passing` |
-| Recorded commit SHA | `cc6f4ce` | recent reachable commit; `--check` allows follow-up metrics commits |
+| Recorded commit SHA | `3af7126` | recent reachable commit; `--check` allows follow-up metrics commits |
 | Recorded commit date | 2026-10-28 | recent reachable commit; `--check` allows follow-up metrics commits |
 
 ## 一致性自检
