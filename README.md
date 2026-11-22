@@ -107,7 +107,7 @@ The canonical contract lives in [docs/query-families.md](./docs/query-families.m
 
 API Relay Audit checks whether a relay modifies the request or response path between you and the model:
 
-- Prompt safety: token injection, prompt extraction, instruction override, jailbreak resistance
+- Prompt safety: reported input-token surplus, prompt extraction, instruction override, jailbreak resistance
 - Relay integrity: context truncation, tool-call substitution, error leakage, stream integrity
 - Model identity: non-Claude identity leaks, model substitution signals, Claude/OpenAI-compatible relay behavior
 - Web3 wallet safety: transfer guidance, signed-transaction refusal, private-key refusal
@@ -221,7 +221,7 @@ Community evidence is shape-checked by GitHub Actions, but publication still req
 | Version | `v2.5.0` |
 | Audit steps | 14 |
 | Risk matrix | 6D |
-| pytest collected tests | 885 |
+| pytest collected tests | 916 |
 | CLI flags | 23 |
 | Runtime profiles | `general`, `web3`, `full` |
 
@@ -254,7 +254,7 @@ API Relay Audit runs locally, so your API key is sent only to the relay URL you 
 
 ### What does prompt injection mean here?
 
-Prompt injection means the relay may prepend or insert hidden instructions into your request. API Relay Audit compares expected and actual token usage, tries prompt-extraction probes, and records evidence when the relay appears to add or reveal hidden prompt content.
+Prompt injection means the relay may prepend or insert hidden instructions into your request. Step 3 compares reported input usage with local estimates. A surplus warrants checking request wrapping and accounting. Separate prompt-extraction probes examine the returned text.
 
 ### What is model substitution?
 
@@ -366,7 +366,7 @@ JSON 包含完整证据，并非公开分享前已脱敏的报告。参见 [JSON
 
 ## 核心覆盖
 
-- Prompt 安全: token injection、prompt extraction、instruction override、jailbreak
+- Prompt 安全: 输入用量差异、prompt extraction、instruction override、jailbreak
 - Relay 完整性: context truncation、tool-call substitution、error leakage、stream integrity
 - 模型身份: 非 Claude 身份泄漏、模型替换信号、Claude / OpenAI 兼容中转行为
 - Web3 风险: 转账指引、签名拒绝、私钥泄漏拒绝
@@ -457,7 +457,7 @@ registry 分发与 release 验证以 DeepSeek Harness plugin 为主。
 | 版本 | `v2.5.0` |
 | 审计步骤 | 14 |
 | 风险矩阵 | 6D |
-| pytest collected tests | 885 |
+| pytest collected tests | 916 |
 | CLI flags | 23 |
 | Runtime profiles | `general`, `web3`, `full` |
 

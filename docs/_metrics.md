@@ -16,8 +16,8 @@
 | 单文件版版本 | `v2.5` | `audit.py` docstring |
 | 步骤数 (Step N) | **14** | grep `Step N` in `scripts/audit.py` |
 | 步骤数 (单文件版) | 14 | grep `Step N` in `audit.py` |
-| 测试数 (pytest) | **894** | `pytest --collect-only` |
-| 测试数 (static) | 802 | grep `def test_*` in tests/ |
+| 测试数 (pytest) | **916** | `pytest --collect-only` |
+| 测试数 (static) | 807 | grep `def test_*` in tests/ |
 | CLI flag 数 | 23 | grep `add_argument("--*")` |
 | profile 选项 | general, web3, full | argparse choices |
 | ROADMAP 上次更新 | 2026-11-22 | `ROADMAP.md` 头部 |
@@ -32,7 +32,8 @@
 
 - ✅ 版本一致：两份都是 `v2.5`。
 - ✅ 步骤数一致：14。
-- ℹ️ pytest (894) vs 静态 (802) 差距 >20，多出来的来自 parametrize/fixture——以 pytest 为准。
+- ℹ️ pytest (916) vs 静态 (807) 差距 >20，多出来的来自 parametrize/fixture——以 pytest 为准。
+- ⚠️ ROADMAP 最新记录 894 个测试，但当前 pytest 是 916。要么 ROADMAP 漏更新，要么有未记录的新测试。
 
 ## 人工 review 边界（脚本抓不到，每次发布要人工核对）
 
