@@ -28,15 +28,15 @@ contributor, arXiv:2026-04-26, 正交威胁轴：模型替换质量欺诈 vs 我
 
 Each wave contributes through a pull request. Dates are target review windows in 2026. A merged implementation and a completed field measurement are separate milestones. [Research evidence and interpretation](./docs/references.md#relay-measurements)
 
-| Wave | Target | PR scope and acceptance |
+| Wave | Target | Contribution and status |
 |---|---|---|
-| 0 · Citation | Nov 22 | Link the incoming citation from both README sections. Trace the paper’s results to the following PRs. |
-| 1 · Reported usage | Nov 23–25 | Report input, cache, and total counts using each protocol’s definitions. Verify that 10 ordinary plus 4,224 cache-read tokens gives 4,234 in Messages, cached Chat Completions input is counted once, and missing usage remains unknown. Align step and overall report language with these observations. |
-| 2 · Tool permissions | Nov 26–29 | Cover explicit suppression and omitted declarations in both supported protocols. Inspect returned records without executing them. Exercise a normal text answer, a disallowed call, and a malformed response for each request condition. [PR #95](https://github.com/toby-bridges/api-relay-audit/pull/95) and [PR #115](https://github.com/toby-bridges/api-relay-audit/pull/115) contain related forced-call work. |
-| 3 · Reproducible measurement | Nov 30–Dec 13 | Contribute the protocol and offline recomputation first. For field collection, freeze one model, prompts, configuration, sample counts and budget. Collect two independent official samples, a transparent local relay and an authorized target. Repeat in the second week. A separate field-results PR supplies redacted counts, usage deltas, and balance reconciliation where available. |
-| 4 · Capability pilot | Dec 14–18 | Check what the published repeated measurements establish. For the local pilot, fix the items and scoring rules before collection. Estimate official-to-official variation before interpreting relay differences. Record missing calls and refusals, and document the decision on expanding the item bank. |
+| 0 · Citation | Nov 22 | The English and Chinese README sections link the paper’s discussion and reference [35]. [#120](https://github.com/toby-bridges/api-relay-audit/pull/120) |
+| 1 · Reported usage | Nov 23–25 | Step 3 counts cached input by protocol and reports unexplained usage differences. The client also distinguishes a stream returned for a non-streaming request from a structured refusal. [#123](https://github.com/toby-bridges/api-relay-audit/pull/123) · [#124](https://github.com/toby-bridges/api-relay-audit/pull/124) |
+| 2 · Tool permissions | Nov 26–29 | The explicit-suppression and omitted-tool checks merged into the v2.6 integration branch in [#125](https://github.com/toby-bridges/api-relay-audit/pull/125). Delivery to `master` depends on [#115](https://github.com/toby-bridges/api-relay-audit/pull/115). |
+| 3 · Reproducible measurement | Nov 30–Dec 13 | The [measurement protocol](./docs/measurements/relay-comparison.md) and [offline replay](./scripts/experiments/replay_relay_measurements.py) reproduce billed usage in Table S3. The field-results PR still needs an authorized relay, official API access and a call budget for two collection windows. [#121](https://github.com/toby-bridges/api-relay-audit/pull/121) |
+| 4 · Capability pilot | Dec 14–18 | The [Table III recount](./scripts/experiments/relay-retest/recount.py) and [interpretation](./scripts/experiments/relay-retest/README.md) compare flag changes under four scoring rules. A new capability pilot needs two independently collected official samples to estimate normal variation before interpreting a relay difference. [#122](https://github.com/toby-bridges/api-relay-audit/pull/122) |
 
-Wave 3 field collection needs official API access, an authorized relay and an agreed budget. Wave 4 can analyze published aggregates while independent samples are pending. Keep paper aggregates, project fixtures and new field observations clearly labeled. For changes to audit logic, regenerate the standalone script and run the repository’s generation, parity and regression checks.
+Hosted DSH acceptance tests use the dependency pin from [#126](https://github.com/toby-bridges/api-relay-audit/pull/126). Keep published measurements, project fixtures and newly collected field results labeled by source. For changes to audit logic, regenerate the standalone script and run the repository’s generation, parity and regression checks.
 
 ---
 
