@@ -161,6 +161,48 @@ def test_json_preserves_inconclusive_prompt_extraction_evidence(
     assert "Hidden prompt content extracted" not in result["markdown"]
 
 
+@pytest.mark.parametrize(("protocol", "usage", "expected_row", "surplus"), [
+    ("anthropic", {"input_tokens": 10, "cache_read_input_tokens": 4224},
+     "10 | 4224 | 0 | 4234 | ~10 | 4224", 4224),
+    ("anthropic", {"input_tokens": 10, "cache_creation_input_tokens": 150},
+     "10 | 0 | 150 | 160 | ~10 | 150", 150),
+    ("openai", {"prompt_tokens": 4234, "prompt_tokens_details": {"cached_tokens": 4224}},
+     "10 | 4224 | 0 | 4234 | ~10 | 4224", 4224),
+    ("openai", {"prompt_tokens": 8}, "— | — | — | 8 | ~10 | -2", 0),
+    ("openai", None, "— | — | — | — | ~10 | —", None),
+    ("anthropic", {"input_tokens": 0}, "0 | 0 | 0 | 0 | ~10 | -10", 0),
+    ("anthropic", {"input_tokens": 10, "cache_read_input_tokens": "invalid"},
+     "10 | — | 0 | — | ~10 | —", None),
+])
+def test_step3_reported_input(audit_module, monkeypatch, protocol, usage, expected_row, surplus):
+    client = audit_module.APIClient(TARGET, SECRET, MODEL, verbose=False)
+    client._format = protocol
+    response = ({"content": [{"type": "text", "text": "hi"}]} if protocol == "anthropic"
+                else {"choices": [{"message": {"content": "hi"}}]})
+    response["usage"] = usage
+    monkeypatch.setattr(client, "_post", lambda *args: response)
+    monkeypatch.setattr(audit_module.time, "sleep", lambda _: None)
+    report = audit_module.Reporter()
+    assert audit_module.test_token_injection(client, report) == surplus
+    assert expected_row in report.render()
+    if surplus is None:
+        assert any("INCONCLUSIVE" in message for _, message in report.summary)
+    elif surplus:
+        assert any("Unexplained reported input surplus" in message for _, message in report.summary)
+    assert "injection detected" not in report.render().lower()
+
+
+def test_partial_usage_keeps_positive_finding_and_marks_otherwise_unknown(audit_module, monkeypatch):
+    monkeypatch.setattr(audit_module.time, "sleep", lambda _: None)
+    for total, expected in ((10, None), (111, 101)):
+        client = FakeClient(TARGET, SECRET, MODEL)
+        responses = iter([{"input_usage": {"total": total}}, {"error": "timeout"}, {}])
+        client.call = lambda *args, **kwargs: next(responses)
+        report = audit_module.Reporter()
+        assert audit_module.test_token_injection(client, report) == expected
+        assert "Usable input totals: 1/3" in report.render()
+
+
 def test_reporter_preserves_supplied_markdown(audit_module):
     result = audit_module.Reporter().to_dict(
         report_type="connectivity", markdown="# 自定义连通性报告\n",

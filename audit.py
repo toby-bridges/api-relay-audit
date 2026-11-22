@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 8011cb00a19f633718a179655d9b1f8ba2d7b19b900c12b7e1e77572c87108e6
-# standalone_body_sha256: 25ca81a111261f35589993d3a48e560dcbd76adf459f9c0ba49cc81d9c50eef1
+# source_sha256: 2dae8f5e44403a488609285b352440586fc4b2d356aa07dee7beabd19ceeabe7
+# standalone_body_sha256: 78b7d729b15e919e995db66543542540e252e9d73c35f5bd0e91fa286112b663
 # END GENERATED STANDALONE HEADER
 
 """
@@ -610,6 +610,7 @@ import tempfile
 from urllib.parse import urlparse
 
 
+
 LOOPBACK_NO_PROXY = "localhost,127.0.0.1,::1"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
@@ -648,6 +649,18 @@ def curl_body_file(body: bytes):
                 pass
 
 
+def _check_event_stream(url, text, content_type="", status=None):
+    # A curl JSON POST only exposes the body. Inspect the first bounded SSE
+    # fields after a JSON decode failure. Never copy event data to the report.
+    prefix = text[:2048].lstrip("\ufeff \t\r\n")
+    fields = [line for line in prefix.splitlines() if line and not line.startswith(":")]
+    if (content_type.split(";", 1)[0].strip().lower() == "text/event-stream"
+            or (fields and fields[0].startswith(("event:", "data:", "id:", "retry:"))
+                and any(line.startswith("data:") for line in fields))):
+        raise CompletionResponseError(
+            "Unexpected SSE response to a non-streaming request", url, status=status)
+
+
 def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
                    subprocess_module=subprocess) -> dict:
     """POST JSON through curl while keeping headers out of argv.
@@ -679,7 +692,11 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
 
     if r.returncode != 0:
         raise RuntimeError(f"curl failed: {r.stderr[:200]}")
-    return json.loads(r.stdout)
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        _check_event_stream(url, r.stdout)
+        raise
 
 
 
@@ -806,6 +823,30 @@ from datetime import datetime, timezone
 
 
 
+def _token_count(value):
+    return value if type(value) is int and value >= 0 else None
+
+
+def _reported_input_usage(usage, protocol):
+    """Compare provider-reported input using the accounting in arXiv:2611.07650 §IV-E."""
+    if protocol == "anthropic":
+        ordinary = _token_count(usage.get("input_tokens"))
+        read = _token_count(usage.get("cache_read_input_tokens", 0))
+        write = _token_count(usage.get("cache_creation_input_tokens", 0))
+        counts = (ordinary, read, write)
+        total = sum(counts) if None not in counts else None
+    else:
+        total = _token_count(usage.get("prompt_tokens"))
+        details = usage.get("prompt_tokens_details")
+        read = write = ordinary = None
+        if isinstance(details, dict):
+            read = _token_count(details.get("cached_tokens"))
+            write = _token_count(details.get("cache_write_tokens", 0))
+            if None not in (total, read, write) and read + write <= total:
+                ordinary = total - read - write
+    return {"ordinary": ordinary, "cache_read": read, "cache_write": write, "total": total}
+
+
 def _extract_anthropic_text(content) -> str:
     """Concatenate text from every text block in an Anthropic ``content`` array.
 
@@ -829,6 +870,33 @@ def _extract_anthropic_text(content) -> str:
         if isinstance(text, str):
             parts.append(text)
     return "".join(parts)
+
+
+def _empty_protocol_refusal(data):
+    """Identify explicit, empty refusal envelopes, including cross-format replies.
+
+    Wu et al., arXiv:2611.07650v1, Table VI reports a translated
+    content_filter at R15 and unsolicited streaming at R19.
+    """
+    if not isinstance(data, dict) or "_http_error" in data:
+        return False
+    choices = data.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices else {}
+    if not isinstance(choice, dict):
+        return False
+    reasons = (data.get("stop_reason"), choice.get("finish_reason"))
+    if not any(reason in ("refusal", "content_filter") for reason in reasons):
+        return False
+    message = choice.get("message") or {}
+    if not isinstance(message, dict):
+        return False
+    if message.get("content") or message.get("tool_calls") or message.get("function_call"):
+        return False
+    blocks = data.get("content") or []
+    if not isinstance(blocks, list) or _extract_anthropic_text(blocks).strip():
+        return False
+    return not any(isinstance(block, dict) and block.get("type") in ("tool_use", "server_tool_use")
+                   for block in blocks)
 
 
 def _parse_curl_i_output(output: str) -> dict:
@@ -1122,6 +1190,12 @@ class APIClient:
         return _transport.httpx_post_json(
             url, headers, body, self.timeout)
 
+    def _post_text_completion(self, url, headers, body):
+        data = self._post(url, headers, body)
+        if _empty_protocol_refusal(data):
+            raise CompletionResponseError("Explicit safety refusal without an answer", url, raw=data)
+        return data
+
     @staticmethod
     def _error_result(error, **extra):
         error_text = str(error)
@@ -1149,13 +1223,16 @@ class APIClient:
             "content-type": "application/json",
         }
 
-        data = self._post(url, headers, body)
+        data = self._post_text_completion(url, headers, body)
         if "_http_error" in data:
             return self._error_result(data["_http_error"])
         text = _extract_anthropic_text(data.get("content"))
-        usage = data.get("usage", {})
+        usage = data.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
         return {
             "text": text,
+            "input_usage": _reported_input_usage(usage, "anthropic"),
             "input_tokens": usage.get("input_tokens", 0),
             "output_tokens": usage.get("output_tokens", 0),
             "raw": data,
@@ -1179,14 +1256,17 @@ class APIClient:
             "content-type": "application/json",
         }
 
-        data = self._post(url, headers, body)
+        data = self._post_text_completion(url, headers, body)
         if "_http_error" in data:
             return self._error_result(data["_http_error"])
         choice = data.get("choices", [{}])[0]
         text = choice.get("message", {}).get("content", "")
-        usage = data.get("usage", {})
+        usage = data.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
         return {
             "text": text,
+            "input_usage": _reported_input_usage(usage, "openai"),
             "input_tokens": usage.get("prompt_tokens", 0),
             "output_tokens": usage.get("completion_tokens", 0),
             "raw": data,
@@ -1237,7 +1317,9 @@ class APIClient:
             A dict with the following keys on success:
 
             - ``text`` (str): The model's reply text.
-            - ``input_tokens`` (int): Prompt token count.
+            - ``input_tokens``: Legacy provider field (Messages input or Chat prompt).
+            - ``input_usage``: Reported ordinary, cache-read, cache-write and total
+              input counts. An unavailable measurement is represented by None.
             - ``output_tokens`` (int): Completion token count.
             - ``raw`` (dict): Full JSON response from the relay.
             - ``time`` (float): Wall-clock seconds elapsed.
@@ -1262,6 +1344,16 @@ class APIClient:
                 request_body, json.dumps(result.get("raw", {})),
                 200 if "error" not in result else 0,
                 None, result["time"], result.get("error"))
+            return result
+        except CompletionResponseError as e:
+            elapsed = time.time() - start
+            self._log_transparent(
+                "call", e.url, "POST", request_body,
+                json.dumps(e.raw) if e.raw is not None else None,
+                e.status or 0, None, elapsed, str(e))
+            result = self._error_result(e, time=elapsed)
+            if e.raw is not None:
+                result["raw"] = e.raw
             return result
         except Exception as e:
             elapsed = time.time() - start
@@ -1297,6 +1389,8 @@ class APIClient:
                 self._format = "anthropic"
                 self._log("  [format] -> Anthropic native")
                 return anthropic_result
+        except CompletionResponseError:
+            raise
         except Exception as e:
             if self._handle_ssl_error(e):
                 # Retry Anthropic with curl before falling through to OpenAI
@@ -1306,6 +1400,8 @@ class APIClient:
                         self._format = "anthropic"
                         self._log("  [format] -> Anthropic native (curl)")
                         return anthropic_result
+                except CompletionResponseError:
+                    raise
                 except Exception:
                     pass  # Fall through to OpenAI probe
 
@@ -1319,6 +1415,8 @@ class APIClient:
                 suffix = " (curl)" if self._use_curl else ""
                 self._log(f"  [format] -> OpenAI compatible{suffix}")
                 return openai_result
+        except CompletionResponseError:
+            raise
         except Exception as e:
             if self._handle_ssl_error(e):
                 return self._call_with_detection(messages, system, max_tokens)
@@ -2474,6 +2572,16 @@ import re
 _HTTP_STATUS_RE = re.compile(r"\bHTTP\s+(\d{3})\b", re.IGNORECASE)
 
 
+class CompletionResponseError(ValueError):
+    """An observed response that cannot supply an answer to a text probe."""
+
+    def __init__(self, reason, url, *, raw=None, status=None):
+        super().__init__(reason)
+        self.url = url
+        self.raw = raw
+        self.status = status
+
+
 def _coerce_status(status):
     if status is None:
         return None
@@ -2592,6 +2700,20 @@ def diagnose_error(error=None, status=None):
             "Check the raw response, relay documentation, selected model, and account state.",
         )
 
+    if text == "Unexpected SSE response to a non-streaming request":
+        return _diagnosis(
+            "unexpected-stream",
+            "The endpoint returned an event stream for a non-streaming request.",
+            "The response framing differed from the requested JSON completion.",
+            "Record the format mismatch and exclude this response from text scoring.",
+        )
+    if text == "Explicit safety refusal without an answer":
+        return _diagnosis(
+            "safety-refusal",
+            "The endpoint marked the response as refused or filtered and supplied no answer.",
+            "A refusal field or stop reason identifies this outcome.",
+            "Record the refusal separately when comparing completed answers.",
+        )
     if "both formats failed" in text_lower:
         return _diagnosis(
             "format-detection",
@@ -4961,7 +5083,7 @@ def run_channel_classifier(client):
 """
 API Relay Security Audit Tool v2.5
 
-Full 14-step audit: infrastructure recon, model list, token injection,
+Full 14-step audit: infrastructure recon, model list, input usage,
 prompt extraction, instruction conflict + identity, jailbreak, context
 length, tool-call substitution (AC-1.a), error response leakage (AC-2),
 stream integrity (AC-1 SSE), Web3 prompt injection (profile=web3|full),
@@ -5426,69 +5548,67 @@ def test_models(client, report):
 
 
 def test_token_injection(client, report):
-    report.h2("3. Token Injection Detection")
-    report.p("Send minimal messages, compare expected vs actual input_tokens. Delta = hidden injection.\n")
+    report.h2("3. Reported Input Token Usage")
+    report.p("Compare the relay's reported input with rough local estimates for three short "
+             "requests. A difference may reflect request wrapping, tokenization or accounting. "
+             "The relay controls its usage report. See "
+             "[Wu et al., §IV-E](https://arxiv.org/html/2611.07650v1#S4.SS5).")
 
     tests = [
         ("'Say hi' (no system prompt)", None, "Say hi", 10),
         ("'Say hi' + short system prompt", "You are a helpful assistant.", "Say hi", 20),
         ("'Who are you' (no system prompt)", None, "Who are you?", 15),
     ]
+    report.p("| Test | Ordinary | Cache read | Cache write | Total input | Estimate | Delta |")
+    report.p("|------|----------|------------|-------------|-------------|----------|-------|")
 
-    report.p("| Test | Actual input_tokens | Expected | Delta |")
-    report.p("|------|---------------------|----------|-------|")
-
-    injection_size = 0
+    deltas = []
     errors = []
-    success_count = 0
-    error_diagnostics = []
     for name, sys_prompt, user_msg, expected in tests:
-        r = client.call([{"role": "user", "content": user_msg}],
-                        system=sys_prompt, max_tokens=100)
-        if "error" in r:
-            report.p(f"| {name} | ERROR | ~{expected} | - |")
-            errors.append(r.get("error", ""))
-            error_diagnostics.append((name, r["error"]))
+        result = client.call([{"role": "user", "content": user_msg}],
+                             system=sys_prompt, max_tokens=100)
+        usage = result.get("input_usage", {})
+        total = usage.get("total")
+        if "error" in result:
+            errors.append((name, result["error"]))
+            report.p(f"| {name} | — | — | — | ERROR | ~{expected} | — |")
         else:
-            success_count += 1
-            actual = r["input_tokens"]
-            diff = actual - expected
-            injection_size = max(injection_size, diff)
-            report.p(f"| {name} | **{actual}** | ~{expected} | **~{diff}** |")
+            delta = None if total is None else total - expected
+            values = (usage.get("ordinary"), usage.get("cache_read"),
+                      usage.get("cache_write"), total, f"~{expected}", delta)
+            report.p(f"| {name} | " + " | ".join(
+                "—" if value is None else str(value) for value in values) + " |")
+            if delta is not None:
+                deltas.append(delta)
         time.sleep(1)
 
-    if error_diagnostics:
+    if errors:
         report.p("\n**Error diagnostics:**")
-        for name, error in error_diagnostics:
+        for name, error in errors:
             report.p(f"- {name}: {format_diagnosis(_diagnosis_for_error(error))}")
 
-    if success_count == 0:
-        if errors and all(_looks_like_claude_code_client_gate(err) for err in errors):
-            report.flag(
-                "yellow",
-                "Token injection test INCONCLUSIVE: every completion probe "
-                "was rejected as Claude Code-client-only. The relay appears "
-                "restricted to Claude Code clients, so hidden prompt injection "
-                "could not be measured.",
-            )
-        else:
-            report.flag(
-                "yellow",
-                f"Token injection test INCONCLUSIVE: all {len(errors)} probes "
-                "errored, so hidden prompt injection could not be measured.",
-            )
-        print("  Done: token injection (inconclusive, all probes errored)")
+    if len(deltas) < len(tests):
+        coverage = f"Usable input totals: {len(deltas)}/{len(tests)}."
+        if len(errors) == len(tests) and all(
+                _looks_like_claude_code_client_gate(error) for _, error in errors):
+            coverage += " All probes were rejected as Claude Code-client-only."
+        if not deltas:
+            report.flag("yellow", f"Input usage comparison INCONCLUSIVE. {coverage}")
+            return None
+        report.flag("yellow", f"Input usage comparison partially measured. {coverage}")
+
+    max_surplus = max(0, max(deltas))
+    if max_surplus > 20:
+        level = "red" if max_surplus > 100 else "yellow"
+        report.flag(level, f"Unexplained reported input surplus of up to ~{max_surplus} tokens "
+                    "over the local estimate.")
+    elif len(deltas) == len(tests):
+        report.flag("green", "Reported input was within 20 tokens above the local estimates.")
+    print(f"  Done: input usage comparison (maximum surplus: ~{max_surplus} tokens)")
+    if len(deltas) < len(tests) and max_surplus <= 100:
+        # An unmeasured probe could still cross the D1 threshold.
         return None
-
-    if injection_size > 100:
-        report.flag("red", f"Hidden system prompt injection detected (~{injection_size} tokens/request)")
-    elif injection_size > 20:
-        report.flag("yellow", f"Minor injection detected (~{injection_size} tokens)")
-    else:
-        report.flag("green", "No token injection detected")
-
-    print(f"  Done: token injection (delta: ~{injection_size} tokens)")
-    return injection_size
+    return max_surplus
 
 
 def test_prompt_extraction(client, report):
@@ -6702,11 +6822,11 @@ def _run_audit(args, report_stdout):
     _run_step("Step 2 model list", report, test_models, client, report,
               crashes=step_crashes)
 
-    # 3. Token injection
-    print("[3/14] Token injection detection...")
-    injection = _run_step("Step 3 token injection", report,
-                          test_token_injection, client, report,
-                          default=None, crashes=step_crashes)
+    # 3. Input usage comparison (retain the legacy JSON coverage key).
+    print("[3/14] Comparing reported input usage...")
+    input_surplus = _run_step("Step 3 token injection", report,
+                              test_token_injection, client, report,
+                              default=None, crashes=step_crashes)
 
     # 4. Prompt extraction
     print("[4/14] Prompt extraction tests...")
@@ -6825,7 +6945,7 @@ def _run_audit(args, report_stdout):
 
     # Overall rating
     # Dimensions (v3, post-v1.7.5):
-    #   D1  = hidden system-prompt injection > 100 tokens   (Step 3)
+    #   D1  = reported input surplus > 100 tokens   (Step 3)
     #   D1i = Step 3 crashed / inconclusive                 (Step 3)
     #   D2  = caller system instruction not followed        (Step 5)
     #   D2i = Step 5 crashed / inconclusive                 (Step 5)
@@ -6847,8 +6967,8 @@ def _run_audit(args, report_stdout):
     #   else                                        -> LOW
     report.h2("14. Overall Rating")
     any_step_crashed = bool(step_crashes)
-    d1 = injection is not None and injection > 100
-    d1i = injection is None
+    d1 = input_surplus is not None and input_surplus > 100
+    d1i = input_surplus is None
     d2 = overridden is not None and overridden
     d2i = overridden is None
     d3 = substitution_detected
@@ -6902,18 +7022,17 @@ def _run_audit(args, report_stdout):
     elif d1 and d2:
         risk_level = "HIGH"
         report.p("### HIGH RISK\n")
-        report.p("Hidden injection signal and caller system instruction non-adherence "
-                 "observed. The mechanism and attribution remain unverified. "
-                 "Not suitable for any use case requiring custom behavior.")
+        report.p("Step 3 found a reported input surplus above 100 tokens, and Step 5 observed "
+                 "caller system instruction non-adherence. The cause remains unverified.")
     elif d1:
         risk_level = "MEDIUM"
         report.p("### MEDIUM RISK\n")
-        report.p("Hidden injection detected but instructions may partially work. "
-                 "OK for simple Q&A, not recommended for complex applications.")
+        report.p("Reported input exceeded a local estimate by more than 100 tokens. "
+                 "Compare identical requests against a matched official reference to investigate.")
     elif d2:
         risk_level = "MEDIUM"
         report.p("### MEDIUM RISK\n")
-        report.p("No significant injection signal, but Step 5 observed caller "
+        report.p("Step 5 observed caller "
                  "system instruction non-adherence. The mechanism remains unverified.")
     elif d1i or d2i or d3i or d4i or d4m or d5i or d6i or any_step_crashed:
         risk_level = "MEDIUM"
@@ -6928,8 +7047,8 @@ def _run_audit(args, report_stdout):
             )
         if d1i:
             medium_reasons.append(
-                "Token injection test (Step 3) **crashed or was inconclusive**: "
-                "the relay's injection behavior could not be verified."
+                "Input usage comparison (Step 3) **crashed or was inconclusive**. "
+                "The available counts give incomplete coverage."
             )
         if d2i:
             medium_reasons.append(
@@ -6970,7 +7089,7 @@ def _run_audit(args, report_stdout):
     else:
         risk_level = "LOW"
         report.p("### LOW RISK\n")
-        report.p("No significant injection, instruction override, tool-call "
+        report.p("No large input surplus, instruction override, tool-call "
                  "substitution, error response leakage, stream integrity "
                  "anomaly, or Web3 injection detected.")
 

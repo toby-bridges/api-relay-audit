@@ -99,17 +99,35 @@ try {
     || await realpath(executableOnPath('npm'))
   await stage('bootstrap-pnpm', process.execPath, [npmCli, 'install', '--prefix', tooling, '--save-exact', `pnpm@${PNPM_VERSION}`, '--no-audit', '--no-fund', `--registry=${REGISTRY}`], { timeoutMs: 180_000 })
   const pnpmCli = join(tooling, 'node_modules', 'pnpm', 'bin', 'pnpm.mjs')
+  // Keep the reviewed Koffi build for the DSH host and profile across registry updates.
+  const koffiVersion = '3.3.4'
+  const koffiConsumers = [
+    'fs-local',
+    'host-directory-picker-native',
+    'sandbox-windows-acl',
+    'session-persistence-jsonl',
+    'subprocess-local',
+    'win32-process',
+  ]
   const hooks = {
-    // dsh-win32-process pins 3.1.1; subprocess-local also resolves 3.3.3.
-    // Both execute the reviewed cnoke local-prebuild loader (no downloader).
+    // The LibreOffice helper has its own exact Koffi dependency.
     'koffi@3.1.1': true,
-    'koffi@3.3.3': true,
+    [`koffi@${koffiVersion}`]: true,
     'node-pty@1.2.0-beta.15': true,
     'protobufjs@7.6.6': true,
     '@google/genai@1.52.0': true,
     [`@deepseek-ai/dsh-subprocess-local@${DSH_VERSION}`]: true,
   }
-  const policy = `packages:\n  - .\nallowBuilds:\n${Object.entries(hooks).map(([name, allow]) => `  ${JSON.stringify(name)}: ${allow}`).join('\n')}\nstoreDir: ${JSON.stringify(store)}\n`
+  const policy = [
+    'packages:',
+    '  - .',
+    'overrides:',
+    ...koffiConsumers.map(name => `  "@deepseek-ai/dsh-${name}@${DSH_VERSION}>koffi": "${koffiVersion}"`),
+    'allowBuilds:',
+    ...Object.entries(hooks).map(([name, allow]) => `  ${JSON.stringify(name)}: ${allow}`),
+    `storeDir: ${JSON.stringify(store)}`,
+    '',
+  ].join('\n')
   await writeFile(join(hostDir, 'package.json'), JSON.stringify({ name: 'dsh-acceptance-host', private: true, type: 'module' }))
   await writeFile(join(hostDir, 'pnpm-workspace.yaml'), policy)
   const services = ['app-boot', 'commands', 'credentials', 'credentials-local', 'llm', 'settings', 'subprocess', 'subprocess-local', 'session']
