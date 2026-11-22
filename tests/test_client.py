@@ -616,3 +616,41 @@ class TestLog:
     def test_quiet_no_output(self, client, capsys):
         client._log("hello")
         assert capsys.readouterr().out == ""
+
+
+class TestObservedCompletionOutcomes:
+    @pytest.mark.parametrize("use_curl", [False, True])
+    def test_nonstream_sse_is_retained_without_retry_or_body_disclosure(self, client, use_curl):
+        import httpx
+
+        sse = ":keep-alive\r\n\r\nevent: message_start\r\ndata: private-content\r\n\r\n"
+        client._use_curl = use_curl
+        with patch("api_relay_audit.client.subprocess.run") as run, patch("api_relay_audit.client.httpx.post") as post:
+            run.return_value = MagicMock(returncode=0, stdout=sse)
+            post.return_value = httpx.Response(200, text=sse, headers={"content-type": "text/event-stream; charset=utf-8"})
+            result = client.call([{"role": "user", "content": "hi"}])
+        assert run.call_count + post.call_count == 1
+        assert result["diagnosis"]["category"] == "unexpected-stream"
+        assert "private-content" not in str(result)
+        assert client.detected_format is None
+
+    @pytest.mark.parametrize("envelope", [
+        {"stop_reason": "refusal", "content": []},
+        {"stop_reason": "content_filter", "content": []},
+        {"choices": [{"finish_reason": "content_filter", "message": {"content": None}}]},
+    ])
+    def test_explicit_empty_refusal_is_recorded_on_first_endpoint(self, client, envelope):
+        with patch.object(client, "_post", return_value=envelope) as post:
+            result = client.call([{"role": "user", "content": "hi"}])
+        post.assert_called_once()
+        assert result["diagnosis"]["category"] == "safety-refusal"
+        assert result["raw"] == envelope
+        assert client.detected_format is None
+
+    def test_partial_filtered_answer_remains_available_for_inspection(self, client):
+        envelope = {"choices": [{"finish_reason": "content_filter", "message": {"content": "visible prefix"}}]}
+        client._format = "openai"
+        with patch.object(client, "_post", return_value=envelope) as post:
+            result = client.call([{"role": "user", "content": "hi"}])
+        post.assert_called_once()
+        assert result["text"] == "visible prefix"
