@@ -88,6 +88,7 @@ from api_relay_audit.stream_integrity import (
 from api_relay_audit.tool_call_integrity import (
     format_tool_calls_preview,
     run_tool_call_integrity_test,
+    run_tool_permission_probe,
 )
 from api_relay_audit.tool_substitution import run_tool_substitution_test
 from api_relay_audit.usage_sanity import (
@@ -1161,10 +1162,24 @@ def test_tool_substitution(client, report):
         excerpt = excerpt.replace("`", "\u2019")
         report.p(f"**Text returned instead of a Tool Call (redacted excerpt)**: `{excerpt}`")
 
+    report.h3("Tool permission checks (non-streaming)")
+    report.p("Each request expects zero calls. Counts refer to recognized returned "
+             "call records. The client executes none. See Wu et al., "
+             "arXiv:2611.07650v1, Sections IV-D and V-E.")
+    permission_verdicts = []
+    for condition in ("disabled", "undeclared"):
+        verdict, observed = run_tool_permission_probe(client, condition)
+        count = "unknown" if observed is None else str(observed)
+        report.p(f"**Permission probe**: `{condition}` | expected `0` | "
+                 f"observed `{count}` | verdict `{verdict}`")
+        permission_verdicts.append(verdict)
+
     structured_anomaly = structured["verdict"] == "anomaly"
     structured_inconclusive = structured["verdict"] == "inconclusive"
-    detected = text_detected or structured_anomaly
-    inconclusive = not detected and (text_inconclusive or structured_inconclusive)
+    detected = text_detected or structured_anomaly or "anomaly" in permission_verdicts
+    inconclusive = not detected and (
+        text_inconclusive or structured_inconclusive or "inconclusive" in permission_verdicts
+    )
 
     if detected:
         paths = []
@@ -1172,6 +1187,8 @@ def test_tool_substitution(client, report):
             paths.append("package-command text")
         if structured_anomaly:
             paths.append("structured Tool Call")
+        if "anomaly" in permission_verdicts:
+            paths.append("tool permission")
         report.flag(
             "red",
             "Tool-call integrity anomaly detected (AC-1 / AC-1.a): "
@@ -1184,6 +1201,8 @@ def test_tool_substitution(client, report):
             paths.append("package-command text")
         if structured_inconclusive:
             paths.append("structured Tool Call")
+        if "inconclusive" in permission_verdicts:
+            paths.append("tool permission")
         report.flag(
             "yellow",
             "Tool-call integrity test INCONCLUSIVE: "
@@ -1201,7 +1220,7 @@ def test_tool_substitution(client, report):
             "green",
             "Tool-call integrity clean: package-command text and structured "
             "tool name, arguments, and call count all matched (stop reason "
-            "also checked for Anthropic format)",
+            "also checked for Anthropic format). Both zero-call conditions were observed.",
         )
 
     state = "detected" if detected else ("inconclusive" if inconclusive else "clean")
@@ -2597,9 +2616,9 @@ def _run_audit(args, report_stdout):
         if d3:
             reasons.append(
                 "**Tool-call integrity anomaly detected (AC-1 / AC-1.a).** "
-                "A Tool Call or package-install command on the return path appears to "
-                "have been rewritten, or the Tool Call's stop reason did not match; an agent "
-                "loop may execute the wrong call or ignore the call."
+                "The received package command, structured call, stop reason, or "
+                "tool permission differed from the expectation. See Step 8 for the "
+                "observed discrepancy. No returned command or tool call was executed."
             )
         if err_severity == "critical":
             reasons.append(

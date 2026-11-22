@@ -313,3 +313,47 @@ def test_openai_tool_probe_keeps_non_object_tool_call_entries(mock_post):
     )
     assert analysis["verdict"] == "inconclusive"
     assert analysis["findings"] == ["Structured Tool Call response format was invalid"]
+
+
+def test_permission_probes_inspect_wire_requests_and_responses():
+    import audit as standalone
+    from api_relay_audit.tool_call_integrity import run_tool_permission_probe
+
+    envelopes = {
+        "anthropic": [
+            ({"content": [{"type": "text", "text": "ready"}], "stop_reason": "end_turn"}, ("clean", 0)),
+            ({"content": [{"type": "tool_use", "name": "record_probe"}]}, ("anomaly", 1)),
+            ({"content": [{"type": "server_tool_use", "name": "web_search"}]}, ("anomaly", 1)),
+            ({"content": []}, ("inconclusive", None)),
+            ({"content": [{"type": "text", "text": "ready"}], "stop_reason": "tool_use"}, ("inconclusive", None)),
+        ],
+        "openai": [
+            ({"choices": [{"message": {"content": "ready"}, "finish_reason": "stop"}]}, ("clean", 0)),
+            ({"choices": [{"message": {"refusal": "Declined"}, "finish_reason": "stop"}]}, ("clean", 0)),
+            ({"choices": [
+                {"message": {"content": "ready"}, "finish_reason": "stop"},
+                {"message": {"tool_calls": [{"type": "function", "function": {"name": "web_search"}}]}},
+            ]}, ("anomaly", 1)),
+            ({"choices": [{"message": {"function_call": {"name": "record_probe"}}}]}, ("anomaly", 1)),
+            ({"choices": [{"message": {"tool_calls": [None], "content": "ready"}, "finish_reason": "stop"}]},
+             ("inconclusive", None)),
+            ({"choices": []}, ("inconclusive", None)),
+        ],
+    }
+    for client_cls, probe in ((APIClient, run_tool_permission_probe),
+                              (standalone.APIClient, standalone.run_tool_permission_probe)):
+        for protocol, cases in envelopes.items():
+            for condition in ("disabled", "undeclared"):
+                client = client_cls("https://relay.example/v1", "fixture", "test", verbose=False)
+                client._format = protocol
+                for raw, expected in cases + [({"_http_error": "HTTP 400"}, ("inconclusive", None))]:
+                    client._post = MagicMock(return_value=raw)
+                    assert probe(client, condition) == expected
+                    client._post.assert_called_once()
+                    body = client._post.call_args.args[2]
+                    if condition == "disabled":
+                        assert len(body["tools"]) == 1
+                        assert body["tool_choice"] == ({"type": "none"} if protocol == "anthropic" else "none")
+                    else:
+                        assert "tools" not in body and "tool_choice" not in body
+                    assert body["messages"] == [{"role": "user", "content": "Reply with the word ready."}]

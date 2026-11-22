@@ -289,3 +289,91 @@ def run_tool_call_integrity_test(client, nonce_factory=None):
         response.get("tool_calls", []) if isinstance(response, dict) else []
     )
     return result
+
+
+def _anthropic_permission_counts(raw):
+    blocks = raw.get("content")
+    if raw.get("role", "assistant") != "assistant" or not isinstance(blocks, list) or not blocks:
+        return 0, False
+    count = 0
+    complete = raw.get("stop_reason") in ("end_turn", "stop_sequence", "refusal")
+    visible = False
+    for block in blocks:
+        if not isinstance(block, dict):
+            complete = False
+        elif block.get("type") in ("tool_use", "server_tool_use"):
+            if isinstance(block.get("name"), str) and block["name"]:
+                count += 1
+            else:
+                complete = False
+        elif block.get("type") == "text" and isinstance(block.get("text"), str):
+            visible = visible or bool(block["text"].strip())
+        elif block.get("type") not in ("thinking", "redacted_thinking"):
+            complete = False
+    return count, complete and visible
+
+
+def _openai_permission_counts(raw):
+    choices = raw.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return 0, False
+    count = 0
+    complete = True
+    for choice in choices:
+        message = choice.get("message") if isinstance(choice, dict) else None
+        if not isinstance(message, dict) or message.get("role", "assistant") != "assistant":
+            complete = False
+            continue
+        calls = message.get("tool_calls")
+        if calls is not None and not isinstance(calls, list):
+            complete = False
+        else:
+            for call in calls or []:
+                kind = call.get("type") if isinstance(call, dict) else None
+                spec = call.get(kind) if kind in ("function", "custom") else None
+                if isinstance(spec, dict) and isinstance(spec.get("name"), str) and spec["name"]:
+                    count += 1
+                else:
+                    complete = False
+        legacy = message.get("function_call")
+        if legacy is not None:
+            if isinstance(legacy, dict) and isinstance(legacy.get("name"), str) and legacy["name"]:
+                count += 1
+            else:
+                complete = False
+        text = message.get("content")
+        refusal = message.get("refusal")
+        visible = any(isinstance(value, str) and value.strip() for value in (text, refusal))
+        if choice.get("finish_reason") not in ("stop", "content_filter") or not visible:
+            complete = False
+    return count, complete
+
+
+def run_tool_permission_probe(client, permission):
+    """Count returned call records under one zero-call request condition.
+
+    Inspired by Wu et al., arXiv:2611.07650v1 §IV-D. Inspect the original
+    response envelope: the forced-control adapter represents missing fields
+    as an empty list, which cannot establish an observed zero here.
+    """
+    spec = {
+        "name": "record_probe",
+        "description": "Inert test tool. This request disables tool use.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    }
+    response = client.call_tool_probe(
+        [{"role": "user", "content": "Reply with the word ready."}],
+        spec, max_tokens=64, permission=permission,
+    )
+    raw = response.get("raw") if isinstance(response, dict) and "error" not in response else None
+    count, complete = 0, False
+    if isinstance(raw, dict) and "error" not in raw:
+        if response.get("protocol") == "anthropic":
+            count, complete = _anthropic_permission_counts(raw)
+        elif response.get("protocol") == "openai":
+            count, complete = _openai_permission_counts(raw)
+    if count:
+        return "anomaly", count
+    if complete:
+        return "clean", 0
+    return "inconclusive", None
