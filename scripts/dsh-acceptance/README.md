@@ -55,8 +55,12 @@ performs an idempotent fixed-version update, repeats command invocation, removes
 the package, and verifies the real Loader no longer registers its command.
 This update does not stand in for compatibility with an unbuilt future release.
 
+The host and profile fixtures pin the Koffi ranges from DSH `0.1.7-rc.2`
+to the reviewed `3.3.4` version. The LibreOffice helper keeps its own
+Koffi `3.1.1` dependency.
+
 Lifecycle hooks are admitted by exact package/version only: Koffi `3.1.1`
-and `3.3.3` local-prebuild loaders, node-pty `1.2.0-beta.15` prebuild/fallback
+and `3.3.4` local-prebuild loaders, node-pty `1.2.0-beta.15` prebuild/fallback
 and post-install steps, protobufjs `7.6.6` post-install, `@google/genai`
 `1.52.0`'s no-op preinstall, and DSH subprocess-local `0.1.7-rc.2`'s packaged
 spawn-helper permission repair. A new lifecycle hook fails installation and
