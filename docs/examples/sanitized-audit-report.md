@@ -22,7 +22,7 @@ real relay domains, API keys, wallet material, or private traffic.
 ## Risk Summary
 
 - Overall verdict: `MEDIUM`
-- Prompt injection: synthetic hidden-token delta shown as an anomaly.
+- Input usage: the synthetic response reports more input than the local estimate.
 - Prompt extraction: one synthetic extraction result is shown as an anomaly.
 - Context length: inconclusive, not clean.
 - Tool-call rewriting: clean in this fixture.
@@ -37,7 +37,7 @@ real relay domains, API keys, wallet material, or private traffic.
 | --- | --- | --- | --- | --- | --- |
 | 1 | Infrastructure recon | `run` | `informational` | `none` | The target host is redacted to `example.invalid` for public documentation. |
 | 2 | Model list enumeration | `run` | `informational` | `none` | The relay returned a small synthetic model list in the fixture. |
-| 3 | Token injection detection | `run` | `anomaly` | `medium` | The fixture shows a moderate hidden-token delta so users can see how prompt injection evidence is surfaced. |
+| 3 | Reported input token usage | `run` | `anomaly` | `medium` | Reported input exceeds the local estimate by 108 tokens. The cause is unknown. |
 | 4 | Prompt extraction | `run` | `anomaly` | `medium` | One extraction-style probe returned synthetic hidden instruction text. |
 | 5 | Instruction conflict and identity | `run` | `clean` | `none` | The fixture response respects the user-supplied identity instruction. |
 | 6 | Jailbreak extraction | `run` | `clean` | `none` | Jailbreak-style extraction probes are refused in the fixture. |
