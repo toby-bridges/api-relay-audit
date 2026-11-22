@@ -4,8 +4,8 @@
 # Regenerate after modular audit changes with:
 #   python3 scripts/build-standalone.py
 # CI verifies this generated artifact plus key behavior regressions.
-# source_sha256: 1829f6c8d17f94d92cda30e5c9e3881bbf629ab6eb37e181f8e4829020e89a0e
-# standalone_body_sha256: 4b852b4b70deea15878fa070772b71dc5b60f63d7cd7a3d71d6ee65c9dfe76cf
+# source_sha256: 2dae8f5e44403a488609285b352440586fc4b2d356aa07dee7beabd19ceeabe7
+# standalone_body_sha256: 78b7d729b15e919e995db66543542540e252e9d73c35f5bd0e91fa286112b663
 # END GENERATED STANDALONE HEADER
 
 """
@@ -610,6 +610,7 @@ import tempfile
 from urllib.parse import urlparse
 
 
+
 LOOPBACK_NO_PROXY = "localhost,127.0.0.1,::1"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
@@ -648,6 +649,18 @@ def curl_body_file(body: bytes):
                 pass
 
 
+def _check_event_stream(url, text, content_type="", status=None):
+    # A curl JSON POST only exposes the body. Inspect the first bounded SSE
+    # fields after a JSON decode failure. Never copy event data to the report.
+    prefix = text[:2048].lstrip("\ufeff \t\r\n")
+    fields = [line for line in prefix.splitlines() if line and not line.startswith(":")]
+    if (content_type.split(";", 1)[0].strip().lower() == "text/event-stream"
+            or (fields and fields[0].startswith(("event:", "data:", "id:", "retry:"))
+                and any(line.startswith("data:") for line in fields))):
+        raise CompletionResponseError(
+            "Unexpected SSE response to a non-streaming request", url, status=status)
+
+
 def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
                    subprocess_module=subprocess) -> dict:
     """POST JSON through curl while keeping headers out of argv.
@@ -679,7 +692,11 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
 
     if r.returncode != 0:
         raise RuntimeError(f"curl failed: {r.stderr[:200]}")
-    return json.loads(r.stdout)
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        _check_event_stream(url, r.stdout)
+        raise
 
 
 
@@ -853,6 +870,33 @@ def _extract_anthropic_text(content) -> str:
         if isinstance(text, str):
             parts.append(text)
     return "".join(parts)
+
+
+def _empty_protocol_refusal(data):
+    """Identify explicit, empty refusal envelopes, including cross-format replies.
+
+    Wu et al., arXiv:2611.07650v1, Table VI reports a translated
+    content_filter at R15 and unsolicited streaming at R19.
+    """
+    if not isinstance(data, dict) or "_http_error" in data:
+        return False
+    choices = data.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices else {}
+    if not isinstance(choice, dict):
+        return False
+    reasons = (data.get("stop_reason"), choice.get("finish_reason"))
+    if not any(reason in ("refusal", "content_filter") for reason in reasons):
+        return False
+    message = choice.get("message") or {}
+    if not isinstance(message, dict):
+        return False
+    if message.get("content") or message.get("tool_calls") or message.get("function_call"):
+        return False
+    blocks = data.get("content") or []
+    if not isinstance(blocks, list) or _extract_anthropic_text(blocks).strip():
+        return False
+    return not any(isinstance(block, dict) and block.get("type") in ("tool_use", "server_tool_use")
+                   for block in blocks)
 
 
 def _parse_curl_i_output(output: str) -> dict:
@@ -1146,6 +1190,12 @@ class APIClient:
         return _transport.httpx_post_json(
             url, headers, body, self.timeout)
 
+    def _post_text_completion(self, url, headers, body):
+        data = self._post(url, headers, body)
+        if _empty_protocol_refusal(data):
+            raise CompletionResponseError("Explicit safety refusal without an answer", url, raw=data)
+        return data
+
     @staticmethod
     def _error_result(error, **extra):
         error_text = str(error)
@@ -1173,7 +1223,7 @@ class APIClient:
             "content-type": "application/json",
         }
 
-        data = self._post(url, headers, body)
+        data = self._post_text_completion(url, headers, body)
         if "_http_error" in data:
             return self._error_result(data["_http_error"])
         text = _extract_anthropic_text(data.get("content"))
@@ -1206,7 +1256,7 @@ class APIClient:
             "content-type": "application/json",
         }
 
-        data = self._post(url, headers, body)
+        data = self._post_text_completion(url, headers, body)
         if "_http_error" in data:
             return self._error_result(data["_http_error"])
         choice = data.get("choices", [{}])[0]
@@ -1295,6 +1345,16 @@ class APIClient:
                 200 if "error" not in result else 0,
                 None, result["time"], result.get("error"))
             return result
+        except CompletionResponseError as e:
+            elapsed = time.time() - start
+            self._log_transparent(
+                "call", e.url, "POST", request_body,
+                json.dumps(e.raw) if e.raw is not None else None,
+                e.status or 0, None, elapsed, str(e))
+            result = self._error_result(e, time=elapsed)
+            if e.raw is not None:
+                result["raw"] = e.raw
+            return result
         except Exception as e:
             elapsed = time.time() - start
             self._log_transparent(
@@ -1329,6 +1389,8 @@ class APIClient:
                 self._format = "anthropic"
                 self._log("  [format] -> Anthropic native")
                 return anthropic_result
+        except CompletionResponseError:
+            raise
         except Exception as e:
             if self._handle_ssl_error(e):
                 # Retry Anthropic with curl before falling through to OpenAI
@@ -1338,6 +1400,8 @@ class APIClient:
                         self._format = "anthropic"
                         self._log("  [format] -> Anthropic native (curl)")
                         return anthropic_result
+                except CompletionResponseError:
+                    raise
                 except Exception:
                     pass  # Fall through to OpenAI probe
 
@@ -1351,6 +1415,8 @@ class APIClient:
                 suffix = " (curl)" if self._use_curl else ""
                 self._log(f"  [format] -> OpenAI compatible{suffix}")
                 return openai_result
+        except CompletionResponseError:
+            raise
         except Exception as e:
             if self._handle_ssl_error(e):
                 return self._call_with_detection(messages, system, max_tokens)
@@ -2506,6 +2572,16 @@ import re
 _HTTP_STATUS_RE = re.compile(r"\bHTTP\s+(\d{3})\b", re.IGNORECASE)
 
 
+class CompletionResponseError(ValueError):
+    """An observed response that cannot supply an answer to a text probe."""
+
+    def __init__(self, reason, url, *, raw=None, status=None):
+        super().__init__(reason)
+        self.url = url
+        self.raw = raw
+        self.status = status
+
+
 def _coerce_status(status):
     if status is None:
         return None
@@ -2624,6 +2700,20 @@ def diagnose_error(error=None, status=None):
             "Check the raw response, relay documentation, selected model, and account state.",
         )
 
+    if text == "Unexpected SSE response to a non-streaming request":
+        return _diagnosis(
+            "unexpected-stream",
+            "The endpoint returned an event stream for a non-streaming request.",
+            "The response framing differed from the requested JSON completion.",
+            "Record the format mismatch and exclude this response from text scoring.",
+        )
+    if text == "Explicit safety refusal without an answer":
+        return _diagnosis(
+            "safety-refusal",
+            "The endpoint marked the response as refused or filtered and supplied no answer.",
+            "A refusal field or stop reason identifies this outcome.",
+            "Record the refusal separately when comparing completed answers.",
+        )
     if "both formats failed" in text_lower:
         return _diagnosis(
             "format-detection",

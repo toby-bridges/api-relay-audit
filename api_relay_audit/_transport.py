@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from api_relay_audit.error_diagnosis import CompletionResponseError
+
 LOOPBACK_NO_PROXY = "localhost,127.0.0.1,::1"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
@@ -52,6 +54,18 @@ def curl_body_file(body: bytes):
                 pass
 
 
+def _check_event_stream(url, text, content_type="", status=None):
+    # A curl JSON POST only exposes the body. Inspect the first bounded SSE
+    # fields after a JSON decode failure. Never copy event data to the report.
+    prefix = text[:2048].lstrip("\ufeff \t\r\n")
+    fields = [line for line in prefix.splitlines() if line and not line.startswith(":")]
+    if (content_type.split(";", 1)[0].strip().lower() == "text/event-stream"
+            or (fields and fields[0].startswith(("event:", "data:", "id:", "retry:"))
+                and any(line.startswith("data:") for line in fields))):
+        raise CompletionResponseError(
+            "Unexpected SSE response to a non-streaming request", url, status=status)
+
+
 def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
                    subprocess_module=subprocess) -> dict:
     """POST JSON through curl while keeping headers out of argv.
@@ -83,7 +97,11 @@ def curl_post_json(url: str, headers: dict, body: dict, timeout: int,
 
     if r.returncode != 0:
         raise RuntimeError(f"curl failed: {r.stderr[:200]}")
-    return json.loads(r.stdout)
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        _check_event_stream(url, r.stdout)
+        raise
 
 
 def httpx_post_json(url: str, headers: dict, body: dict, timeout: int,
@@ -92,7 +110,11 @@ def httpx_post_json(url: str, headers: dict, body: dict, timeout: int,
     r = httpx_module.post(url, headers=headers, json=body, timeout=timeout)
     if r.status_code != 200:
         return {"_http_error": f"HTTP {r.status_code}: {r.text[:200]}"}
-    return r.json()
+    try:
+        return r.json()
+    except ValueError:
+        _check_event_stream(url, r.text, r.headers.get("content-type", ""), r.status_code)
+        raise
 
 
 def curl_get_json_data(url: str, headers: dict, timeout: int = 15,
